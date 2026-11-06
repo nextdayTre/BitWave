@@ -4,6 +4,8 @@
 
 **Naming update 2026-11-06:** lanes are 1/2/3 and frame names are global — lane 1 A/B/Z1, lane 2 C/D/Z2, lane 3 E/F/Z3 (D15). This analysis keeps the original slot keys `A`/`B`/`C` for line references; its semantics are unchanged.
 
+**Toolchain update 2026-11-06 (D19):** the Vite 8 + TypeScript + `vite-plugin-singlefile` build is installed. `src/index.html` + `src/main.js` + `src/styles/app.css` build to the single-file `bitwave-v2.html`, and a `--compare` screenshot gate proves rebuild parity. `src/main.js` is still one extracted module; splitting it into `state/`, `render/`, `ui/` is F2.
+
 Governing constraints: `DESIGN.md` is the visual source of truth, no new hue is introduced below, and §11 (lines 419–437) must pass after every phase.
 
 ---

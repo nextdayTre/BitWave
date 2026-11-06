@@ -50,6 +50,7 @@ const USAGE = `BitWave browser check — zero-dependency headless Chromium.
 
 Options:
   --artifact <file>   HTML artifact to verify (default: bitwave-v2.html)
+  --compare <file>    also pixel-compare the artifact against a reference file
   --shots <dir>       also write deterministic state screenshots to <dir>
   --headed            run a visible Chromium window (debugging)
   --help, -h          show this help
@@ -59,10 +60,11 @@ Chromium is auto-detected, or set BITWAVE_CHROME to an executable path.`;
 /* ─────────────────────────────────────────────────────────── arguments ── */
 
 function parseArgs(argv) {
-  const opts = { artifact: 'bitwave-v2.html', shots: null, headed: false };
+  const opts = { artifact: 'bitwave-v2.html', compare: null, shots: null, headed: false };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === '--artifact') opts.artifact = argv[++i];
+    else if (arg === '--compare') opts.compare = argv[++i];
     else if (arg === '--shots') opts.shots = argv[++i];
     else if (arg === '--headed') opts.headed = true;
     else if (arg === '--help' || arg === '-h') { console.log(USAGE); process.exit(0); }
@@ -70,6 +72,9 @@ function parseArgs(argv) {
   }
   if (!opts.artifact || !existsSync(resolve(ROOT, opts.artifact))) {
     throw new Error(`artifact not found: ${opts.artifact}`);
+  }
+  if (opts.compare && !existsSync(resolve(ROOT, opts.compare))) {
+    throw new Error(`comparison artifact not found: ${opts.compare}`);
   }
   return opts;
 }
@@ -277,7 +282,7 @@ async function waitFor(expression, label, timeout = 5000) {
   throw new Error(`timed out waiting for ${label} (last: ${String(last).slice(0, 160)})`);
 }
 
-async function loadApp({ width = 1440, height = 900, settle = 300 } = {}) {
+async function loadPage(url, { width = 1440, height = 900, settle = 300 } = {}) {
   consoleErrors.length = 0;
   await cdp.send('Emulation.setDeviceMetricsOverride', {
     width,
@@ -285,7 +290,7 @@ async function loadApp({ width = 1440, height = 900, settle = 300 } = {}) {
     deviceScaleFactor: 1,
     mobile: false,
   });
-  await cdp.send('Page.navigate', { url: artifactUrl });
+  await cdp.send('Page.navigate', { url });
   await waitFor(`document.readyState === 'complete'`, 'document ready');
   await waitFor(
     `['hex', 'sizeOut', 'wave', 'nibs'].every((id) => document.getElementById(id))`,
@@ -296,6 +301,10 @@ async function loadApp({ width = 1440, height = 900, settle = 300 } = {}) {
     'boot readout'
   );
   await sleep(settle);
+}
+
+async function loadApp(options = {}) {
+  return loadPage(artifactUrl, options);
 }
 
 async function click(selector) {
@@ -869,7 +878,77 @@ try {
     return '3d/Z1 read-only · dataset payload → A';
   });
 
-  /* 7. optional screenshots -------------------------------------------- */
+  /* 7. parity against a reference artifact ------------------------------- */
+  if (opts.compare) {
+    const referenceUrl = pathToFileURL(resolve(ROOT, opts.compare)).href;
+    await runCheck(
+      `parity · ${basename(opts.artifact)} renders identically to ${basename(opts.compare)}`,
+      async () => {
+        const states = [
+          { name: '2d-default', width: 1440, height: 900 },
+          {
+            name: 'frames-open',
+            width: 1440,
+            height: 900,
+            prepare: async () => { await click('#framesBtn'); },
+          },
+          {
+            name: '3d',
+            width: 1440,
+            height: 900,
+            prepare: async () => { await click('#depthBtn'); },
+          },
+          {
+            name: '3d-focus-z1',
+            width: 1440,
+            height: 900,
+            prepare: async () => {
+              await click('#depthBtn');
+              await click('#framesBtn');
+              await click('#framesBody .frame-row[data-frame="z"] .frame-btn');
+            },
+          },
+          {
+            name: 'csv-import',
+            width: 1440,
+            height: 900,
+            prepare: async () => { await importCsv(); },
+          },
+          { name: 'breakpoint-720', width: 720, height: 900 },
+        ];
+
+        const shoot = async (url, state) => {
+          await loadPage(url, { width: state.width, height: state.height, settle: 300 });
+          if (state.prepare) await state.prepare();
+          await sleep(700);
+          return capture();
+        };
+
+        const mismatches = [];
+        for (const state of states) {
+          const reference = await shoot(referenceUrl, state);
+          const rebuilt = await shoot(artifactUrl, state);
+          if (sha256(reference) !== sha256(rebuilt)) mismatches.push({ state, reference, rebuilt });
+        }
+
+        if (mismatches.length) {
+          const directory = resolve(ROOT, '.tmp-captures/parity');
+          mkdirSync(directory, { recursive: true });
+          for (const mismatch of mismatches) {
+            writeFileSync(join(directory, `${mismatch.state.name}-reference.png`), mismatch.reference);
+            writeFileSync(join(directory, `${mismatch.state.name}-rebuilt.png`), mismatch.rebuilt);
+          }
+          throw new Error(
+            `${mismatches.length}/${states.length} states differ ` +
+            `(${mismatches.map((m) => m.state.name).join(', ')}; PNGs in .tmp-captures/parity/)`
+          );
+        }
+        return `${states.length}/${states.length} states pixel-identical`;
+      }
+    );
+  }
+
+  /* 8. optional screenshots -------------------------------------------- */
   if (opts.shots) {
     await runCheck('capture · deterministic state screenshots', async () => {
       const directory = resolve(ROOT, opts.shots);

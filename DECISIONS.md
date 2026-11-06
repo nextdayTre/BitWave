@@ -4,7 +4,7 @@ Implementation decisions taken to keep the plan moving. Each one is reversible
 while the codebase is small; the ones the plan marked for the author are noted.
 Format is deliberately short: decision, basis, how to reverse it.
 
-**Status:** 2026-11-06 · applies to the `src/core` extraction, the F0 baseline, the browser-verification harness and the `window.BitWave` agent/test seam.
+**Status:** 2026-11-06 · applies to the `src/core` extraction, the F0 baseline, the browser-verification harness, the `window.BitWave` seam and the Vite build (D19).
 
 | # | Decision | Basis | Reverse by |
 |---|---|---|---|
@@ -26,6 +26,7 @@ Format is deliberately short: decision, basis, how to reverse it.
 | D16 | **A frame click is a focus lens, not a view switch.** `selectFrame()` no longer exits 3-D or closes the navigator; it sets the lane's `focus`, retargets strip/readouts/truth/stage, keeps operands editable and shows a derived frame read-only. `enableBOnSlot()` no longer steals focus. | Author request 2026-11-06 ("clicking a frame in the Lanes tab more like a Focus feature"); the 3-D view kept showing B statically and a frame click dropped to 2-D. | Restore the forced 2-D branch and `closeFrames(true)`; the browser check's focus assertions fail. |
 | D17 | **Visibility eyes are per lane.** `frameVis` moves from one global `{a,b,z}` to each slot, so hiding A in lane 1 does not hide C in lane 2. | With global names, "frame A" is lane-1-specific; a single global toggle would silently hide three different frames. | Return to one shared map; eye labels would need to be generic again. |
 | D18 | **The agent/test seam is a read-only `window.BitWave` (schema 1).** `state()`, `geometry()` and `frames()` return deep-frozen plain objects; there are no setters and the global is defined non-writable. `geometry()` returns computed control-point `xs[]` plus DOM nibble rects so tests assert the DESIGN §11 alignment without scraping pixels. | AGENTS.md asks for explicit local state/render surfaces over screenshot automation; the browser harness needed a non-circular way to prove the canvas and strip agree. | Remove the surface block in `bitwave-v2.html`; the harness agent checks and the geometry assertion fail. |
+| D19 | **The build toolchain is installed and the artifact is generated.** Source is `src/index.html` + `src/main.js` + `src/styles/app.css`; `npm run build` (Vite 8.3.6 + `vite-plugin-singlefile` 2.3.4, **no minification**) emits the single-file `bitwave-v2.html`; `npm run dev` serves the source; `npm run typecheck` checks the core. Rebuild parity is a gate: `tools/browser-check.mjs --compare` requires identical screenshots across six states. The zero-dependency `node --test` runner from D5 stays. | PLAN §6/§7 F0 requires multi-file source with single-file delivery, and the sandbox that blocked npm/Chromium no longer applies; the D5 deferral is over for the build toolchain only. | Delete `vite.config.mjs`, `tools/build-artifact.mjs` and the `src/index.html`/`main.js`/`styles` tree; the app reverts to editing the HTML directly (git history has both). |
 
 ## Open decisions still with the author
 

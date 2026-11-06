@@ -1,6 +1,6 @@
 # BitWave — implementation status
 
-**Updated:** 2026-11-06 · **Phase:** F0 browser harness **done**, F1 core **done**, F3 source-table housing spike **done**; frame names, focus lens and the read-only `window.BitWave` seam **shipped in v2**.
+**Updated:** 2026-11-06 · **Phase:** F0 **done** (harness + Vite build + parity gate), F1 core **done**, F3 housing spike **done**; frame names, focus lens and the read-only `window.BitWave` seam **shipped**.
 **Source of truth:** [`PLAN.md`](PLAN.md) for the plan, [`DECISIONS.md`](DECISIONS.md) for choices taken, [`DESIGN.md`](DESIGN.md) for the visual contract. `index.html` is still untouched and remains the shipping instrument.
 
 ## Author decisions (2026-11-06)
@@ -31,16 +31,24 @@ cell enough? Confirm before the matrix lands in the app.
 
 | Phase | Status | Notes |
 |---|---|---|
-| **F0 Baseline** | **Unblocked** | Git, zero-dep unit suite (38) and a checked-in browser harness (20 checks, 21 with `--shots`) verify the shipped artifact over `file://`; Vite/`tsc`/Vitest/Playwright stay deferred by D5. |
+| **F0 Baseline** | **Done** | Git; Vite 8.3.6 + TypeScript 7 + `vite-plugin-singlefile` installed; `npm run build` emits the single-file `bitwave-v2.html` from `src/`; zero-dep unit suite (38), typecheck and the browser harness (24 checks) all green; rebuild parity is a gate (`--compare`). |
 | **F1 Core + routing engine** | **Done** | 11 DOM-free modules; lanes 1/2/3; 38 tests green. |
-| **F2 State spine + renderers** | Next | Wire the core through a store + renderer adapters; join the CSV column bindings and frame routes into one binding model. |
+| **F2 State spine + renderers** | Next | Source is now modular (`src/main.js` is still one extracted module): split it into `state/`, `render/`, `ui/` through a store, with `evaluateAll` and screenshot-hash parity as the gate. |
 | **F3 Source-table housing** | **Spike done** | Six fixed input rows, one source each; SOURCE = data column or frame output; STATE = `data`/`1:1`/`z⁻¹`. No add/remove, no new mode, no new state. |
 | **F4–F6** | Not started | A11y/IA (no palette changes), persistence UI, distribution. |
 
 ## Verified this session
 
-- `npm test` → **38 tests, 38 pass, 0 fail, ~120 ms**.
-- `npm run check:browser` → **24/24 checks pass** (25/25 with `--shots`) on `bitwave-v2.html`:
+- `npm test` → **38 tests, 38 pass, 0 fail, ~120 ms**; `npm run typecheck` → **clean**.
+- `npm run build` → **`bitwave-v2.html`, 99.3 KB, single file**, no external references
+  (`tools/build-artifact.mjs` gate). Source: `src/index.html` + `src/main.js` (92.8 KB)
+  + `src/styles/app.css` (19.6 KB).
+- **Parity proven:** `node tools/browser-check.mjs --compare .tmp-captures/legacy-bitwave-v2.html`
+  → **6/6 states pixel-identical** (2-D default, frames open, 3-D, 3-D Z1 focus,
+  CSV import, 720 px breakpoint). The extracted source builds an artifact that
+  renders exactly like the hand-written file.
+- `npm run check:browser` → **24/24 checks pass** (25/25 with `--shots`, 25/25 with
+  `--compare`, 26/26 with both) on the built `bitwave-v2.html`:
   zero console errors; no overflow or clipped controls at 360/420/720/1440;
   `canvas.width` = viewport; `--pad` 40/16 and compact mode per DESIGN §5/§9;
   strip gap/nibble width follow the §5 formula (1440: gap 12.00, nibble 73.75);
@@ -58,6 +66,8 @@ cell enough? Confirm before the matrix lands in the app.
   setters) with `state()`, `geometry()` and `frames()`. The geometry assertion now
   measures control points against DOM nibble centres (worst offset **0.00 px**, §11
   limit 1.5 px), closing the former canvas-alignment gap.
+- **Shipped the toolchain (D19):** multi-file source under `src/` builds to the single
+  self-contained artifact; `npm run dev` serves the source; no minification.
 - Housing visual pass: spike at 360/720/1440 px; six rows × 14 options; rebinding
   updates only the STATE chip + status and keeps focus; no horizontal overflow.
 - **Drift found and fixed:** `--pad` was written with a second, hard-coded 680 px
@@ -75,14 +85,17 @@ cell enough? Confirm before the matrix lands in the app.
 
 | Artifact | Purpose |
 |---|---|
+| [`src/`](src/index.html) | App source: `index.html` template, `main.js` (extracted module), `styles/app.css`; `src/core/` untouched |
+| [`vite.config.mjs`](vite.config.mjs) | Vite 8 build: `src/` → `dist/index.html`, no minification |
+| [`tools/build-artifact.mjs`](tools/build-artifact.mjs) | Single-file gate: verifies no external refs, writes `bitwave-v2.html` |
 | [`src/core/`](src/core/index.ts) | DOM-free engine (11 modules, ~1,350 lines), lanes 1/2/3 |
 | [`tests/`](tests/design-invariants.test.ts) | 4 test files, ~630 lines, 38 vectors + properties |
 | [`examples/demo.bitwave.json`](examples/demo.bitwave.json) | Versioned project document (lanes 1/2/3; routes + parked bases; dataset) |
 | [`spike/routing-matrix.html`](spike/routing-matrix.html) | Six-row source-table housing prototype (360 lines) |
-| [`tools/browser-check.mjs`](tools/browser-check.mjs) | Zero-dependency CDP harness: 24 checks (25 with `--shots`) on the shipped file over `file://` |
+| [`tools/browser-check.mjs`](tools/browser-check.mjs) | Zero-dependency CDP harness: 24 checks (25 with `--shots`, 25 with `--compare`) |
 | [`tools/make-example-project.ts`](tools/make-example-project.ts) | Regenerates the example |
 | `window.BitWave` in [`bitwave-v2.html`](bitwave-v2.html) | Read-only, schema-1 state/geometry surface; contract in [`AGENTS.md`](AGENTS.md) |
-| [`DECISIONS.md`](DECISIONS.md) | D1–D18, including the author decisions above |
+| [`DECISIONS.md`](DECISIONS.md) | D1–D19, including the author decisions above |
 
 ## Known gaps and blockers
 
@@ -94,13 +107,14 @@ cell enough? Confirm before the matrix lands in the app.
    proves the canvas control points and the DOM nibble centres agree (worst
    offset 0.00 px, §11 limit 1.5 px), but the drawn spline's own pixels are not
    sampled; the §11 check asserts geometry, not raster output.
-3. **Toolchain not installed** — Vite/TypeScript/Vitest/Playwright deferred (D5);
-   core runs via Node 24 native TS and the browser harness uses built-in
-   WebSocket/fetch.
-4. **The app is not wired yet** — F2 must route all changes through
+3. **`src/main.js` is still one extracted module.** The toolchain is in place, but
+   the IIFE has not been split into `state/`, `render/` and `ui/` yet — that is F2.
+   Likewise `src/core` is tested but not imported by the app; wiring it in is F2/F3.
+4. **The app is not wired to the core** — F2 must route all changes through
    `evaluateAll`; the current column bindings live in `colA`/`colB`.
 5. **Goldens are model-level + deterministic hashes**, not stored PNG baselines;
-   a cross-machine baseline would need a tolerance comparison.
+   a cross-machine baseline would need a tolerance comparison. The `--compare`
+   parity gate is same-machine, same-browser.
 
 ## Errata found
 
@@ -111,11 +125,12 @@ cell enough? Confirm before the matrix lands in the app.
 
 ## Next actions
 
-1. **F2 spine:** the read-only `window.BitWave` seam is done (D18); next is the
-   write side — `src/state/store.ts` + `actions.ts`, with the app's mutations
-   routed through one transaction and `evaluateAll()` as the only evaluator.
-   Join the CSV column bindings and frame routes into one per-input binding model
-   (no behaviour change for CSV). Screenshot hashes are the regression proof.
+1. **F2 spine:** split `src/main.js` into modules behind a store: `state/store.ts`
+   (`get`/`patch`/`subscribe`), `state/actions.ts`, `render/*` and `ui/*`, with the
+   app's mutations routed through one transaction and `evaluateAll()` as the only
+   evaluator. Join the CSV column bindings and frame routes into one per-input
+   binding model (no behaviour change for CSV). `npm run build` +
+   `--compare` screenshots are the regression proof at every step.
 2. **F3 in the app:** replace the per-lane `colA`/`colB` selects with the six-row
    source table; keep import/typing/alignment identical; add frame sources and
    `z⁻¹` state. Rows are the six operand frames A–F (D15); confirm the CSV label

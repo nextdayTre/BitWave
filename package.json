@@ -5,11 +5,19 @@
   "type": "module",
   "description": "BitWave core — a register you can see. DOM-free engine plus the single-file instrument.",
   "scripts": {
+    "build": "vite build && node tools/build-artifact.mjs",
+    "dev": "vite",
+    "typecheck": "tsc -p tsconfig.core.json --noEmit",
     "test": "node --test --test-isolation=none tests/design-invariants.test.ts tests/routing.test.ts tests/io-geometry.test.ts tests/project.test.ts",
     "check:browser": "node tools/browser-check.mjs",
     "capture": "node tools/browser-check.mjs --shots .tmp-captures"
   },
   "engines": {
     "node": ">=23.6"
+  },
+  "devDependencies": {
+    "typescript": "^7.0.2",
+    "vite": "^8.3.6",
+    "vite-plugin-singlefile": "^2.3.4"
   }
 }

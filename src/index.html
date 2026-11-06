@@ -1,0 +1,184 @@
+<!doctype html>
+<!--
+  src/index.html — BitWave source template (built into bitwave-v2.html).
+
+  `npm run build` bundles src/main.js and src/styles/app.css into one
+  self-contained file at the repo root; open that file directly.
+
+  Same engine, same visual system, same feature set. User-facing changes only:
+    · lanes are numbered 1 / 2 / 3 (letters now mean frames/operands only)
+    · frame names are global: lane 1 A/B/Z1, lane 2 C/D/Z2, lane 3 E/F/Z3
+    · a Pro-Q4-style frame navigator browses lanes and their frames with static
+      mini-curves; clicking a frame focuses it in place (2-D or 3-D), and an eye
+      toggle shows/hides that lane's frame in the 2D view
+    · focus is a lens, not navigation: derived frames focus read-only, the view
+      never switches and the navigator never closes on a frame click
+    · the old "logic B" toggle and 2D/3D segment are gone: the navigator shows
+      the frames, and one "3D" toggle switches the depth field
+    · lane controls and display controls are separate groups
+    · copy mode says what it does and Escape cancels it
+    · segmented controls expose aria-pressed; ambiguous preset names are labelled
+    · the hint mentions that bits are clickable too
+    · wheel over a hex glyph nudges that nibble by ±1, clamped 0–F
+    · agent-interop intent is recorded in AGENTS.md: state/render surfaces,
+      not screenshot automation
+
+  index.html is untouched and remains the reference.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>BitWave — a register you can see</title>
+<link rel="stylesheet" href="/styles/app.css" />
+</head>
+<body>
+
+<header>
+  <div class="title">
+    <h1>BitWave</h1>
+    <p>registers as waveforms — every nibble is a sample</p>
+  </div>
+  <div class="sizer">
+    <label for="size">register</label>
+    <input id="size" type="range" min="0" max="5" step="1" value="3" aria-label="Register size" />
+    <output id="sizeOut" for="size">64 bits · 16 nibbles</output>
+  </div>
+</header>
+
+<section class="stage">
+  <canvas id="wave"></canvas>
+  <div class="hint" id="hint">drag a nibble · click a bit · scroll a hex</div>
+  <div class="stage-bar" id="stageBar" hidden></div>
+  <aside class="frames-panel" id="framesPanel" hidden aria-label="Frame navigator">
+    <div class="fp-head">
+      <h2 class="fp-title">frames</h2>
+      <button class="op" id="framesClose" type="button" aria-label="Close frame navigator" title="Close (Esc)">×</button>
+    </div>
+    <div class="fp-body" id="framesBody"></div>
+    <div class="fp-foot">
+      <span id="framesLegend">A solid · Z1 glow · B dashed</span>
+      <button class="op" id="unpairB" type="button" hidden title="Remove operand B from this lane">unpair B</button>
+    </div>
+  </aside>
+</section>
+
+<section class="strip" id="strip" data-edit="A">
+  <div class="nibs" id="nibs"></div>
+</section>
+
+<section class="meta" id="meta">
+  <div class="badge" id="slotBadge" hidden>lane 1</div>
+  <div class="badge" id="trend">level</div>
+
+  <div class="aOnly kv"><span>hex</span><code id="hex">—</code></div>
+  <div class="aOnly kv wide"><span>dec</span><code id="dec">—</code></div>
+
+  <div class="abOnly truth" id="truth"></div>
+  <div class="abOnly kv"><span>A</span><code id="hexA">—</code></div>
+  <div class="abOnly kv"><span>B</span><code id="hexB">—</code></div>
+  <div class="abOnly kv"><span>Z</span><code id="hexZ">—</code></div>
+  <div class="abOnly kv"><span>pop Z1</span><code id="pop">—</code></div>
+</section>
+
+<section class="controls">
+  <div class="group">
+    <label>data</label>
+    <button class="op" id="csvBtn" title="Import a CSV or TSV of examples">import csv</button>
+    <input type="file" id="csvFile" accept=".csv,.tsv,text/csv,text/plain" hidden />
+    <div class="seg" id="stepSeg" hidden>
+      <button class="op" id="prevEx" title="Previous example (←)" aria-label="Previous example">◀</button>
+      <button class="op" id="nextEx" title="Next example (→)" aria-label="Next example">▶</button>
+    </div>
+    <span class="excount" id="exCount" hidden>0 / 0</span>
+    <span class="col-wrap" id="colAWrap" hidden><span class="col-tag">A</span><select id="colA" aria-label="Register A column"></select></span>
+    <span class="col-wrap" id="colBWrap" hidden><span class="col-tag">B</span><select id="colB" aria-label="Register B column"></select></span>
+    <div class="seg" id="obsSeg" hidden>
+      <button class="op" id="logObsBtn" title="Log current observation">log</button>
+      <button class="op" id="exportObsBtn" title="Export observations to CSV">export</button>
+    </div>
+    <span class="excount" id="obsCount" hidden>0 obs</span>
+  </div>
+
+  <div class="group">
+    <label>shape</label>
+    <button class="op" data-preset="zero" title="All zeros" aria-label="All zeros">0</button>
+    <button class="op" data-preset="max" title="All ones (F)" aria-label="All ones">F</button>
+    <button class="op" data-preset="sine">sine</button>
+    <button class="op" data-preset="cosine">cosine</button>
+    <button class="op" data-preset="triangle">tri</button>
+    <button class="op" data-preset="sawDown">saw ↓</button>
+    <button class="op" data-preset="sawUp">saw ↑</button>
+    <button class="op" data-preset="square">square</button>
+  </div>
+
+  <div class="group" id="logicGroup">
+    <label>logic</label>
+    <button class="op accent" data-binop="and" hidden>AND</button>
+    <button class="op accent" data-binop="or" hidden>OR</button>
+    <button class="op accent" data-binop="xor" hidden>XOR</button>
+    <button class="op accent" data-binop="add" hidden title="Arithmetic add — carries propagate">ADD</button>
+    <button class="op accent" data-binop="sub" hidden title="Arithmetic subtract — borrows propagate">SUB</button>
+  </div>
+
+  <div class="group">
+    <label>lane</label>
+    <div class="seg" id="slotSeg" role="group" aria-label="Lane 1, 2, or 3">
+      <button class="op on" data-slot="A" title="Lane 1 (Alt+1)" aria-pressed="true" aria-keyshortcuts="Alt+1">1</button>
+      <button class="op" data-slot="B" title="Lane 2 (Alt+2)" aria-pressed="false" aria-keyshortcuts="Alt+2">2</button>
+      <button class="op" data-slot="C" title="Lane 3 (Alt+3)" aria-pressed="false" aria-keyshortcuts="Alt+3">3</button>
+    </div>
+    <button class="op" id="framesBtn" aria-expanded="false" aria-controls="framesPanel" title="Browse frames A, Z, B across lanes">frames</button>
+    <button class="op" id="splitBtn" aria-pressed="false" aria-keyshortcuts="Alt+S" title="Split main 3D view into two side-by-side visualizers (Alt+S)">split</button>
+    <button class="op" id="copySlotBtn" aria-pressed="false" title="Copy the focused lane into another lane (click, then pick 1, 2, or 3)">copy to…</button>
+  </div>
+
+  <div class="group">
+    <label>view</label>
+    <button class="op" id="depthBtn" aria-pressed="false" title="Show the depth field: A at frame 1, Z at 128, B at 256">3D</button>
+  </div>
+
+  <div class="group">
+    <label>lfo</label>
+    <button class="op" id="lfoBtn" aria-pressed="false" title="Animate the register you are editing">LFO</button>
+    <select id="lfoMode" aria-label="LFO motion">
+      <option value="rotcw">rot ↻</option>
+      <option value="rotccw">rot ↺</option>
+      <option value="slide">slide ⇄</option>
+      <option value="csvStep">step ⏭</option>
+    </select>
+    <select id="lfoRate" aria-label="LFO rate">
+      <option value="1">1/s</option>
+      <option value="2">2/s</option>
+      <option value="4" selected>4/s</option>
+      <option value="8">8/s</option>
+    </select>
+    <select id="lfoB" aria-label="B phase relative to A">
+      <option value="0">b sync</option>
+      <option value="opp">b anti</option>
+      <option value="q">b +¼</option>
+      <option value="h">b +½</option>
+    </select>
+  </div>
+
+  <div class="group">
+    <label>bit ops</label>
+    <select id="amount" aria-label="Rotate / shift amount in bits">
+      <option value="1">1 bit</option>
+      <option value="2">2 bits</option>
+      <option value="4" selected>4 bits</option>
+      <option value="8">8 bits</option>
+    </select>
+    <button class="op accent" data-op="rol">ROL ←</button>
+    <button class="op accent" data-op="ror">ROR →</button>
+    <button class="op accent" data-op="shl">SHL ←</button>
+    <button class="op accent" data-op="shr">SHR →</button>
+    <button class="op accent" data-op="not">NOT</button>
+    <button class="op accent" data-op="fold">FOLD</button>
+    <button class="op accent" data-op="bswap" title="Reverse byte order — endianness swap">BSWAP</button>
+  </div>
+</section>
+
+<script type="module" src="/main.js"></script>
+</body>
+</html>
