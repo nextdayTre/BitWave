@@ -16,6 +16,7 @@ Format is deliberately short: decision, basis, how to reverse it.
 | D6 | **`N` is an explicit parameter in the core**; no global state, no `curSlot()` default. The app's one shared width becomes a store concern. | DESIGN §10.10; PLAN §6.3. Implemented throughout `src/core`. | Reintroduce a façade in `state/`, never in `core/`. |
 | D7 | **Evaluation is clocked, not algebraic:** `evaluateAll` runs on transactions, samples delayed sources before writing, resolves views in dependency order, then derives Z. | routing §3.2–§3.3; avoids stale Z and hung loops. | Change evaluation policy in one function; tests cover chains/cycles. |
 | D8 | **DESIGN §11 `NOT` vector is an erratum.** The real complement of `FEDCBA9876543210` is `0123456789ABCDEF`; the doc lists `123456789ABCDEF0`, which is neither the complement nor consistent with `invert`. | Verified independently; index.html's `invert` agrees with the engine. | Correct DESIGN.md §11 (recommended); the test documents which value is authoritative. |
+| D9 | **The `.bitwave` document persists A/B hex, slot settings, routes and parked bases — never Z.** Schema 1; a newer schema is rejected with a distinct `newer-schema` code so the UI can offer read-only. | PLAN §6.5; DESIGN §10.8; routing park/restore needs its bases to survive reload. | Bump `PROJECT_SCHEMA` + add a migration chain; old files keep loading through the old branch. |
 
 ## Open decisions still with the author
 

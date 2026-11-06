@@ -12,3 +12,6 @@ export * from "./derive.ts";
 export * from "./spline.ts";
 export * from "./slots.ts";
 export * from "./routing.ts";
+export * from "./csv.ts";
+export * from "./geometry.ts";
+export * from "./project.ts";

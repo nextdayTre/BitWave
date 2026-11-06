@@ -5,7 +5,7 @@
   "type": "module",
   "description": "BitWave core — a register you can see. DOM-free engine plus the single-file instrument.",
   "scripts": {
-    "test": "node --test --test-isolation=none tests/design-invariants.test.ts tests/routing.test.ts"
+    "test": "node --test --test-isolation=none tests/design-invariants.test.ts tests/routing.test.ts tests/io-geometry.test.ts tests/project.test.ts"
   },
   "engines": {
     "node": ">=23.6"
