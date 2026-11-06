@@ -31,11 +31,20 @@ import { evaluate } from "./state/routing.ts";
 import { createStore } from "./state/store.ts";
 
 import { DEMO } from "./state/dataset.ts";
+import {
+  bindNone,
+  isFocusDriven,
+  isInputDriven,
+  listInputs,
+  remapParkedBases,
+  updateParkedBase,
+} from "./state/bindings.ts";
 import { createFrameNavigator } from "./ui/frame-navigator.js";
 import { createStageBar } from "./ui/stage-bar.js";
 import { attachKeyboard } from "./ui/keyboard.js";
 import { createControls } from "./ui/controls.js";
 import { createCsvImport } from "./ui/csv-import.js";
+import { createSourceTable } from "./ui/source-table.js";
 import { evalSpline } from "./core/spline.ts";
 import { G, canvasEl as canvas, draw, fitCanvas, getPad, shortCol } from "./render/canvas.js";
 import { nibsEl, patchNibble, renderStrip, syncHoverClasses } from "./render/strip.js";
@@ -110,6 +119,7 @@ import { toHexOf, updateReadouts } from "./render/readouts.js";
         sl.Z.anim = new Array(newNibs).fill(0);
       }
 
+      remapParkedBases(oldN, newN);
       evaluate(true);
 
       S.drag = -1;
@@ -184,6 +194,7 @@ import { toHexOf, updateReadouts } from "./render/readouts.js";
   function setFromPointer(e) {
     if (S.view3d) return;            // the field view is read-only
     if (!focusEditable()) return;    // a focused derived frame is read-only
+    if (isFocusDriven()) return;     // a routed input has no local edit
     const r = canvas.getBoundingClientRect();
     const px = e.clientX - r.left;
     const py = e.clientY - r.top;
@@ -280,6 +291,7 @@ import { toHexOf, updateReadouts } from "./render/readouts.js";
     const bit = e.target.closest(".bit");
     if (!bit) return;
     if (!focusEditable()) return;   // Z is derived — never editable
+    if (isFocusDriven()) return;    // a routed input has no local edit
     controls.lfoStop();
     store.patch(() => {
       const j = toggleBit(editReg(), Number(bit.dataset.b));
@@ -295,6 +307,7 @@ import { toHexOf, updateReadouts } from "./render/readouts.js";
     if (S.drag >= 0 || e.deltaY === 0) return;
     if (e.ctrlKey || e.metaKey) return; // leave browser zoom alone
     if (!focusEditable()) return;       // Z is derived — never editable
+    if (isFocusDriven()) return;        // a routed input has no local edit
     const hexEl = e.target.closest(".hex");
     if (!hexEl) return;
     const nib = hexEl.closest(".nib");
@@ -347,11 +360,6 @@ import { toHexOf, updateReadouts } from "./render/readouts.js";
      hardware can never hold.
      ══════════════════════════════════════════════════════════ */
 
-  function applyTable(name, reg = editReg()) {
-    applyPreset(reg, name);
-    commit();
-  }
-
   /* ══════════════════════════════════════════════════════════
      OPS — all unary ops act on the register you are editing.
      The implementations live in src/core/ops.ts and run through
@@ -364,6 +372,7 @@ import { toHexOf, updateReadouts } from "./render/readouts.js";
     if (!sl.showB) return;
     controls.lfoStop();
     store.patch(() => {
+      if (isInputDriven(sl, "b")) bindNone(sl, "b");
       unpair(sl);
       S.hoverReg = null;
       S.hoverJ = -1;
@@ -442,12 +451,8 @@ import { toHexOf, updateReadouts } from "./render/readouts.js";
         S.lfo.base[sl.key].b = sl.B.bits.slice();
       }
     }
+    if (isInputDriven(sl, "b")) updateParkedBase(sl, "b", sl.B.bits);
     evaluate(true);
-  }
-
-  function enableB() {
-    enableBOnSlot(curSlot());
-    controls.syncEditUi();
   }
 
   function copySlotInto(srcKey, dstKey) {
@@ -459,6 +464,8 @@ import { toHexOf, updateReadouts } from "./render/readouts.js";
       copyLane(src, dst);
       syncTarget(dst.A, true);
       syncTarget(dst.B, true);
+      if (isInputDriven(dst, "a")) updateParkedBase(dst, "a", dst.A.bits);
+      if (isInputDriven(dst, "b")) updateParkedBase(dst, "b", dst.B.bits);
       evaluate(true);
     });
   }
@@ -605,9 +612,20 @@ import { toHexOf, updateReadouts } from "./render/readouts.js";
     store,
     resizeRegister,
     lfoStop: (...args) => controls.lfoStop(...args),
-    enableB,
     frameNav,
     syncViewUi,
+    renderStrip,
+    updateReadouts,
+    onSizeChange: (...args) => controls.setSize(...args),
+    onBindingsChanged: () => sources.render(),
+  });
+
+  const sources = createSourceTable({
+    store,
+    evaluate,
+    applyRow: () => csv.applyExample(DEMO.i, true, true),
+    fitColumns: () => csv.fitColumns(),
+    syncEditUi: (...args) => controls.syncEditUi(...args),
     renderStrip,
     updateReadouts,
   });
@@ -824,12 +842,17 @@ import { toHexOf, updateReadouts } from "./render/readouts.js";
     return deepFreeze({ schema: 1, lanes });
   }
 
+  function snapshotBindings() {
+    return deepFreeze({ schema: 1, inputs: listInputs() });
+  }
+
   if (!Object.prototype.hasOwnProperty.call(window, "BitWave")) {
     Object.defineProperty(window, "BitWave", {
       value: Object.freeze({
         schema: 1,
         artifact: "bitwave-v2.html",
         frames: snapshotFrames,
+        bindings: snapshotBindings,
         state: snapshotState,
         geometry: snapshotGeometry,
       }),

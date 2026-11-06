@@ -432,6 +432,84 @@
   .lane-btn:focus-visible,
   .frame-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 
+  /* ── input source table — six fixed rows ───────────────── */
+  .sources-panel {
+    position: absolute;
+    z-index: 3;
+    top: 8px;
+    bottom: 8px;
+    right: var(--pad);
+    width: min(440px, calc(100% - 2 * var(--pad)));
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 5px;
+  }
+
+  .src-body { overflow: auto; padding: 2px 10px 6px; }
+
+  .src-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-family: var(--mono);
+  }
+
+  .src-table th {
+    padding: 7px 4px 6px;
+    border-bottom: 1px solid var(--line-soft);
+    font-family: var(--sans);
+    font-size: 9px;
+    font-weight: 500;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    text-align: left;
+    color: var(--dimmer);
+  }
+
+  .src-table th:nth-child(3) { width: 62px; text-align: right; }
+
+  .src-table td {
+    padding: 4px 4px;
+    border-bottom: 1px solid var(--line-soft);
+    vertical-align: middle;
+  }
+  .src-table tr:last-child td { border-bottom: 0; }
+
+  .src-lane {
+    margin-right: 6px;
+    font-family: var(--mono);
+    font-size: 9px;
+    letter-spacing: 0.05em;
+    color: var(--dimmer);
+    white-space: nowrap;
+  }
+
+  .src-dest {
+    font-family: var(--mono);
+    font-size: 11.5px;
+    color: var(--text);
+    white-space: nowrap;
+  }
+
+  .src-dest .src-col { color: var(--dim); }
+
+  .src-pick { width: 100%; font-family: var(--mono); font-size: 11px; }
+
+  .src-state {
+    font-family: var(--mono);
+    font-size: 10px;
+    text-align: right;
+    white-space: nowrap;
+    color: var(--dim);
+  }
+  .src-state.is-feed,
+  .src-state.is-delay { color: var(--accent); }
+  .src-state.is-none { color: var(--dimmer); }
+
+  .sources-panel .fp-foot { font-size: 9.5px; }
+
   /* ── bit strip ─────────────────────────────────────────── */
   .strip {
     position: relative;

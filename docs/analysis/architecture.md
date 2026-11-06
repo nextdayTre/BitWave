@@ -14,6 +14,8 @@
 
 **UI update 2026-11-06 (D23):** `src/ui/` now holds the frame navigator, stage bar, CSV import/stepper, keyboard map and the controls + LFO, and `src/io/observations.js` holds the logger. `main.js` is down to 843 lines: composition, pointer input, lane/view controllers, loop/boot and the agent surface. Remaining F2 work is extracting those two controllers; F3 (the source table) can start now because the spine is complete.
 
+**F3 update 2026-11-06 (D24–D25):** the source table is shipped. `src/state/bindings.ts` maps the six inputs to a CSV column, a frame output or nothing; `src/ui/source-table.js` renders it as a transient panel with assignment labels (`A · Hex 1`), state chips and driven-input locking. `evaluate()` now runs routes from the core engine, and every register writer skips driven inputs. The core `routing.ts`/`csv.ts` modules are exercised by the app and by `tests/bindings.test.ts`.
+
 Governing constraints: `DESIGN.md` is the visual source of truth, no new hue is introduced below, and §11 (lines 419–437) must pass after every phase.
 
 ---

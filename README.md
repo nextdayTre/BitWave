@@ -14,8 +14,9 @@ no network, no dependencies — **open it directly in a browser.**
 
 - **`bitwave-v2.html`** — the current build, generated from `src/`. Lanes 1/2/3,
   the Pro-Q4-style frame navigator, per-frame visibility eyes, the frame focus
-  lens (A/B/Z1, C/D/Z2, E/F/Z3), wheel-to-adjust hex, copy-to-lane, CSV stepper,
-  observation CSV export, LFO, split 3-D.
+  lens (A/B/Z1, C/D/Z2, E/F/Z3), the six-input **source table** (CSV columns or
+  frame outputs, with driven inputs locked), wheel-to-adjust hex, copy-to-lane,
+  CSV stepper, observation CSV export, LFO, split 3-D.
 - **`index.html`** — untouched original reference build.
 - `index.html.bak` — an older snapshot, kept only as history.
 
@@ -36,8 +37,8 @@ the artifact stays readable.
 ## Verify
 
 ```bash
-npm test               # DOM-free core + state + actions: 55 tests, zero dependencies
-npm run check:browser  # 25 artifact checks in headless Chromium (26 with --shots or --compare)
+npm test               # DOM-free core + state + bindings: 61 tests, zero dependencies
+npm run check:browser  # 27 artifact checks in headless Chromium (28 with --shots or --compare)
 npm run capture        # state screenshots → .tmp-captures/
 ```
 
@@ -63,6 +64,7 @@ node tools/browser-check.mjs --compare path/to/reference.html
 
 ```js
 BitWave.state()      // frozen snapshot: lanes, frames A–F/Z1–Z3, values, focus, view, dataset
+BitWave.bindings()   // the six input bindings: data column / frame source / state chip
 BitWave.geometry()   // plot rect, nibble geometry, control-point xs[], DOM nibble rects
 BitWave.frames()     // the frame-name table per lane
 ```
@@ -84,6 +86,7 @@ and example snapshot are in [`AGENTS.md`](AGENTS.md).
 | `index.html` | Untouched original reference build. |
 | `src/` | App source: `index.html`, `main.js` (composition + controllers), `styles/app.css`; `state/`, `render/`, `ui/`, `io/` modules and the `core/` engine. |
 | `tools/` | `browser-check.mjs` (verification + parity gate), `build-artifact.mjs` (single-file gate), the example generator. |
+| `testcsv.xlsx`, `examples/testcsv.csv` | The four-column import sample (`Hex 1`, `Hex 2`, `Grandma Hex`, `Bananas Hex`); the CSV twin is what the instrument imports. |
 | `vite.config.mjs`, `package.json`, `tsconfig.core.json` | Build, test and typecheck setup. |
 | `docs/`, `PLAN.md`, `DECISIONS.md`, `STATUS.md`, `tests/`, `spike/`, `examples/` | Design analysis, plan/status, core tests, housing spike and project example. |
 
@@ -94,7 +97,7 @@ as a single-file bundle under `backups/` (ignored by Git), so it can be restored
 or cloned without a remote:
 
 ```bash
-git clone backups/bitwave-v2-2026-11-06-ui.bundle bitwave-restore
+git clone backups/bitwave-v2-2026-11-06-source-matrix.bundle bitwave-restore
 ```
 
 Tags: `v2-checkpoint-2026-11-06` (frame navigator, eyes, wheel-step),
@@ -103,8 +106,8 @@ Tags: `v2-checkpoint-2026-11-06` (frame navigator, eyes, wheel-step),
 `v2-toolchain-2026-11-06` (Vite build, `src/` source tree, rebuild parity gate),
 `v2-state-2026-11-06` (DOM-free state tree + transaction store),
 `v2-transaction-2026-11-06` (actions, core `evaluateAll` in the transaction),
-`v2-render-2026-11-06` (render layer split) and
-`v2-ui-2026-11-06` (UI feature modules: navigator, stage bar, controls, CSV,
-keyboard, observations).
+`v2-render-2026-11-06` (render layer split),
+`v2-ui-2026-11-06` (UI feature modules) and
+`v2-source-matrix-2026-11-06` (six-row source table, frame routing, driven inputs).
 
 For off-machine safety, add a remote and push the `main` branch and tags.

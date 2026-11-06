@@ -46,6 +46,7 @@ are no setters, so writes stay with the instrument's own controls.
 | `BitWave.schema` | `1` — bump this whenever the shape changes |
 | `BitWave.artifact` | `"bitwave-v2.html"` |
 | `BitWave.frames()` | lane → operand/derived frame names (`1: A/B → Z1`, `2: C/D → Z2`, `3: E/F → Z3`) |
+| `BitWave.bindings()` | the six input bindings: lane/operand/frame, source (`data` column or frame output), state chip (`data`/`1:1`/`z⁻¹`/`—`), driven flag |
 | `BitWave.state()` | register width, focused lane/frame, view mode, every lane's A/B/Z hex, operator, CSV source names, per-frame focus/visibility, LFO, dataset cursor |
 | `BitWave.geometry()` | canvas plot rect, `--pad`, nibble width/gap, computed control-point `xs[]`, and the matching DOM nibble rects |
 
@@ -62,6 +63,14 @@ Example `state()`:
   "lfo": { "on": false, "mode": "rotcw", "rate": 4 },
   "dataset": null,
   "editing": { "copyArmed": false, "enabled": true } }
+```
+
+Example `bindings()` row:
+
+```json
+{ "lane": "A", "laneNumber": 1, "operand": "a", "frame": "A",
+  "source": { "kind": "data", "index": 0, "column": "Hex 1" },
+  "state": "data", "driven": false }
 ```
 
 `geometry()` exists so tests and agents compare `controlPoints[j]` with

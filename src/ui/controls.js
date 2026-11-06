@@ -8,6 +8,8 @@
  */
 
 import { applyPreset, applyUnary, setBinop } from "../state/actions.ts";
+import { driverName, isFocusDriven, isInputDriven } from "../state/bindings.ts";
+import { DEMO } from "../state/dataset.ts";
 import {
   S,
   SIZES,
@@ -15,6 +17,7 @@ import {
   curSlot,
   editReg,
   focusEditable,
+  focusKey,
   frameLabel,
   nibCount,
   syncTarget,
@@ -74,11 +77,11 @@ export function createControls(deps) {
           for (const k of SLOT_KEYS) {
             const sl = S.slots[k];
             if (snap[k]) {
-              sl.A.bits = snap[k].a.slice();
-              sl.B.bits = snap[k].b.slice();
+              if (!isInputDriven(sl, "a")) sl.A.bits = snap[k].a.slice();
+              if (!isInputDriven(sl, "b")) sl.B.bits = snap[k].b.slice();
             }
-            syncTarget(sl.A);
-            syncTarget(sl.B);
+            if (!isInputDriven(sl, "a")) syncTarget(sl.A);
+            if (!isInputDriven(sl, "b")) syncTarget(sl.B);
           }
           evaluate();
         }
@@ -108,7 +111,7 @@ export function createControls(deps) {
   function lfoTick() {
     if (S.lfo.mode === "csvStep") {
       if (DEMO.rows && DEMO.rows.length) {
-        csv.applyExample(DEMO.i + 1, false, true);
+        applyExample(DEMO.i + 1, false, true);
       }
       return;
     }
@@ -135,15 +138,15 @@ export function createControls(deps) {
         const sl = S.slots[sk];
         const sb = base[sk];
         if (!sb) continue;
-        sweepInto(sl.A, sb.a, shift, rotate);
-        if (sl.showB) {
+        if (!isInputDriven(sl, "a")) sweepInto(sl.A, sb.a, shift, rotate);
+        if (sl.showB && !isInputDriven(sl, "b")) {
           const cfg = lfoBConfig(sl.lfoB);
           /* Counter-rotation is the only offset that makes Z *change shape*;
              a fixed offset just slides a rigid pattern around the register. */
           sweepInto(sl.B, sb.b, (cfg.opp ? -shift : shift) + cfg.off, rotate);
         }
-        syncTarget(sl.A);
-        syncTarget(sl.B);
+        if (!isInputDriven(sl, "a")) syncTarget(sl.A);
+        if (!isInputDriven(sl, "b")) syncTarget(sl.B);
       }
 
       evaluate();
@@ -175,8 +178,15 @@ export function createControls(deps) {
     });
   });
 
+  function applyTable(name, reg = editReg()) {
+    if (isFocusDriven()) return;
+    applyPreset(reg, name);
+    commit();
+  }
+
   document.querySelectorAll("[data-op]").forEach((btn) => {
     btn.addEventListener("click", () => {
+      if (isFocusDriven()) return;     // a driven input has no local edit
       lfoStop();                       // a manual op takes the wheel back
       const k = Number(document.getElementById("amount").value) || 4;
       applyUnary(editReg(), btn.dataset.op, k);
@@ -186,6 +196,7 @@ export function createControls(deps) {
 
   document.querySelectorAll("[data-preset]").forEach((btn) => {
     btn.addEventListener("click", () => {
+      if (isFocusDriven()) return;
       lfoStop();
       applyTable(btn.dataset.preset);
     });
@@ -208,9 +219,12 @@ export function createControls(deps) {
     });
     stripEl.dataset.edit = frameLabel();
     if (hintEl) {
-      hintEl.textContent = focusEditable()
-        ? "drag a nibble · click a bit · scroll a hex"
-        : `${frameLabel()} is derived — read-only`;
+      const driven = isFocusDriven();
+      hintEl.textContent = !focusEditable()
+        ? `${frameLabel()} is derived — read-only`
+        : driven
+          ? `${frameLabel()} is driven by ${driverName(curSlot(), focusKey())} — unplug in sources`
+          : "drag a nibble · click a bit · scroll a hex";
     }
     lfoBSel.value = curSlot().lfoB;
     lfoBSel.hidden = S.lfo.mode === "csvStep" || (!S.view3d && !S.showB);
@@ -232,5 +246,10 @@ export function createControls(deps) {
     syncSizeLabel();
   });
 
-  return { lfoStart, lfoStop, lfoTick, syncEditUi, syncSizeLabel };
+  function setSize(index) {
+    sizeInput.value = String(index);
+    syncSizeLabel();
+  }
+
+  return { lfoStart, lfoStop, lfoTick, syncEditUi, syncSizeLabel, setSize };
 }

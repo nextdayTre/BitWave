@@ -8,7 +8,7 @@
     "build": "vite build && node tools/build-artifact.mjs",
     "dev": "vite",
     "typecheck": "tsc -p tsconfig.core.json --noEmit",
-    "test": "node --test --test-isolation=none tests/design-invariants.test.ts tests/routing.test.ts tests/io-geometry.test.ts tests/project.test.ts tests/state.test.ts tests/actions.test.ts",
+    "test": "node --test --test-isolation=none tests/design-invariants.test.ts tests/routing.test.ts tests/io-geometry.test.ts tests/project.test.ts tests/state.test.ts tests/actions.test.ts tests/bindings.test.ts",
     "check:browser": "node tools/browser-check.mjs",
     "capture": "node tools/browser-check.mjs --shots .tmp-captures"
   },

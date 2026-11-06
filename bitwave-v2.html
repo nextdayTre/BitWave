@@ -15,6 +15,8 @@
       never switches and the navigator never closes on a frame click
     · the old "logic B" toggle and 2D/3D segment are gone: the navigator shows
       the frames, and one "3D" toggle switches the depth field
+    · the six-input source table (data columns or frame outputs) is the routing
+      housing: labels carry the assignment and driven inputs are locked
     · lane controls and display controls are separate groups
     · copy mode says what it does and Escape cancels it
     · segmented controls expose aria-pressed; ambiguous preset names are labelled
@@ -97,6 +99,12 @@ function bigToReg(v, bits, N) {
 		v >>= 1n;
 	}
 }
+function bitsToNibbles(bits, N) {
+	const n = nibCount$1(N);
+	const out = new Array(n);
+	for (let j = 0; j < n; j++) out[j] = nibAt$1(bits, N, j);
+	return out;
+}
 function nibblesToBits(values, N) {
 	const bits = new Uint8Array(N);
 	const n = nibCount$1(N);
@@ -111,6 +119,22 @@ function syncTarget$1(reg, N) {
 		reg.anim = new Array(n).fill(0);
 	}
 	for (let j = 0; j < n; j++) reg.target[j] = nibAt$1(reg.bits, N, j);
+}
+/**
+* Centre-pinned resize, faithful to `resizeRegister` in index.html: the
+* outermost nibbles on each side stay pinned and new nibbles appear at ∞.
+* `F0` at 8 bits becomes `F000` at 16, then `F000...0000` at 256.
+*/
+function remapNibbles(oldValues, oldN, newN) {
+	const oldNibs = nibCount$1(oldN);
+	const newNibs = nibCount$1(newN);
+	const keep = Math.min(oldNibs, newNibs) >> 1;
+	const vals = new Array(newNibs).fill(0);
+	for (let k = 0; k < keep; k++) {
+		vals[k] = oldValues[k];
+		vals[newNibs - 1 - k] = oldValues[oldNibs - 1 - k];
+	}
+	return vals;
 }
 // src/core/derive.ts
 var OPSYM = {
@@ -462,10 +486,72 @@ var createRouting = () => ({
 	routes: [],
 	parked: /* @__PURE__ */ new Map()
 });
+var portKey = (lane, frame) => `${lane}:${frame}`;
+var routeKey = (from, to) => `${from.lane}:${from.frame}>${to.lane}:${to.frame}`;
+var sameDest = (a, b) => a.lane === b.lane && a.frame === b.frame;
 var operandReg = (lane, frame) => frame === "a" ? lane.A : lane.B;
 function readPort(lanes, laneKey, frame) {
 	const lane = lanes[laneKey];
 	return frame === "z" ? lane.Z.bits : frame === "b" ? lane.B.bits : lane.A.bits;
+}
+function isDriven(routing, lane, frame) {
+	return routing.routes.some((r) => r.to.lane === lane && r.to.frame === frame);
+}
+function driverOf(routing, lane, frame) {
+	return routing.routes.find((r) => r.to.lane === lane && r.to.frame === frame);
+}
+/**
+* Attach a route. Returns the new route. Throws on an invalid wiring request
+* rather than silently doing something surprising.
+*/
+function addRoute(routing, lanes, from, to, mix = "set") {
+	if (!LANE_KEYS.includes(from.lane) || !LANE_KEYS.includes(to.lane)) throw new TypeError(`unknown lane in route ${JSON.stringify({
+		from,
+		to
+	})}`);
+	if (from.frame !== "a" && from.frame !== "b" && from.frame !== "z") throw new TypeError(`unknown source frame: ${String(from.frame)}`);
+	if (to.frame !== "a" && to.frame !== "b") throw new TypeError("Z is derived and cannot be a route destination (DESIGN §10.8)");
+	if (from.lane === to.lane && from.frame === to.frame) throw new Error("identity route is not a route");
+	const hadDriver = isDriven(routing, to.lane, to.frame);
+	routing.routes = routing.routes.filter((r) => !sameDest(r.to, to));
+	if (!hadDriver) {
+		const base = readPort(lanes, to.lane, to.frame);
+		routing.parked.set(portKey(to.lane, to.frame), base.slice());
+	}
+	const route = {
+		id: routeKey(from, to),
+		from: { ...from },
+		to: { ...to },
+		delay: false,
+		mix
+	};
+	routing.routes.push(route);
+	markDelays(routing);
+	return route;
+}
+/** Remove a route by id. Restores the parked base when its input becomes free. */
+function removeRoute(routing, lanes, id) {
+	const index = routing.routes.findIndex((r) => r.id === id);
+	if (index < 0) return false;
+	const [route] = routing.routes.splice(index, 1);
+	if (!isDriven(routing, route.to.lane, route.to.frame)) restoreDestination(routing, lanes, route.to.lane, route.to.frame);
+	markDelays(routing);
+	return true;
+}
+/** Restore a driven input's parked base. Returns false if nothing was parked. */
+function restoreDestination(routing, lanes, lane, frame) {
+	const key = portKey(lane, frame);
+	const base = routing.parked.get(key);
+	if (!base) return false;
+	const dest = operandReg(lanes[lane], frame);
+	if (base.length !== dest.bits.length) throw new Error(`parked base for ${key} is ${base.length} bits but the register is ${dest.bits.length}; call remapParked() around a resize`);
+	dest.bits.set(base);
+	routing.parked.delete(key);
+	return true;
+}
+/** Remove every route (convenience for boot/reset paths). */
+function clearRoutes(routing, lanes) {
+	for (const route of [...routing.routes]) removeRoute(routing, lanes, route.id);
 }
 /**
 * Classify cycle-closing routes. DFS over the lane graph: an edge to a gray
@@ -562,6 +648,13 @@ function evaluateAll(routing, lanes, N) {
 		lane.Z.bits = computeZ(lane.A.bits, lane.B.bits, N, lane.binop);
 	}
 }
+/** Remap parked bases around a width change so unpatch equals no-route resize. */
+function remapParked(routing, oldN, newN) {
+	for (const [key, bits] of routing.parked) {
+		const values = remapNibbles(bitsToNibbles(bits, oldN), oldN, newN);
+		routing.parked.set(key, nibblesToBits(values, newN));
+	}
+}
 // src/state/routing.ts
 /**
 * Bridge between the app's state tree and the core routing engine.
@@ -575,6 +668,11 @@ function evaluateAll(routing, lanes, N) {
 * dependency order, then derive every lane's Z. Call it on transaction
 * boundaries only (never per animation frame).
 */
+var LANE_KEY$1 = {
+	A: "1",
+	B: "2",
+	C: "3"
+};
 /** Routes and parked bases for the instrument. Empty until the matrix lands. */
 var routing = createRouting();
 function laneView(sl, key) {
@@ -603,7 +701,13 @@ function coreLanes() {
 /** The single evaluation entry point for the app. Writes state only. */
 function evaluate(instant = false) {
 	evaluateAll(routing, coreLanes(), S.N);
-	for (const key of SLOT_KEYS) syncTarget(S.slots[key].Z, instant);
+	for (const key of SLOT_KEYS) {
+		const sl = S.slots[key];
+		const lane = LANE_KEY$1[key];
+		if (isDriven(routing, lane, "a")) syncTarget(sl.A, instant);
+		if (isDriven(routing, lane, "b")) syncTarget(sl.B, instant);
+		syncTarget(sl.Z, instant);
+	}
 }
 // src/state/store.ts
 function createStore(initial) {
@@ -634,11 +738,154 @@ function createStore(initial) {
 	};
 }
 // src/state/dataset.ts
-var DEMO$1 = {
+var DEMO = {
 	cols: [],
 	rows: [],
 	i: 0
 };
+// src/state/bindings.ts
+/**
+* Input bindings — the six operand inputs and what drives them.
+*
+* One fixed row per input (lane 1/2/3 × operand a/b). A row's source is either
+* an imported CSV column (`data`), a frame output (`1:1` / `z⁻¹`), or nothing.
+* This is the routing engine's UI model: choosing a data column clears any
+* incoming route, choosing a frame clears the column, and the core parks and
+* restores the pre-patch base (DESIGN §10.8, D2).
+*
+* Names follow D15: the six operand frames are A–F; source frames are A–F plus
+* Z1–Z3. The assignment is the label: a data-bound row reads `A · sine`.
+*/
+var LANE_KEY = {
+	A: "1",
+	B: "2",
+	C: "3"
+};
+var LANE_BY_KEY = {
+	"1": "A",
+	"2": "B",
+	"3": "C"
+};
+var laneKeyOf = (slotKey) => LANE_KEY[slotKey];
+var slotKeyOf = (lane) => LANE_BY_KEY[lane];
+var columnIndexOf = (sl, operand) => operand === "a" ? sl.colA : sl.colB;
+var destinationOf = (sl, operand) => ({
+	lane: laneKeyOf(sl.key),
+	frame: operand
+});
+var routeFor = (sl, operand) => driverOf(routing, laneKeyOf(sl.key), operand);
+/** The global name of the frame driving this input, or null when local. */
+function driverName(sl, operand) {
+	const route = routeFor(sl, operand);
+	return route ? frameName(slotKeyOf(route.from.lane), route.from.frame) : null;
+}
+function describeInput(sl, operand) {
+	const route = routeFor(sl, operand);
+	const column = columnIndexOf(sl, operand);
+	let source = { kind: "none" };
+	let state = "—";
+	if (route) {
+		source = {
+			kind: "frame",
+			lane: route.from.lane,
+			frame: route.from.frame,
+			name: frameName(slotKeyOf(route.from.lane), route.from.frame)
+		};
+		state = route.delay ? "z⁻¹" : "1:1";
+	} else if (column >= 0 && DEMO.cols[column]) {
+		source = {
+			kind: "data",
+			index: column,
+			column: DEMO.cols[column]
+		};
+		state = "data";
+	}
+	return {
+		lane: sl.key,
+		laneNumber: Number(sl.key === "A" ? 1 : sl.key === "B" ? 2 : 3),
+		operand,
+		frame: frameName(sl.key, operand),
+		source,
+		state,
+		driven: Boolean(route)
+	};
+}
+function listInputs() {
+	const out = [];
+	for (const key of SLOT_KEYS) for (const operand of ["a", "b"]) out.push(describeInput(S.slots[key], operand));
+	return out;
+}
+/** Is the focused frame an input that a route drives? (editing is locked) */
+function isFocusDriven(sl = curSlot()) {
+	const key = focusKey(sl);
+	return key !== "z" && Boolean(routeFor(sl, key));
+}
+function isInputDriven(sl, operand) {
+	return Boolean(routeFor(sl, operand));
+}
+function inputLabel(binding) {
+	const suffix = binding.source.kind === "data" ? ` · ${binding.source.column}` : binding.source.kind === "frame" ? ` · ${binding.source.name}` : "";
+	return `${binding.frame}${suffix}`;
+}
+/** All frame outputs a given input may read, excluding its own frame. */
+function availableSources(sl, operand) {
+	const destLane = laneKeyOf(sl.key);
+	const out = [];
+	for (const lane of [
+		"1",
+		"2",
+		"3"
+	]) for (const frame of [
+		"a",
+		"b",
+		"z"
+	]) out.push({
+		lane,
+		frame,
+		name: frameName(slotKeyOf(lane), frame),
+		disabled: lane === destLane && frame === operand
+	});
+	return out;
+}
+function setColumn(sl, operand, column) {
+	if (operand === "a") sl.colA = column;
+	else sl.colB = column;
+}
+function dropRoute(sl, operand) {
+	const route = routeFor(sl, operand);
+	if (route) removeRoute(routing, coreLanes(), route.id);
+}
+/** Bind an input to an imported column, restoring any parked base first. */
+function bindData(sl, operand, column) {
+	dropRoute(sl, operand);
+	setColumn(sl, operand, column >= 0 && DEMO.cols[column] ? column : -1);
+}
+/** Bind an input to a frame output; its data column mapping is cleared. */
+function bindFrame(sl, operand, from) {
+	setColumn(sl, operand, -1);
+	addRoute(routing, coreLanes(), from, destinationOf(sl, operand));
+}
+/** Unbind an input (no source); a parked base is restored. */
+function bindNone(sl, operand) {
+	dropRoute(sl, operand);
+	setColumn(sl, operand, -1);
+}
+/** Clear every route and column binding (used by a fresh CSV import). */
+function resetBindings() {
+	clearRoutes(routing, coreLanes());
+	for (const key of SLOT_KEYS) {
+		S.slots[key].colA = -1;
+		S.slots[key].colB = -1;
+	}
+}
+/** Re-map parked bases around a width change so unroute equals no-route resize. */
+function remapParkedBases(oldN, newN) {
+	remapParked(routing, oldN, newN);
+}
+/** Keep a driven input's parked base in step when its local base is copied. */
+function updateParkedBase(sl, operand, bits) {
+	routing.parked.set(portKey(laneKeyOf(sl.key), operand), bits.slice());
+}
 // src/core/spline.ts
 function buildSpline(xs, ys) {
 	const n = xs.length;
@@ -689,7 +936,7 @@ function renderStrip() {
 	const r = focusReg();
 	const n = nibCount();
 	const compact = S.compact;
-	const readonly = !focusEditable();
+	const readonly = !focusEditable() || isFocusDriven();
 	const midA = S.N / 2 - 1;
 	const midB = S.N / 2;
 	let html = "";
@@ -1300,11 +1547,11 @@ function createControls(deps) {
 					for (const k of SLOT_KEYS) {
 						const sl = S.slots[k];
 						if (snap[k]) {
-							sl.A.bits = snap[k].a.slice();
-							sl.B.bits = snap[k].b.slice();
+							if (!isInputDriven(sl, "a")) sl.A.bits = snap[k].a.slice();
+							if (!isInputDriven(sl, "b")) sl.B.bits = snap[k].b.slice();
 						}
-						syncTarget(sl.A);
-						syncTarget(sl.B);
+						if (!isInputDriven(sl, "a")) syncTarget(sl.A);
+						if (!isInputDriven(sl, "b")) syncTarget(sl.B);
 					}
 					evaluate();
 				}
@@ -1328,7 +1575,7 @@ function createControls(deps) {
 	}
 	function lfoTick() {
 		if (S.lfo.mode === "csvStep") {
-			if (DEMO.rows && DEMO.rows.length) csv.applyExample(DEMO.i + 1, false, true);
+			if (DEMO.rows && DEMO.rows.length) applyExample(DEMO.i + 1, false, true);
 			return;
 		}
 		const base = S.lfo.base;
@@ -1349,13 +1596,13 @@ function createControls(deps) {
 				const sl = S.slots[sk];
 				const sb = base[sk];
 				if (!sb) continue;
-				sweepInto(sl.A, sb.a, shift, rotate);
-				if (sl.showB) {
+				if (!isInputDriven(sl, "a")) sweepInto(sl.A, sb.a, shift, rotate);
+				if (sl.showB && !isInputDriven(sl, "b")) {
 					const cfg = lfoBConfig(sl.lfoB);
 					sweepInto(sl.B, sb.b, (cfg.opp ? -shift : shift) + cfg.off, rotate);
 				}
-				syncTarget(sl.A);
-				syncTarget(sl.B);
+				if (!isInputDriven(sl, "a")) syncTarget(sl.A);
+				if (!isInputDriven(sl, "b")) syncTarget(sl.B);
 			}
 			evaluate();
 			renderStrip();
@@ -1381,8 +1628,14 @@ function createControls(deps) {
 			curSlot().lfoB = lfoBSel.value;
 		});
 	});
+	function applyTable(name, reg = editReg()) {
+		if (isFocusDriven()) return;
+		applyPreset(reg, name);
+		commit();
+	}
 	document.querySelectorAll("[data-op]").forEach((btn) => {
 		btn.addEventListener("click", () => {
+			if (isFocusDriven()) return;
 			lfoStop();
 			const k = Number(document.getElementById("amount").value) || 4;
 			applyUnary(editReg(), btn.dataset.op, k);
@@ -1391,6 +1644,7 @@ function createControls(deps) {
 	});
 	document.querySelectorAll("[data-preset]").forEach((btn) => {
 		btn.addEventListener("click", () => {
+			if (isFocusDriven()) return;
 			lfoStop();
 			applyTable(btn.dataset.preset);
 		});
@@ -1405,7 +1659,10 @@ function createControls(deps) {
 			b.setAttribute("aria-pressed", String(b.dataset.binop === S.binop));
 		});
 		stripEl.dataset.edit = frameLabel();
-		if (hintEl) hintEl.textContent = focusEditable() ? "drag a nibble · click a bit · scroll a hex" : `${frameLabel()} is derived — read-only`;
+		if (hintEl) {
+			const driven = isFocusDriven();
+			hintEl.textContent = !focusEditable() ? `${frameLabel()} is derived — read-only` : driven ? `${frameLabel()} is driven by ${driverName(curSlot(), focusKey())} — unplug in sources` : "drag a nibble · click a bit · scroll a hex";
+		}
 		lfoBSel.value = curSlot().lfoB;
 		lfoBSel.hidden = S.lfo.mode === "csvStep" || !S.view3d && !S.showB;
 	}
@@ -1419,12 +1676,17 @@ function createControls(deps) {
 		resizeRegister(SIZES[idx]);
 		syncSizeLabel();
 	});
+	function setSize(index) {
+		sizeInput.value = String(index);
+		syncSizeLabel();
+	}
 	return {
 		lfoStart,
 		lfoStop,
 		lfoTick,
 		syncEditUi,
-		syncSizeLabel
+		syncSizeLabel,
+		setSize
 	};
 }
 // src/core/csv.ts
@@ -1540,7 +1802,7 @@ var logObsBtn = document.getElementById("logObsBtn");
 var exportObsBtn = document.getElementById("exportObsBtn");
 var observations = [];
 function logCurrentObservation() {
-	const exName = DEMO$1.rows.length && DEMO$1.rows[DEMO$1.i] && DEMO$1.rows[DEMO$1.i][0] || `ex_${DEMO$1.i + 1}`;
+	const exName = DEMO.rows.length && DEMO.rows[DEMO.i] && DEMO.rows[DEMO.i][0] || `ex_${DEMO.i + 1}`;
 	const hexA = toHexOf(S.A);
 	const hexB = S.showB ? toHexOf(S.B) : "";
 	const hexZ = S.showB ? toHexOf(S.Z) : "";
@@ -1557,7 +1819,7 @@ function logCurrentObservation() {
 	const obs = {
 		timestamp: (/* @__PURE__ */ new Date()).toISOString(),
 		view: laneLabel(S.slot),
-		index: DEMO$1.i + 1,
+		index: DEMO.i + 1,
 		name: exName,
 		width_bits: S.N,
 		op: S.showB ? S.binop : "none",
@@ -1592,25 +1854,20 @@ if (exportObsBtn) exportObsBtn.addEventListener("click", exportObservationsCSV);
 /**
 * CSV import + example stepper.
 *
-* Moved out of main.js in F2. Reads/writes the dataset and lane column
-* bindings; all register writes run inside the store transaction and go
-* through the core evaluation pass.
+* Moved out of main.js in F2, and re-housed as the source table's data path in
+* F3: an import fills the six bindings with columns, then steps write each
+* bound input. Driven inputs are left to the routing engine.
 */
 function createCsvImport(deps) {
-	const { store, resizeRegister, lfoStop, enableB, frameNav, syncViewUi, renderStrip, updateReadouts } = deps;
+	const { store, resizeRegister, lfoStop, frameNav, syncViewUi, renderStrip, updateReadouts, onSizeChange, onBindingsChanged } = deps;
 	const csvBtn = document.getElementById("csvBtn");
 	const csvFile = document.getElementById("csvFile");
 	const stepSeg = document.getElementById("stepSeg");
 	const exCount = document.getElementById("exCount");
-	const colAWrap = document.getElementById("colAWrap");
-	const colBWrap = document.getElementById("colBWrap");
-	const colASel = document.getElementById("colA");
-	const colBSel = document.getElementById("colB");
 	const prevEx = document.getElementById("prevEx");
 	const nextEx = document.getElementById("nextEx");
 	const obsSeg = document.getElementById("obsSeg");
 	const obsCount = document.getElementById("obsCount");
-	const escHtml = (s) => String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 	function writeBitsInto(reg, arr) {
 		reg.bits = alignBits(arr, S.N);
 	}
@@ -1618,8 +1875,8 @@ function createCsvImport(deps) {
 		let maxBits = 8;
 		for (const k of SLOT_KEYS) {
 			const sl = S.slots[k];
-			if (sl.colA >= 0) maxBits = Math.max(maxBits, columnWidth(DEMO$1.rows, sl.colA));
-			if (sl.colB >= 0) maxBits = Math.max(maxBits, columnWidth(DEMO$1.rows, sl.colB));
+			if (sl.colA >= 0) maxBits = Math.max(maxBits, columnWidth(DEMO.rows, sl.colA));
+			if (sl.colB >= 0) maxBits = Math.max(maxBits, columnWidth(DEMO.rows, sl.colB));
 		}
 		let want = SIZES[0];
 		for (const s of SIZES) {
@@ -1628,35 +1885,26 @@ function createCsvImport(deps) {
 		}
 		if (want !== S.N) {
 			resizeRegister(want);
-			sizeInput.value = String(SIZES.indexOf(want));
-			syncSizeLabel();
+			onSizeChange(SIZES.indexOf(want));
 		}
 	}
-	function refreshColumnSelects() {
-		const opts = `<option value="-1">—</option>` + DEMO$1.cols.map((c, i) => `<option value="${i}">${escHtml(c)}</option>`).join("");
-		colASel.innerHTML = opts;
-		colBSel.innerHTML = opts;
-		const sl = curSlot();
-		colASel.value = String(sl.colA);
-		colBSel.value = String(sl.colB);
-	}
 	function applyExample(idx, instant, keepLfo = false) {
-		if (!DEMO$1.rows.length) return;
+		if (!DEMO.rows.length) return;
 		store.patch(() => {
 			if (frameNav.isOpen()) frameNav.close(false);
 			if (!keepLfo) lfoStop();
-			const n = DEMO$1.rows.length;
-			DEMO$1.i = (idx % n + n) % n;
-			const row = DEMO$1.rows[DEMO$1.i];
+			const n = DEMO.rows.length;
+			DEMO.i = (idx % n + n) % n;
+			const row = DEMO.rows[DEMO.i];
 			for (const k of SLOT_KEYS) {
 				const sl = S.slots[k];
-				if (sl.colA >= 0) {
-					const a = cellToBits(row[sl.colA], columnMode(DEMO$1.rows, sl.colA));
+				if (sl.colA >= 0 && !isInputDriven(sl, "a")) {
+					const a = cellToBits(row[sl.colA], columnMode(DEMO.rows, sl.colA));
 					if (a) writeBitsInto(sl.A, a);
 					syncTarget(sl.A, instant === true);
 				}
-				if (sl.colB >= 0) {
-					const b = cellToBits(row[sl.colB], columnMode(DEMO$1.rows, sl.colB));
+				if (sl.colB >= 0 && !isInputDriven(sl, "b")) {
+					const b = cellToBits(row[sl.colB], columnMode(DEMO.rows, sl.colB));
 					if (b) {
 						writeBitsInto(sl.B, b);
 						sl.seededB = true;
@@ -1672,22 +1920,17 @@ function createCsvImport(deps) {
 		});
 	}
 	function renderDemoUi() {
-		const loaded = DEMO$1.rows.length > 0;
+		const loaded = DEMO.rows.length > 0;
 		[
 			stepSeg,
 			exCount,
-			colAWrap,
-			colBWrap,
 			obsSeg,
 			obsCount
 		].forEach((el) => {
 			if (el) el.hidden = !loaded;
 		});
 		if (!loaded) return;
-		const sl = curSlot();
-		exCount.textContent = `${DEMO$1.i + 1} / ${DEMO$1.rows.length}`;
-		colASel.value = String(sl.colA);
-		colBSel.value = String(sl.colB);
+		exCount.textContent = `${DEMO.i + 1} / ${DEMO.rows.length}`;
 		if (obsCount) obsCount.textContent = `${observations.length} obs`;
 	}
 	function loadCSV(text) {
@@ -1697,10 +1940,11 @@ function createCsvImport(deps) {
 		const cols = hasHeader ? rows[0].map((c, i) => String(c).trim() || `col${i + 1}`) : rows[0].map((_, i) => `col${i + 1}`);
 		const body = hasHeader ? rows.slice(1) : rows;
 		if (!body.length) return;
-		DEMO$1.cols = cols;
-		DEMO$1.rows = body;
-		DEMO$1.i = 0;
-		const widths = cols.map((_, ci) => columnWidth(DEMO$1.rows, ci));
+		DEMO.cols = cols;
+		DEMO.rows = body;
+		DEMO.i = 0;
+		resetBindings();
+		const widths = cols.map((_, ci) => columnWidth(DEMO.rows, ci));
 		let best = -1, bestW = -1;
 		for (let ci = 0; ci < cols.length; ci++) if (widths[ci] > bestW) {
 			bestW = widths[ci];
@@ -1748,8 +1992,8 @@ function createCsvImport(deps) {
 			slC.colB = -1;
 		}
 		fitToMappedColumns();
-		refreshColumnSelects();
 		applyExample(0, true);
+		onBindingsChanged();
 	}
 	csvBtn.addEventListener("click", () => csvFile.click());
 	csvFile.addEventListener("change", () => {
@@ -1760,26 +2004,166 @@ function createCsvImport(deps) {
 		rd.readAsText(f);
 		csvFile.value = "";
 	});
-	prevEx.addEventListener("click", () => applyExample(DEMO$1.i - 1));
-	nextEx.addEventListener("click", () => applyExample(DEMO$1.i + 1));
-	colASel.addEventListener("change", () => {
-		curSlot().colA = Number(colASel.value);
-		fitToMappedColumns();
-		refreshColumnSelects();
-		applyExample(DEMO$1.i, true);
-	});
-	colBSel.addEventListener("change", () => {
-		const sl = curSlot();
-		sl.colB = Number(colBSel.value);
-		if (sl.colB >= 0 && !sl.showB) enableB();
-		fitToMappedColumns();
-		refreshColumnSelects();
-		applyExample(DEMO$1.i);
-	});
+	prevEx.addEventListener("click", () => applyExample(DEMO.i - 1));
+	nextEx.addEventListener("click", () => applyExample(DEMO.i + 1));
 	return {
 		loadCSV,
 		applyExample,
-		renderUi: renderDemoUi
+		renderUi: renderDemoUi,
+		fitColumns: fitToMappedColumns
+	};
+}
+// src/ui/source-table.js
+/**
+* Input source table — the six fixed bindings, one row per operand frame A–F.
+*
+* Moved out of the spike and into the instrument for F3. A row reads one
+* source: an imported CSV column (`data`), a frame output (`1:1` / `z⁻¹`), or
+* nothing. The label carries the assignment (D15 / author note): a data-bound
+* row reads `A · sine`, matching the column name the import dropdown shows.
+*/
+function createSourceTable(deps) {
+	const { store, evaluate, applyRow, fitColumns, syncEditUi, renderStrip, updateReadouts } = deps;
+	const btn = document.getElementById("sourcesBtn");
+	const panel = document.getElementById("sourcesPanel");
+	const rowsEl = document.getElementById("sourcesRows");
+	const closeBtn = document.getElementById("sourcesClose");
+	const statusEl = document.getElementById("sourcesStatus");
+	let rowIndex = -1;
+	function sourceLabel(binding) {
+		if (binding.source.kind === "data") return `data · ${binding.source.column}`;
+		if (binding.source.kind === "frame") return `frame · ${binding.source.name}`;
+		return "—";
+	}
+	function option(value, label, disabled = false) {
+		const opt = document.createElement("option");
+		opt.value = value;
+		opt.textContent = label;
+		if (disabled) opt.disabled = true;
+		return opt;
+	}
+	function buildRow(binding, index) {
+		const sl = S.slots[binding.lane];
+		const tr = document.createElement("tr");
+		const dest = document.createElement("td");
+		dest.className = "src-dest";
+		const lane = document.createElement("span");
+		lane.className = "src-lane";
+		lane.textContent = `Lane ${binding.laneNumber}`;
+		dest.appendChild(lane);
+		dest.appendChild(document.createTextNode(binding.frame));
+		if (binding.source.kind === "data") {
+			const col = document.createElement("span");
+			col.className = "src-col";
+			col.textContent = ` · ${binding.source.column}`;
+			dest.appendChild(col);
+		} else if (binding.source.kind === "frame") {
+			const col = document.createElement("span");
+			col.className = "src-col";
+			col.textContent = ` · ${binding.source.name}`;
+			dest.appendChild(col);
+		}
+		tr.appendChild(dest);
+		const sourceCell = document.createElement("td");
+		const select = document.createElement("select");
+		select.className = "src-pick";
+		select.setAttribute("aria-label", `Lane ${binding.laneNumber} ${binding.operand.toUpperCase()} source`);
+		select.appendChild(option("", "—"));
+		if (DEMO.cols.length) {
+			const dataGroup = document.createElement("optgroup");
+			dataGroup.label = "data";
+			DEMO.cols.forEach((column, ci) => {
+				dataGroup.appendChild(option(`data:${ci}`, `data · ${column}`));
+			});
+			select.appendChild(dataGroup);
+		}
+		const frameGroup = document.createElement("optgroup");
+		frameGroup.label = "frame";
+		for (const candidate of availableSources(sl, binding.operand)) frameGroup.appendChild(option(`frame:${candidate.lane}:${candidate.frame}`, `frame · ${candidate.name}`, candidate.disabled));
+		select.appendChild(frameGroup);
+		select.value = binding.source.kind === "data" ? `data:${binding.source.index}` : binding.source.kind === "frame" ? `frame:${binding.source.lane}:${binding.source.frame}` : "";
+		select.addEventListener("change", () => {
+			const value = select.value;
+			store.patch(() => {
+				if (!value) bindNone(sl, binding.operand);
+				else if (value.startsWith("data:")) {
+					bindData(sl, binding.operand, Number(value.slice(5)));
+					fitColumns();
+				} else {
+					const [, laneKey, frame] = value.split(":");
+					bindFrame(sl, binding.operand, {
+						lane: laneKey,
+						frame
+					});
+				}
+				evaluate();
+				syncEditUi();
+				renderStrip();
+				updateReadouts();
+			});
+			if (value.startsWith("data:")) applyRow();
+			const updated = describeInput(sl, binding.operand);
+			if (statusEl) {
+				statusEl.dataset.userMessage = "1";
+				statusEl.textContent = `Lane ${updated.laneNumber} · ${inputLabel(updated)} now reads ${sourceLabel(updated)} (${updated.state}).`;
+			}
+			rowIndex = index;
+			render();
+			focusRow(rowIndex);
+		});
+		sourceCell.appendChild(select);
+		tr.appendChild(sourceCell);
+		const state = document.createElement("td");
+		state.className = `src-state is-${binding.state === "—" ? "none" : binding.state === "data" ? "data" : binding.state === "z⁻¹" ? "delay" : "feed"}`;
+		state.textContent = binding.state;
+		if (binding.driven) state.title = `driven by ${binding.source.kind === "frame" ? binding.source.name : "a route"}`;
+		tr.appendChild(state);
+		return tr;
+	}
+	function focusRow(index) {
+		const select = rowsEl.querySelectorAll("tr select")[index];
+		if (select) select.focus();
+	}
+	function render() {
+		rowIndex = -1;
+		rowsEl.textContent = "";
+		const bindings = listInputs();
+		bindings.forEach((binding, index) => rowsEl.appendChild(buildRow(binding, index)));
+		const bound = bindings.filter((binding) => binding.source.kind !== "none").length;
+		if (statusEl && !statusEl.dataset.userMessage) statusEl.textContent = `${bound} / ${bindings.length} bound · one source each`;
+	}
+	function openPanel() {
+		statusEl.dataset.userMessage = "";
+		render();
+		panel.hidden = false;
+		btn.setAttribute("aria-expanded", "true");
+		const first = rowsEl.querySelector("select");
+		if (first) first.focus();
+	}
+	function closePanel(returnFocus = false) {
+		if (panel.hidden) return;
+		panel.hidden = true;
+		btn.setAttribute("aria-expanded", "false");
+		if (returnFocus) btn.focus();
+	}
+	btn.addEventListener("click", () => panel.hidden ? openPanel() : closePanel(true));
+	closeBtn.addEventListener("click", () => closePanel(true));
+	document.addEventListener("pointerdown", (e) => {
+		if (panel.hidden) return;
+		if (panel.contains(e.target) || e.target === btn) return;
+		closePanel(false);
+	});
+	window.addEventListener("keydown", (e) => {
+		if (e.key === "Escape" && !panel.hidden) {
+			closePanel(true);
+			e.preventDefault();
+		}
+	});
+	return {
+		render,
+		open: openPanel,
+		close: closePanel,
+		isOpen: () => !panel.hidden
 	};
 }
 // src/render/canvas.js
@@ -2009,9 +2393,9 @@ function drawField3d(n, sl = curSlot(), rect = G) {
 		ctx.fillStyle = rgbaToken(C_DIMMER, .5 + .45 * ((1 - d) / 2));
 		ctx.fillText(o.label, left + 6, top + 5, Math.max(20, p.w - 12));
 	};
-	const showCol = DEMO$1.rows.length > 0 && iw >= 145;
-	const colAName = showCol && sl.colA >= 0 && DEMO$1.cols[sl.colA] ? ` \u00B7 ${shortCol(DEMO$1.cols[sl.colA])}` : "";
-	const colBName = showCol && sl.colB >= 0 && DEMO$1.cols[sl.colB] ? ` \u00B7 ${shortCol(DEMO$1.cols[sl.colB])}` : "";
+	const showCol = DEMO.rows.length > 0 && iw >= 145;
+	const colAName = showCol && sl.colA >= 0 && DEMO.cols[sl.colA] ? ` \u00B7 ${shortCol(DEMO.cols[sl.colA])}` : "";
+	const colBName = showCol && sl.colB >= 0 && DEMO.cols[sl.colB] ? ` \u00B7 ${shortCol(DEMO.cols[sl.colB])}` : "";
 	const sym = OPSYM[sl.binop] || "⊕";
 	const fa = frameName(sl.key, "a");
 	const fb = frameName(sl.key, "b");
@@ -2244,7 +2628,8 @@ var getPad = () => PAD;
 		if (newN === S.N) return;
 		store.patch(() => {
 			controls.lfoStop();
-			const oldNibs = S.N >> 2;
+			const oldN = S.N;
+			const oldNibs = oldN >> 2;
 			const newNibs = newN >> 2;
 			const keep = Math.min(oldNibs, newNibs) >> 1;
 			const remap = (r) => {
@@ -2275,6 +2660,7 @@ var getPad = () => PAD;
 				sl.Z.target = new Array(newNibs).fill(0);
 				sl.Z.anim = new Array(newNibs).fill(0);
 			}
+			remapParkedBases(oldN, newN);
 			evaluate(true);
 			S.drag = -1;
 			S.hoverReg = null;
@@ -2326,6 +2712,7 @@ var getPad = () => PAD;
 	function setFromPointer(e) {
 		if (S.view3d) return;
 		if (!focusEditable()) return;
+		if (isFocusDriven()) return;
 		const r = canvas.getBoundingClientRect();
 		const px = e.clientX - r.left;
 		const py = e.clientY - r.top;
@@ -2420,6 +2807,7 @@ var getPad = () => PAD;
 		const bit = e.target.closest(".bit");
 		if (!bit) return;
 		if (!focusEditable()) return;
+		if (isFocusDriven()) return;
 		controls.lfoStop();
 		store.patch(() => {
 			const j = toggleBit(editReg(), Number(bit.dataset.b));
@@ -2432,6 +2820,7 @@ var getPad = () => PAD;
 		if (S.drag >= 0 || e.deltaY === 0) return;
 		if (e.ctrlKey || e.metaKey) return;
 		if (!focusEditable()) return;
+		if (isFocusDriven()) return;
 		const hexEl = e.target.closest(".hex");
 		if (!hexEl) return;
 		const nib = hexEl.closest(".nib");
@@ -2475,6 +2864,7 @@ var getPad = () => PAD;
 		if (!sl.showB) return;
 		controls.lfoStop();
 		store.patch(() => {
+			if (isInputDriven(sl, "b")) bindNone(sl, "b");
 			unpair(sl);
 			S.hoverReg = null;
 			S.hoverJ = -1;
@@ -2523,9 +2913,9 @@ var getPad = () => PAD;
 	});
 	const hintEl = document.getElementById("hint");
 	function slotExprText(sl, withViewPrefix) {
-		const hasCsv = DEMO$1.rows.length > 0;
-		const lhs = hasCsv && sl.colA >= 0 && DEMO$1.cols[sl.colA] ? shortCol(DEMO$1.cols[sl.colA], 14) : frameName(sl.key, "a");
-		const rhs = hasCsv && sl.colB >= 0 && DEMO$1.cols[sl.colB] ? shortCol(DEMO$1.cols[sl.colB], 14) : frameName(sl.key, "b");
+		const hasCsv = DEMO.rows.length > 0;
+		const lhs = hasCsv && sl.colA >= 0 && DEMO.cols[sl.colA] ? shortCol(DEMO.cols[sl.colA], 14) : frameName(sl.key, "a");
+		const rhs = hasCsv && sl.colB >= 0 && DEMO.cols[sl.colB] ? shortCol(DEMO.cols[sl.colB], 14) : frameName(sl.key, "b");
 		const sym = OPSYM[sl.binop] || "⊕";
 		return `${withViewPrefix ? `LANE ${laneLabel(sl.key)} \u00B7 ` : ""}${lhs} ${sym} ${rhs} \u2192 ${frameName(sl.key, "z")}`;
 	}
@@ -2538,11 +2928,8 @@ var getPad = () => PAD;
 			syncTarget(sl.B, true);
 			if (S.lfo.base && S.lfo.base[sl.key]) S.lfo.base[sl.key].b = sl.B.bits.slice();
 		}
+		if (isInputDriven(sl, "b")) updateParkedBase(sl, "b", sl.B.bits);
 		evaluate(true);
-	}
-	function enableB() {
-		enableBOnSlot(curSlot());
-		controls.syncEditUi();
 	}
 	function copySlotInto(srcKey, dstKey) {
 		if (srcKey === dstKey) return;
@@ -2553,6 +2940,8 @@ var getPad = () => PAD;
 			copyLane(src, dst);
 			syncTarget(dst.A, true);
 			syncTarget(dst.B, true);
+			if (isInputDriven(dst, "a")) updateParkedBase(dst, "a", dst.A.bits);
+			if (isInputDriven(dst, "b")) updateParkedBase(dst, "b", dst.B.bits);
 			evaluate(true);
 		});
 	}
@@ -2669,9 +3058,19 @@ var getPad = () => PAD;
 		store,
 		resizeRegister,
 		lfoStop: (...args) => controls.lfoStop(...args),
-		enableB,
 		frameNav,
 		syncViewUi,
+		renderStrip,
+		updateReadouts,
+		onSizeChange: (...args) => controls.setSize(...args),
+		onBindingsChanged: () => sources.render()
+	});
+	const sources = createSourceTable({
+		store,
+		evaluate,
+		applyRow: () => csv.applyExample(DEMO.i, true, true),
+		fitColumns: () => csv.fitColumns(),
+		syncEditUi: (...args) => controls.syncEditUi(...args),
 		renderStrip,
 		updateReadouts
 	});
@@ -2683,7 +3082,7 @@ var getPad = () => PAD;
 		selectSlot,
 		setSplitMode,
 		S,
-		DEMO: DEMO$1
+		DEMO
 	});
 	function easeReg(r) {
 		const n = nibCount();
@@ -2768,8 +3167,8 @@ var getPad = () => PAD;
 				},
 				showB: sl.showB,
 				sources: {
-					[names.a]: sl.colA >= 0 && DEMO$1.cols[sl.colA] ? DEMO$1.cols[sl.colA] : null,
-					[names.b]: sl.colB >= 0 && DEMO$1.cols[sl.colB] ? DEMO$1.cols[sl.colB] : null
+					[names.a]: sl.colA >= 0 && DEMO.cols[sl.colA] ? DEMO.cols[sl.colA] : null,
+					[names.b]: sl.colB >= 0 && DEMO.cols[sl.colB] ? DEMO.cols[sl.colB] : null
 				},
 				binop: sl.binop,
 				focus: frameName(key, focusKey(sl)),
@@ -2804,11 +3203,11 @@ var getPad = () => PAD;
 				mode: S.lfo.mode,
 				rate: S.lfo.rate
 			},
-			dataset: DEMO$1.rows.length ? {
-				columns: DEMO$1.cols.slice(),
-				rows: DEMO$1.rows.length,
-				index: DEMO$1.i,
-				row: DEMO$1.rows[DEMO$1.i].slice()
+			dataset: DEMO.rows.length ? {
+				columns: DEMO.cols.slice(),
+				rows: DEMO.rows.length,
+				index: DEMO.i,
+				row: DEMO.rows[DEMO.i].slice()
 			} : null,
 			editing: {
 				copyArmed: S.copyArmed,
@@ -2876,11 +3275,18 @@ var getPad = () => PAD;
 			lanes
 		});
 	}
+	function snapshotBindings() {
+		return deepFreeze({
+			schema: 1,
+			inputs: listInputs()
+		});
+	}
 	if (!Object.prototype.hasOwnProperty.call(window, "BitWave")) Object.defineProperty(window, "BitWave", {
 		value: Object.freeze({
 			schema: 1,
 			artifact: "bitwave-v2.html",
 			frames: snapshotFrames,
+			bindings: snapshotBindings,
 			state: snapshotState,
 			geometry: snapshotGeometry
 		}),
@@ -3322,6 +3728,84 @@ var getPad = () => PAD;
   .lane-btn:focus-visible,
   .frame-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 
+  /* ── input source table — six fixed rows ───────────────── */
+  .sources-panel {
+    position: absolute;
+    z-index: 3;
+    top: 8px;
+    bottom: 8px;
+    right: var(--pad);
+    width: min(440px, calc(100% - 2 * var(--pad)));
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 5px;
+  }
+
+  .src-body { overflow: auto; padding: 2px 10px 6px; }
+
+  .src-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-family: var(--mono);
+  }
+
+  .src-table th {
+    padding: 7px 4px 6px;
+    border-bottom: 1px solid var(--line-soft);
+    font-family: var(--sans);
+    font-size: 9px;
+    font-weight: 500;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    text-align: left;
+    color: var(--dimmer);
+  }
+
+  .src-table th:nth-child(3) { width: 62px; text-align: right; }
+
+  .src-table td {
+    padding: 4px 4px;
+    border-bottom: 1px solid var(--line-soft);
+    vertical-align: middle;
+  }
+  .src-table tr:last-child td { border-bottom: 0; }
+
+  .src-lane {
+    margin-right: 6px;
+    font-family: var(--mono);
+    font-size: 9px;
+    letter-spacing: 0.05em;
+    color: var(--dimmer);
+    white-space: nowrap;
+  }
+
+  .src-dest {
+    font-family: var(--mono);
+    font-size: 11.5px;
+    color: var(--text);
+    white-space: nowrap;
+  }
+
+  .src-dest .src-col { color: var(--dim); }
+
+  .src-pick { width: 100%; font-family: var(--mono); font-size: 11px; }
+
+  .src-state {
+    font-family: var(--mono);
+    font-size: 10px;
+    text-align: right;
+    white-space: nowrap;
+    color: var(--dim);
+  }
+  .src-state.is-feed,
+  .src-state.is-delay { color: var(--accent); }
+  .src-state.is-none { color: var(--dimmer); }
+
+  .sources-panel .fp-foot { font-size: 9.5px; }
+
   /* ── bit strip ─────────────────────────────────────────── */
   .strip {
     position: relative;
@@ -3677,6 +4161,24 @@ var getPad = () => PAD;
       <button class="op" id="unpairB" type="button" hidden title="Remove operand B from this lane">unpair B</button>
     </div>
   </aside>
+
+  <aside class="sources-panel" id="sourcesPanel" hidden aria-label="Input source table">
+    <div class="fp-head">
+      <h2 class="fp-title">sources</h2>
+      <button class="op" id="sourcesClose" type="button" aria-label="Close source table" title="Close (Esc)">×</button>
+    </div>
+    <div class="src-body">
+      <table class="src-table">
+        <thead>
+          <tr><th scope="col">destination</th><th scope="col">source</th><th scope="col">state</th></tr>
+        </thead>
+        <tbody id="sourcesRows"></tbody>
+      </table>
+    </div>
+    <div class="fp-foot">
+      <span id="sourcesStatus" role="status" aria-live="polite">six inputs · one source each</span>
+    </div>
+  </aside>
 </section>
 
 <section class="strip" id="strip" data-edit="A">
@@ -3707,8 +4209,7 @@ var getPad = () => PAD;
       <button class="op" id="nextEx" title="Next example (→)" aria-label="Next example">▶</button>
     </div>
     <span class="excount" id="exCount" hidden>0 / 0</span>
-    <span class="col-wrap" id="colAWrap" hidden><span class="col-tag">A</span><select id="colA" aria-label="Register A column"></select></span>
-    <span class="col-wrap" id="colBWrap" hidden><span class="col-tag">B</span><select id="colB" aria-label="Register B column"></select></span>
+    <button class="op" id="sourcesBtn" aria-expanded="false" aria-controls="sourcesPanel" title="Show the six input bindings">sources</button>
     <div class="seg" id="obsSeg" hidden>
       <button class="op" id="logObsBtn" title="Log current observation">log</button>
       <button class="op" id="exportObsBtn" title="Export observations to CSV">export</button>

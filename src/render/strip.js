@@ -16,6 +16,7 @@ import {
   nibValue,
   nibWeightPow,
 } from "../state/instrument.ts";
+import { isFocusDriven } from "../state/bindings.ts";
 
   const stripEl = document.getElementById("strip");
   const nibsEl = document.getElementById("nibs");
@@ -25,7 +26,7 @@ import {
     const r = focusReg();
     const n = nibCount();
     const compact = S.compact;
-    const readonly = !focusEditable();
+    const readonly = !focusEditable() || isFocusDriven();
 
     const midA = S.N / 2 - 1;
     const midB = S.N / 2;

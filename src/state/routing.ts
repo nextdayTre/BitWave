@@ -11,9 +11,11 @@
  * boundaries only (never per animation frame).
  */
 
-import { createRouting, evaluateAll } from "../core/routing.ts";
+import { createRouting, evaluateAll, isDriven } from "../core/routing.ts";
 import type { Lane, LaneKey, LaneMap } from "../core/types.ts";
 import { S, SLOT_KEYS, syncTarget, type Slot } from "./instrument.ts";
+
+const LANE_KEY: Record<(typeof SLOT_KEYS)[number], LaneKey> = { A: "1", B: "2", C: "3" };
 
 /** Routes and parked bases for the instrument. Empty until the matrix lands. */
 export const routing = createRouting();
@@ -46,5 +48,13 @@ export function coreLanes(): LaneMap {
 /** The single evaluation entry point for the app. Writes state only. */
 export function evaluate(instant = false): void {
   evaluateAll(routing, coreLanes(), S.N);
-  for (const key of SLOT_KEYS) syncTarget(S.slots[key].Z, instant);
+  for (const key of SLOT_KEYS) {
+    const sl = S.slots[key];
+    const lane = LANE_KEY[key];
+    /* A driven operand's display target follows the routed truth, not the
+       base bits the local writers last saw. */
+    if (isDriven(routing, lane, "a")) syncTarget(sl.A, instant);
+    if (isDriven(routing, lane, "b")) syncTarget(sl.B, instant);
+    syncTarget(sl.Z, instant);
+  }
 }

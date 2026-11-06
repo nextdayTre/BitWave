@@ -306,13 +306,22 @@ The easing constant is deliberately high (`0.24`) — fast enough to feel like t
   produce interference — if A and B both rotate by the same amount, Z is just
   `ROL(Z₀, s)` and its shape never changes (verified). Only **`anti`** (counter-rotation)
   makes Z genuinely reshape, because the two operands drift relative to each other.
-- **Example stepper** (`data` group) — `import csv`, `◀ n/total ▶`, two column pickers, and
+- **Input source table** (`.sources-panel`, `.src-table`, opened by `sources` in the
+  data group) — six fixed rows, one per operand frame A–F. DESTINATION shows the frame
+  and its label carries the assignment (`A · Hex 1` for a data column, `A · Z3` for a
+  frame), matching the column names the import dropdown shows. SOURCE is one native
+  select: `—`, `data · <column>`, `frame · A…Z3`; STATE reads `data`, `1:1`, `z⁻¹` or
+  `—`. It is a **transient panel, not a mode**: Esc or an outside click closes it, and
+  the stage view is unchanged. A fresh import rebuilds the board; driven inputs are
+  locked and unplugging restores the parked base (D2).
+- **Example stepper** (`data` group) — `import csv`, `◀ n/total ▶`, `sources`, and
   an **Observation Logger** (`log` and `export`).
-  Stepping writes the row's cells into A (and B if mapped). Arrow keys step when focus is
-  not in a control; a file dropped anywhere loads. The observation logger records live
-  waveform snapshots (example name, A hex, B hex, Op, Z hex, Pop-Z, truth table counts, and
-  timestamp) and downloads them directly as `bitwave_observations.csv`. This is the
-  daily-use path, so it is the first group in the controls row.
+  Stepping writes the row's cells into A (and B if mapped) for **undriven** inputs.
+  Arrow keys step when focus is not in a control; a file dropped anywhere loads. The
+  observation logger records live waveform snapshots (example name, A hex, B hex, Op,
+  Z hex, Pop-Z, truth table counts, timestamp) and downloads them directly as
+  `bitwave_observations.csv`. This is the daily-use path, so it is the first group in
+  the controls row.
 - **Segmented control** (`.seg`) — joined `A | B` pair for the edit target.
   `button.op.on` / `[aria-pressed="true"]` is the shared "this is active" state.
 - **Truth table** (`.truth`) — mono 10.5px, 4 columns `a b → n`. The `n` column is
@@ -349,7 +358,9 @@ The easing constant is deliberately high (`0.24`) — fast enough to feel like t
   `.stage-bar`) — three independent lanes (`1`, `2`, `3`; internal keys `A`/`B`/`C`)
   sharing register width `S.N`, each holding its own operand pair and derived frame
   (`A/B/Z1`, `C/D/Z2`, `E/F/Z3`), binary/arithmetic operator, B-phase,
-  and CSV `(colA, colB)` routing. `copy →` clones the focused lane into another lane.
+  and the six source bindings (CSV column or frame output). `copy →` clones the
+  focused lane's base registers into another lane; the route table belongs to the
+  rack, not the lane.
   `split` divides the 3-D stage into two side-by-side axonometric visualizers separated by
   a `1px` `--line` rule while keeping the single bottom strip, truth table, and controls
   bound to the focused slot (`S.slot`). Drawn exclusively from `--panel-hi`, `--line`,
@@ -453,10 +464,22 @@ something that looked fine until it was measured.
     seed the second operand but must not steal focus; the frame you chose stays the frame
     the strip shows.
 28. **The agent surface is read-only and versioned.** `window.BitWave` returns
-    deep-frozen snapshots (`state()`, `geometry()`, `frames()`) and exposes **no
-    setters**; it must never become a second write path or change the visuals.
-    Bump `BitWave.schema` when the shape changes. `geometry()` is the measured
-    seam for the §11 control-point alignment check.
+    deep-frozen snapshots (`state()`, `bindings()`, `geometry()`, `frames()`) and
+    exposes **no setters**; it must never become a second write path or change the
+    visuals. Bump `BitWave.schema` when the shape changes. `geometry()` is the
+    measured seam for the §11 control-point alignment check.
+29. **One source per input, and labels carry it.** Each operand frame A–F reads
+    exactly one of: a CSV column (`data`), a frame output (`1:1`/`z⁻¹`), or nothing.
+    Choosing a data column clears the route and choosing a frame clears the column.
+    A data-bound row reads `frame · column` (`A · Hex 1`); a frame-bound row reads
+    `frame · source` (`A · Z3`). Z is never a destination.
+30. **A driven input is locked.** Local writes — drag, bit click, wheel, preset, unary
+    op, CSV step, LFO tick — must skip any input that a route drives. The strip is
+    read-only and the hint names the driver. Unplugging restores the parked base
+    byte-identically; resize remaps parked bases so unroute equals no-route resize.
+31. **A fresh CSV import rebuilds the board.** Import clears routes and refills the
+    six rows from the imported columns (widest column first), keeping per-column
+    typing, right-alignment and truncation exactly as before.
 
 ---
 
@@ -482,6 +505,10 @@ The visual contract is measurable, so measure it rather than eyeballing:
   must not change any operand).
 - Frame names: lane 1 reads A/Z1/B, lane 2 C/Z2/D, lane 3 E/Z3/F in the navigator, strip
   label, stage bar, truth header and A/B/Z readouts; hiding A in lane 1 leaves C visible.
+- Source table: six rows; a data-bound row reads `A · <column>` and its STATE is `data`;
+  a frame binding reads `1:1` (or `z⁻¹` for same-lane Z) and drives the register;
+  unplug restores the parked base byte-identically; a driven input's strip is read-only
+  and a bit click cannot change it; a fresh import fills the board from the columns.
 
 A headless-Chrome CDP pass drives these in seconds: `npm run check:browser`
 ([`tools/browser-check.mjs`](tools/browser-check.mjs), zero dependencies) asserts
@@ -505,8 +532,9 @@ them.
   the whole word, not on the bit pair.
 - **Depth (Z-axis) view** — three wavetable frames: A at 1, Z at 128, B at 256, in an
   axonometric box. The result sits *between* the operands, which is the whole point.
-- **CSV example stepper** — load a CSV/TSV, pick the A and B columns, and step rows like
-  slides. Register size auto-fits the chosen column; binary and hex columns both parse.
+- **CSV example stepper** — load a CSV/TSV and step rows like slides; the source table
+  binds each of the six inputs to an imported column. Register size auto-fits the
+  chosen column; binary and hex columns both parse.
 - **Multi-view lanes + parallel 3-D split** — three independent register/op/CSV lanes
   (`1`, `2`, `3`) with `copy →` cloning and side-by-side 3-D split mode, enabling 4+ CSV
   columns (or distinct operators like `XOR` vs `SUB`) to be compared in parallel across
@@ -516,6 +544,11 @@ them.
   Clicking a frame in the navigator focuses it in place: the view does not change, the
   panel stays open, operands stay editable and derived frames are shown read-only. The
   strip, legend, stage bar, truth header and readouts all follow the focused lane's names.
+- **Input source table + frame routing** — the six-row matrix is the housing for the
+  existing source dropdowns: each input reads one CSV column or one frame output, with
+  `data` / `1:1` / `z⁻¹` / `—` states. Labels carry the assignment (`A · Hex 1`). Driven
+  inputs are locked against local edits, unplugging restores the parked base, and the
+  panel is transient — no cable graphics, no routing mode.
 
 ### Next
 

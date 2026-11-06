@@ -15,6 +15,8 @@
       never switches and the navigator never closes on a frame click
     · the old "logic B" toggle and 2D/3D segment are gone: the navigator shows
       the frames, and one "3D" toggle switches the depth field
+    · the six-input source table (data columns or frame outputs) is the routing
+      housing: labels carry the assignment and driven inputs are locked
     · lane controls and display controls are separate groups
     · copy mode says what it does and Escape cancels it
     · segmented controls expose aria-pressed; ambiguous preset names are labelled
@@ -61,6 +63,24 @@
       <button class="op" id="unpairB" type="button" hidden title="Remove operand B from this lane">unpair B</button>
     </div>
   </aside>
+
+  <aside class="sources-panel" id="sourcesPanel" hidden aria-label="Input source table">
+    <div class="fp-head">
+      <h2 class="fp-title">sources</h2>
+      <button class="op" id="sourcesClose" type="button" aria-label="Close source table" title="Close (Esc)">×</button>
+    </div>
+    <div class="src-body">
+      <table class="src-table">
+        <thead>
+          <tr><th scope="col">destination</th><th scope="col">source</th><th scope="col">state</th></tr>
+        </thead>
+        <tbody id="sourcesRows"></tbody>
+      </table>
+    </div>
+    <div class="fp-foot">
+      <span id="sourcesStatus" role="status" aria-live="polite">six inputs · one source each</span>
+    </div>
+  </aside>
 </section>
 
 <section class="strip" id="strip" data-edit="A">
@@ -91,8 +111,7 @@
       <button class="op" id="nextEx" title="Next example (→)" aria-label="Next example">▶</button>
     </div>
     <span class="excount" id="exCount" hidden>0 / 0</span>
-    <span class="col-wrap" id="colAWrap" hidden><span class="col-tag">A</span><select id="colA" aria-label="Register A column"></select></span>
-    <span class="col-wrap" id="colBWrap" hidden><span class="col-tag">B</span><select id="colB" aria-label="Register B column"></select></span>
+    <button class="op" id="sourcesBtn" aria-expanded="false" aria-controls="sourcesPanel" title="Show the six input bindings">sources</button>
     <div class="seg" id="obsSeg" hidden>
       <button class="op" id="logObsBtn" title="Log current observation">log</button>
       <button class="op" id="exportObsBtn" title="Export observations to CSV">export</button>

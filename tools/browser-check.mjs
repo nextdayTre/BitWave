@@ -37,7 +37,7 @@
 
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -749,9 +749,9 @@ try {
 
   /* 5. CSV import + §11 op vectors ------------------------------------- */
   const csvPayload = 'FEDCBA9876543210';
-  const importCsv = async () => {
+  const importCsvText = async (text) => {
     await evaluate(`(() => {
-      const csv = 'id,payload\\n1,${csvPayload}\\n';
+      const csv = ${JSON.stringify(text)};
       const transfer = new DataTransfer();
       transfer.items.add(new File([csv], 'check.csv', { type: 'text/csv' }));
       const input = document.getElementById('csvFile');
@@ -760,30 +760,89 @@ try {
       return true;
     })()`);
     await waitFor(
-      `!document.getElementById('stepSeg').hidden && document.getElementById('colA').options.length > 1`,
+      `!document.getElementById('stepSeg').hidden`,
       'CSV load'
     );
+    await sleep(250);
+  };
+  const importCsv = async () => {
+    await importCsvText(`id,payload\n1,${csvPayload}\n`);
     await waitFor(
       `document.getElementById('hex').textContent.trim() === '${csvPayload}'`,
       'CSV value in register A'
     );
-    await sleep(250);
   };
 
   await runCheck('csv · import types and binds the widest column to lane 1 A', async () => {
     await loadApp();
     await importCsv();
+    await click('#sourcesBtn');
+    await waitFor(`!document.getElementById('sourcesPanel').hidden`, 'source table');
     const state = JSON.parse(await evaluate(`JSON.stringify({
       size: document.getElementById('sizeOut').textContent.trim(),
-      options: [...document.getElementById('colA').options].map((o) => o.textContent.trim()),
-      colA: document.getElementById('colA').value,
+      rows: document.querySelectorAll('#sourcesRows tr').length,
+      dest: document.querySelector('#sourcesRows tr .src-dest').textContent.trim(),
+      chip: document.querySelector('#sourcesRows tr .src-state').textContent.trim(),
       hex: document.getElementById('hex').textContent.trim()
     })`));
-    assert(state.options.includes('payload'), `colA options: ${JSON.stringify(state.options)}`);
-    assert(state.colA === '1', `lane 1 A column index: ${state.colA}`);
+    assert(state.rows === 6, `source rows: ${state.rows}`);
+    assert(state.dest.includes('A') && state.dest.includes('payload'), `row label: ${state.dest}`);
+    assert(state.chip === 'data', `row state: ${state.chip}`);
     assert(state.hex === csvPayload, `A after import: ${state.hex}`);
     assert(state.size === '64 bits · 16 nibbles', `size after import: ${state.size}`);
-    return `payload column → A = ${state.hex} · 64 bits`;
+    await click('#sourcesClose');
+    return `A · payload → data · A = ${state.hex} · 64 bits`;
+  });
+
+  await runCheck('sources · frame binding drives the input, labels it, and unbinds', async () => {
+    await loadApp();
+    await click('#sourcesBtn');
+    await waitFor(`!document.getElementById('sourcesPanel').hidden`, 'source table');
+    const bind = async (value) => {
+      await evaluate(`(() => {
+        const select = document.querySelector('#sourcesRows tr select');
+        select.value = ${JSON.stringify(value)};
+        select.dispatchEvent(new Event('change', { bubbles: true }));
+        return true;
+      })()`);
+      await sleep(250);
+    };
+
+    await bind('frame:3:z');
+    let state = JSON.parse(await evaluate(`JSON.stringify({
+      hex: document.getElementById('hex').textContent.trim(),
+      z3: window.BitWave.state().lanes['3'].frames.Z3,
+      label: document.querySelector('#sourcesRows tr .src-dest').textContent.trim(),
+      chip: document.querySelector('#sourcesRows tr .src-state').textContent.trim(),
+      readonly: document.getElementById('strip').classList.contains('is-readonly'),
+      hint: document.getElementById('hint').textContent
+    })`));
+    assert(state.hex === state.z3, `Z3 → A: A=${state.hex} Z3=${state.z3}`);
+    assert(state.label.includes('A') && state.label.includes('Z3'), `row label: ${state.label}`);
+    assert(state.chip === '1:1', `chip: ${state.chip}`);
+    assert(state.readonly === true, 'driven strip should be read-only');
+    assert(/driven/.test(state.hint), `hint: ${JSON.stringify(state.hint)}`);
+
+    const before = await evaluate(`document.getElementById('hex').textContent.trim()`);
+    await click('#nibs .bit');
+    const after = await evaluate(`document.getElementById('hex').textContent.trim()`);
+    assert(after === before, 'a driven input accepted a local bit edit');
+
+    await bind('frame:1:z');
+    const chip = await evaluate(`document.querySelector('#sourcesRows tr .src-state').textContent.trim()`);
+    assert(chip === 'z⁻¹', `same-lane feedback chip: ${chip}`);
+
+    await bind('');
+    state = JSON.parse(await evaluate(`JSON.stringify({
+      hex: document.getElementById('hex').textContent.trim(),
+      chip: document.querySelector('#sourcesRows tr .src-state').textContent.trim(),
+      readonly: document.getElementById('strip').classList.contains('is-readonly')
+    })`));
+    assert(state.hex === '8ADEFEDA85210125', `unplug should restore the base: ${state.hex}`);
+    assert(state.chip === '—', `chip after unplug: ${state.chip}`);
+    assert(state.readonly === false, 'strip should unlock after unplug');
+    await click('#sourcesClose');
+    return 'Z3 → A (1:1) · Z1 → A (z⁻¹) · unplug restores A';
   });
 
   const resetCsvValue = async () => {
@@ -794,7 +853,32 @@ try {
     );
   };
 
+  await runCheck('csv · four-column example fills the board with column names', async () => {
+    await loadApp();
+    const fixture = readFileSync(resolve(ROOT, 'examples/testcsv.csv'), 'utf8');
+    await importCsvText(fixture);
+    await click('#sourcesBtn');
+    await waitFor(`!document.getElementById('sourcesPanel').hidden`, 'source table');
+    const state = JSON.parse(await evaluate(`JSON.stringify({
+      size: document.getElementById('sizeOut').textContent.trim(),
+      rows: document.querySelectorAll('#sourcesRows tr').length,
+      dests: [...document.querySelectorAll('#sourcesRows .src-dest')].map((el) => el.textContent.trim()),
+      chips: [...document.querySelectorAll('#sourcesRows .src-state')].map((el) => el.textContent.trim())
+    })`));
+    assert(state.rows === 6, `source rows: ${state.rows}`);
+    assert(
+      state.dests[0].includes('A') && state.dests[0].includes('Hex 1'),
+      `first row label: ${state.dests[0]}`
+    );
+    assert(state.chips[0] === 'data', `first row state: ${state.chips[0]}`);
+    assert(state.size === '32 bits · 8 nibbles', `example width: ${state.size}`);
+    await click('#sourcesClose');
+    return `A · Hex 1 → data · 32-bit register · 6 rows`;
+  });
+
   await runCheck('ops · ROL 4 on the imported word (§11)', async () => {
+    await loadApp();
+    await importCsv();
     await click('[data-op="rol"]');
     await waitFor(`document.getElementById('hex').textContent.trim() === 'EDCBA9876543210F'`, 'ROL result');
     const detail = `ROL 4: ${csvPayload} → EDCBA9876543210F`;
@@ -1032,6 +1116,16 @@ try {
           await loadApp();
           await click('#framesBtn');
           await click('#framesBody .frame-row[data-frame="z"] .frame-btn');
+        },
+        settle: 600,
+      });
+      await shoot('09-sources-testcsv.png', {
+        prepare: async () => {
+          await loadApp();
+          const fixture = readFileSync(resolve(ROOT, 'examples/testcsv.csv'), 'utf8');
+          await importCsvText(fixture);
+          await click('#sourcesBtn');
+          await waitFor(`!document.getElementById('sourcesPanel').hidden`, 'source table');
         },
         settle: 600,
       });
