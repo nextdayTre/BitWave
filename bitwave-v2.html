@@ -5,7 +5,8 @@
   Same engine, same visual system, same feature set. User-facing changes only:
     · lanes are numbered 1 / 2 / 3 (letters now mean operands/frames only)
     · a Pro-Q4-style frame navigator browses lanes and their A/Z/B frames
-      with static mini-curves; selecting a frame focuses/edits it
+      with static mini-curves; selecting a frame focuses/edits it, and an
+      eye toggle shows/hides that frame in the 2D view
     · the old "logic B" toggle and 2D/3D segment are gone: the navigator
       enables/selects B, and one "3D" toggle switches the depth field
     · lane controls and display controls are separate groups
@@ -338,35 +339,43 @@
     color: var(--dim);
   }
 
+  .frame-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 32px;
+    align-items: center;
+    padding-left: 18px;
+    border-left: 2px solid transparent;
+  }
+  .frame-row:hover { background: var(--panel-hover); }
+  .frame-row.is-active {
+    border-left-color: var(--accent);
+    background: rgba(52, 211, 153, 0.07);
+  }
+  .frame-row.is-hidden .frame-btn { opacity: 0.55; }
+  .frame-row.is-hidden .frame-preview { opacity: 0.4; }
+
   .frame-btn {
     display: grid;
     grid-template-columns: 76px minmax(0, 1fr) 88px;
     align-items: center;
     gap: 8px;
     width: 100%;
-    padding: 5px 10px 5px 20px;
+    padding: 5px 0;
     border: 0;
-    border-left: 2px solid transparent;
     background: transparent;
     color: var(--dim);
     text-align: left;
     cursor: pointer;
   }
-
-  .frame-btn:hover { background: var(--panel-hover); }
-  .frame-btn.is-active {
-    color: var(--text);
-    border-left-color: var(--accent);
-    background: rgba(52, 211, 153, 0.07);
-  }
+  .frame-row.is-active .frame-btn { color: var(--text); }
 
   .frame-label { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
 
   .frame-swatch { width: 12px; height: 2px; flex: 0 0 auto; background: var(--accent); opacity: 0.75; }
-  .frame-btn[data-frame="b"] .frame-swatch {
+  .frame-row[data-frame="b"] .frame-swatch {
     background: repeating-linear-gradient(90deg, var(--accent) 0 4px, transparent 4px 7px);
   }
-  .frame-btn[data-frame="z"] .frame-swatch { height: 3px; opacity: 1; }
+  .frame-row[data-frame="z"] .frame-swatch { height: 3px; opacity: 1; }
 
   .frame-glyph { font-family: var(--mono); font-size: 11.5px; color: var(--text); }
   .frame-sub {
@@ -400,7 +409,37 @@
     overflow: hidden;
     text-overflow: ellipsis;
   }
-  .frame-btn.is-active .frame-hex { color: var(--text); }
+  .frame-row.is-active .frame-hex { color: var(--text); }
+
+  .eye-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    margin-right: 2px;
+    padding: 0;
+    border: 0;
+    border-radius: 5px;
+    background: transparent;
+    color: var(--dim);
+    cursor: pointer;
+  }
+  .eye-btn:hover { background: var(--panel-hover); color: var(--text); }
+  .eye-btn svg {
+    width: 16px;
+    height: 16px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.3;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+  .eye-btn .eye-slash { display: none; }
+  .eye-btn.is-hidden { color: var(--dimmer); }
+  .eye-btn.is-hidden .eye-slash { display: block; }
+  .eye-btn:disabled { opacity: 0.35; cursor: default; }
+  .eye-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 
   .fp-foot {
     display: flex;
@@ -944,6 +983,8 @@
     copyArmed: false,
     compact: false,
     view3d: false,
+    /* 2-D frame visibility (eye toggles in the frame navigator). */
+    frameVis: { a: true, b: true, z: true },
     lfo: { on: false, mode: "rotcw", rate: 4, t: 0, base: null },
     lfoAcc: 0,
     drag: -1,
@@ -1228,12 +1269,13 @@
 
   /* Top-right legend: with three curves on screen the user needs to
      know which stroke is which. */
-  function drawLegend(x1, ly) {
+  function drawLegend(x1, ly, vis = S.frameVis) {
     const items = [
-      { t: "A", w: 1.8, dash: null, a: 0.82 },
-      { t: "B", w: 1.8, dash: [6, 4], a: 0.82 },
-      { t: "Z", w: 2.5, dash: null, a: 1 },
-    ];
+      { key: "a", t: "A", w: 1.8, dash: null, a: 0.82 },
+      { key: "b", t: "B", w: 1.8, dash: [6, 4], a: 0.82 },
+      { key: "z", t: "Z", w: 2.5, dash: null, a: 1 },
+    ].filter((it) => vis[it.key]);
+    if (items.length === 0) return;
     ctx.font = `10px ${MONO}`;
     ctx.textBaseline = "middle";
     ctx.textAlign = "left";
@@ -1501,33 +1543,39 @@
       /* nothing further — the field is complete */
     } else if (!S.showB) {
       const spA = spFor(S.A);
-      G.spA = spA;
+      G.spA = S.frameVis.a ? spA : null;
       G.spB = null;
-      paintCurve(spA, { width: 2.2, grad: true, glow: true });
-      handleSp = spA;
+      if (S.frameVis.a) paintCurve(spA, { width: 2.2, grad: true, glow: true });
+      handleSp = S.frameVis.a ? spA : null;
     } else {
       const spA = spFor(S.A);
       const spB = spFor(S.B);
       const spZ = spFor(S.Z);
-      G.spA = spA;
-      G.spB = spB;
+      G.spA = S.frameVis.a ? spA : null;
+      G.spB = S.frameVis.b ? spB : null;
 
       /* The operand you can edit outweighs its mode-mate, so the
          instrument always shows you where your hands are. */
-      paintCurve(spA, {
-        width: ek === "a" ? 1.8 : 1.3,
-        dash: null,
-        color: `rgba(52,211,153,${ek === "a" ? 0.82 : 0.3})`,
-      });
-      paintCurve(spB, {
-        width: ek === "b" ? 1.8 : 1.3,
-        dash: [6, 4],
-        color: `rgba(52,211,153,${ek === "b" ? 0.82 : 0.3})`,
-      });
-      paintCurve(spZ, { width: 2.5, grad: true, glow: true });
+      if (S.frameVis.a) {
+        paintCurve(spA, {
+          width: ek === "a" ? 1.8 : 1.3,
+          dash: null,
+          color: `rgba(52,211,153,${ek === "a" ? 0.82 : 0.3})`,
+        });
+      }
+      if (S.frameVis.b) {
+        paintCurve(spB, {
+          width: ek === "b" ? 1.8 : 1.3,
+          dash: [6, 4],
+          color: `rgba(52,211,153,${ek === "b" ? 0.82 : 0.3})`,
+        });
+      }
+      if (S.frameVis.z) paintCurve(spZ, { width: 2.5, grad: true, glow: true });
 
       drawLegend(x1, y0 + 8);
-      handleSp = ek === "b" ? spB : spA;
+      handleSp = ek === "b"
+        ? (S.frameVis.b ? spB : null)
+        : (S.frameVis.a ? spA : null);
     }
 
     /* handles — only on the operand you can actually edit */
@@ -1562,7 +1610,7 @@
 
     /* Hover readout — the nibble's quantitative potential at its position:
        value × 2^weight. At the LSB this reads "n × 2^0", i.e. just n. */
-    if (S.hoverJ >= 0 && S.hoverReg === ek) {
+    if (S.hoverJ >= 0 && S.hoverReg === ek && handleSp) {
       const j = S.hoverJ;
       const v = regOf(ek).target[j];
       const txt = `${v} \u00D7 2^${nibWeightPow(j)}`;
@@ -1805,8 +1853,9 @@
      the pointer — the instrument should never make you hunt for a knob. */
   function nearestReg(px, py) {
     if (!S.showB || S.view3d) return editKey();
-    const ya = G.spA ? evalSpline(G.spA, px) : Infinity;
-    const yb = G.spB ? evalSpline(G.spB, px) : Infinity;
+    const ya = S.frameVis.a && G.spA ? evalSpline(G.spA, px) : Infinity;
+    const yb = S.frameVis.b && G.spB ? evalSpline(G.spB, px) : Infinity;
+    if (!Number.isFinite(ya) && !Number.isFinite(yb)) return editKey();
     return Math.abs(py - ya) <= Math.abs(py - yb) ? "a" : "b";
   }
 
@@ -2552,15 +2601,68 @@
   const frameReg = (sl, frame) => (frame === "a" ? sl.A : frame === "b" ? sl.B : sl.Z);
   const frameSub = (frame) => (frame === "z" ? "derived" : "operand");
 
+  function frameVisLabel(frame) {
+    return `${S.frameVis[frame] ? "Hide" : "Show"} frame ${frame.toUpperCase()} in the 2D view`;
+  }
+
+  function makeEyeButton(frame) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "eye-btn" + (S.frameVis[frame] ? "" : " is-hidden");
+    btn.setAttribute("aria-pressed", String(S.frameVis[frame]));
+    btn.setAttribute("aria-label", frameVisLabel(frame));
+    btn.title = frameVisLabel(frame);
+    if (S.view3d) {
+      btn.disabled = true;
+      btn.setAttribute("aria-label", "2D visibility only");
+      btn.title = "2D visibility only";
+    }
+
+    const svg = document.createElementNS(SVG_NS, "svg");
+    svg.setAttribute("viewBox", "0 0 16 16");
+    svg.setAttribute("aria-hidden", "true");
+    const eye = document.createElementNS(SVG_NS, "path");
+    eye.setAttribute("d", "M1.5 8C4.3 3.8 11.7 3.8 14.5 8C11.7 12.2 4.3 12.2 1.5 8Z");
+    const pupil = document.createElementNS(SVG_NS, "circle");
+    pupil.setAttribute("cx", "8");
+    pupil.setAttribute("cy", "8");
+    pupil.setAttribute("r", "2.6");
+    const slash = document.createElementNS(SVG_NS, "path");
+    slash.setAttribute("class", "eye-slash");
+    slash.setAttribute("d", "M2.5 13.5L13.5 2.5");
+    svg.append(eye, pupil, slash);
+    btn.appendChild(svg);
+
+    btn.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      toggleFrameVis(frame, btn);
+    });
+    return btn;
+  }
+
+  function toggleFrameVis(frame, btn) {
+    S.frameVis[frame] = !S.frameVis[frame];
+    const visible = S.frameVis[frame];
+    btn.classList.toggle("is-hidden", !visible);
+    btn.setAttribute("aria-pressed", String(visible));
+    btn.setAttribute("aria-label", frameVisLabel(frame));
+    btn.title = frameVisLabel(frame);
+    const row = btn.closest(".frame-row");
+    if (row) row.classList.toggle("is-hidden", !visible);
+  }
+
   function buildFrameRow(laneKey, frame) {
     const sl = S.slots[laneKey];
     const reg = frameReg(sl, frame);
     const active = laneKey === S.slot && frame !== "z" && editKey(sl) === frame;
+
+    const row = document.createElement("div");
+    row.className = "frame-row" + (active ? " is-active" : "") + (S.frameVis[frame] ? "" : " is-hidden");
+    row.dataset.frame = frame;
+
     const btn = document.createElement("button");
     btn.type = "button";
-    btn.className = "frame-btn" + (active ? " is-active" : "");
-    btn.dataset.lane = laneKey;
-    btn.dataset.frame = frame;
+    btn.className = "frame-btn";
     btn.setAttribute("aria-label", `Lane ${laneLabel(laneKey)} frame ${frame.toUpperCase()}, ${frameSub(frame)}`);
     btn.title = `Lane ${laneLabel(laneKey)} · ${frame.toUpperCase()} (${frameSub(frame)})`;
 
@@ -2586,7 +2688,8 @@
     btn.appendChild(hex);
 
     btn.addEventListener("click", () => selectFrame(laneKey, frame));
-    return btn;
+    row.append(btn, makeEyeButton(frame));
+    return row;
   }
 
   function buildLaneButton(laneKey) {
@@ -2634,7 +2737,7 @@
     framesPanel.hidden = false;
     framesBtn.setAttribute("aria-expanded", "true");
     const first =
-      framesPanel.querySelector(".frame-btn.is-active") ||
+      framesPanel.querySelector(".frame-row.is-active .frame-btn") ||
       framesPanel.querySelector(".frame-btn") ||
       framesClose;
     first.focus();
@@ -2649,6 +2752,7 @@
 
   function selectFrame(laneKey, frame) {
     S.copyArmed = false;
+    if (!S.frameVis[frame]) S.frameVis[frame] = true;
     if (S.view3d) {
       S.view3d = false;
       S.split3d = false;
