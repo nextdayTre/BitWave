@@ -1,6 +1,6 @@
 # BitWave — implementation status
 
-**Updated:** 2026-11-06 · **Phase:** F0 **done** (harness + Vite build + parity gate), F1 core **done**, F3 housing spike **done**; frame names, focus lens and the read-only `window.BitWave` seam **shipped**.
+**Updated:** 2026-11-06 · **Phase:** F0 **done** (harness + Vite build + parity gate), F1 core **done**, **F2 in progress** (state tree + store landed), F3 housing spike **done**; frame names, focus lens and the read-only `window.BitWave` seam **shipped**.
 **Source of truth:** [`PLAN.md`](PLAN.md) for the plan, [`DECISIONS.md`](DECISIONS.md) for choices taken, [`DESIGN.md`](DESIGN.md) for the visual contract. `index.html` is still untouched and remains the shipping instrument.
 
 ## Author decisions (2026-11-06)
@@ -31,22 +31,27 @@ cell enough? Confirm before the matrix lands in the app.
 
 | Phase | Status | Notes |
 |---|---|---|
-| **F0 Baseline** | **Done** | Git; Vite 8.3.6 + TypeScript 7 + `vite-plugin-singlefile` installed; `npm run build` emits the single-file `bitwave-v2.html` from `src/`; zero-dep unit suite (38), typecheck and the browser harness (24 checks) all green; rebuild parity is a gate (`--compare`). |
-| **F1 Core + routing engine** | **Done** | 11 DOM-free modules; lanes 1/2/3; 38 tests green. |
-| **F2 State spine + renderers** | Next | Source is now modular (`src/main.js` is still one extracted module): split it into `state/`, `render/`, `ui/` through a store, with `evaluateAll` and screenshot-hash parity as the gate. |
+| **F0 Baseline** | **Done** | Git; Vite 8.3.6 + TypeScript 7 + `vite-plugin-singlefile` installed; `npm run build` emits the single-file `bitwave-v2.html` from `src/`; unit suite (48), typecheck and the browser harness (24 checks) all green; rebuild parity is a gate (`--compare`). |
+| **F1 Core + routing engine** | **Done** | 11 DOM-free modules; lanes 1/2/3; 38 core tests green. |
+| **F2 State spine + renderers** | **In progress** | `src/state/instrument.ts` owns the tree, factories, frame names and selection helpers, delegating register/derive math to `src/core`; `src/state/store.ts` is the transaction boundary and `commit()` runs inside it. Still in `src/main.js`: renderers, input handlers and the other write paths. Next: wrap every writer, add `evaluateAll()` + renderer adapters, then split `render/` and `ui/`. |
 | **F3 Source-table housing** | **Spike done** | Six fixed input rows, one source each; SOURCE = data column or frame output; STATE = `data`/`1:1`/`z⁻¹`. No add/remove, no new mode, no new state. |
 | **F4–F6** | Not started | A11y/IA (no palette changes), persistence UI, distribution. |
 
 ## Verified this session
 
-- `npm test` → **38 tests, 38 pass, 0 fail, ~120 ms**; `npm run typecheck` → **clean**.
-- `npm run build` → **`bitwave-v2.html`, 99.3 KB, single file**, no external references
-  (`tools/build-artifact.mjs` gate). Source: `src/index.html` + `src/main.js` (92.8 KB)
-  + `src/styles/app.css` (19.6 KB).
-- **Parity proven:** `node tools/browser-check.mjs --compare .tmp-captures/legacy-bitwave-v2.html`
-  → **6/6 states pixel-identical** (2-D default, frames open, 3-D, 3-D Z1 focus,
-  CSV import, 720 px breakpoint). The extracted source builds an artifact that
-  renders exactly like the hand-written file.
+- `npm test` → **48 tests, 48 pass, 0 fail** (38 core + 10 state); `npm run typecheck` → **clean**.
+- `npm run build` → **`bitwave-v2.html`, 99.5 KB, single file**, no external references
+  (`tools/build-artifact.mjs` gate). Source: `src/index.html` + `src/main.js` (84 KB)
+  + `src/styles/app.css` (19.6 KB) + `src/state/` modules.
+- **F2 slice 1 — state spine foundations:** `src/state/instrument.ts` (single tree,
+  `FRAME_NAMES`, factories, focus/edit selection, nibble/derive helpers) and
+  `src/state/store.ts` (nested `patch()` transactions collapse to one revision and
+  one notification pass). The app's arithmetic now delegates to `src/core`
+  (`computeZInto`, `nibAt`/`setNibAt`/`regToBig`/`bigToReg`/`syncTarget`), and
+  `commit()` runs inside `store.patch()`.
+- **Parity still exact after the extraction:** `--compare` against the
+  hand-written reference → **6/6 states pixel-identical**; the visual instrument
+  is unchanged.
 - `npm run check:browser` → **24/24 checks pass** (25/25 with `--shots`, 25/25 with
   `--compare`, 26/26 with both) on the built `bitwave-v2.html`:
   zero console errors; no overflow or clipped controls at 360/420/720/1440;
@@ -85,17 +90,19 @@ cell enough? Confirm before the matrix lands in the app.
 
 | Artifact | Purpose |
 |---|---|
-| [`src/`](src/index.html) | App source: `index.html` template, `main.js` (extracted module), `styles/app.css`; `src/core/` untouched |
+| [`src/`](src/index.html) | App source: `index.html` template, `main.js` (renderers + input), `styles/app.css` |
+| [`src/state/instrument.ts`](src/state/instrument.ts) | DOM-free state tree, frame names, factories and selection helpers |
+| [`src/state/store.ts`](src/state/store.ts) | Transaction boundary: `get`/`patch`/`subscribe`, nested patches collapse |
 | [`vite.config.mjs`](vite.config.mjs) | Vite 8 build: `src/` → `dist/index.html`, no minification |
 | [`tools/build-artifact.mjs`](tools/build-artifact.mjs) | Single-file gate: verifies no external refs, writes `bitwave-v2.html` |
 | [`src/core/`](src/core/index.ts) | DOM-free engine (11 modules, ~1,350 lines), lanes 1/2/3 |
-| [`tests/`](tests/design-invariants.test.ts) | 4 test files, ~630 lines, 38 vectors + properties |
+| [`tests/`](tests/design-invariants.test.ts) | 5 test files, 48 vectors + properties (state.test.ts is new) |
 | [`examples/demo.bitwave.json`](examples/demo.bitwave.json) | Versioned project document (lanes 1/2/3; routes + parked bases; dataset) |
 | [`spike/routing-matrix.html`](spike/routing-matrix.html) | Six-row source-table housing prototype (360 lines) |
-| [`tools/browser-check.mjs`](tools/browser-check.mjs) | Zero-dependency CDP harness: 24 checks (25 with `--shots`, 25 with `--compare`) |
+| [`tools/browser-check.mjs`](tools/browser-check.mjs) | Zero-dependency CDP harness: 24 checks (25 with `--shots` or `--compare`) |
 | [`tools/make-example-project.ts`](tools/make-example-project.ts) | Regenerates the example |
 | `window.BitWave` in [`bitwave-v2.html`](bitwave-v2.html) | Read-only, schema-1 state/geometry surface; contract in [`AGENTS.md`](AGENTS.md) |
-| [`DECISIONS.md`](DECISIONS.md) | D1–D19, including the author decisions above |
+| [`DECISIONS.md`](DECISIONS.md) | D1–D20, including the author decisions above |
 
 ## Known gaps and blockers
 
@@ -107,14 +114,11 @@ cell enough? Confirm before the matrix lands in the app.
    proves the canvas control points and the DOM nibble centres agree (worst
    offset 0.00 px, §11 limit 1.5 px), but the drawn spline's own pixels are not
    sampled; the §11 check asserts geometry, not raster output.
-3. **`src/main.js` is still one extracted module.** The toolchain is in place, but
-   the IIFE has not been split into `state/`, `render/` and `ui/` yet — that is F2.
-   Likewise `src/core` is tested but not imported by the app; wiring it in is F2/F3.
-4. **The app is not wired to the core** — F2 must route all changes through
-   `evaluateAll`; the current column bindings live in `colA`/`colB`.
-5. **Goldens are model-level + deterministic hashes**, not stored PNG baselines;
-   a cross-machine baseline would need a tolerance comparison. The `--compare`
-   parity gate is same-machine, same-browser.
+3. **F2 is half done.** The tree and store exist and `commit()` uses the store, but
+   renderers, input handlers and the remaining write paths (drag, bit/wheel, CSV,
+   resize, binop, LFO) still live in `src/main.js` and mutate `S` directly.
+4. **No routing evaluation in the app yet** — `src/core/routing.ts` is tested but
+   not imported; `evaluateAll()` joins the transaction when frame routing lands (F2/F3).
 
 ## Errata found
 
@@ -125,11 +129,11 @@ cell enough? Confirm before the matrix lands in the app.
 
 ## Next actions
 
-1. **F2 spine:** split `src/main.js` into modules behind a store: `state/store.ts`
-   (`get`/`patch`/`subscribe`), `state/actions.ts`, `render/*` and `ui/*`, with the
-   app's mutations routed through one transaction and `evaluateAll()` as the only
-   evaluator. Join the CSV column bindings and frame routes into one per-input
-   binding model (no behaviour change for CSV). `npm run build` +
+1. **F2 spine (continue):** wrap the remaining writers (drag, bit/wheel, presets
+   beyond `commit()`, CSV step, resize, binop, LFO tick) in the store transaction;
+   add `src/state/actions.ts`; then split `render/` and `ui/` out of `main.js` and
+   wire `evaluateAll()` so evaluation runs once per transaction. Join the CSV column
+   bindings and frame routes into one per-input binding model. `npm run build` +
    `--compare` screenshots are the regression proof at every step.
 2. **F3 in the app:** replace the per-lane `colA`/`colB` selects with the six-row
    source table; keep import/typing/alignment identical; add frame sources and

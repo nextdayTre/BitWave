@@ -1,181 +1,46 @@
+import {
+  FRAME_NAMES,
+  OPSYM,
+  S,
+  SIZES,
+  SLOT_KEYS,
+  bigToReg,
+  curSlot,
+  editKey,
+  editReg,
+  focusEditable,
+  focusKey,
+  focusReg,
+  frameLabel,
+  frameName,
+  isArith,
+  laneLabel,
+  nibAt,
+  nibCount,
+  nibValue,
+  nibWeightPow,
+  recomputeZ,
+  regOf,
+  regToBig,
+  setNibAt,
+  setNibValue,
+  syncTarget,
+} from "./state/instrument.ts";
+import { createStore } from "./state/store.ts";
+
 (() => {
   "use strict";
 
   /* ══════════════════════════════════════════════════════════
-     MODEL
-     bits[0] is the LSB (hardware convention).
-     Screen column c maps to bit index  N - 1 - c   (MSB on the left).
-     Nibble j is the j-th group from the left, so it covers
-     bit indices  N-1-4j  down to  N-4-4j.
-
-     Three registers:
-       A, B — operands, editable
-       Z    — derived result of A <binop> B, never edited directly
+     APP SHELL — DOM, canvas, input and renderers.
+     The mutable state tree lives in `src/state/instrument.ts`;
+     writes in `commit()` run inside the `src/state/store.ts`
+     transaction. Rendering still lives here until the F2
+     render/ui split.
      ══════════════════════════════════════════════════════════ */
 
-  const SIZES = [8, 16, 32, 64, 128, 256];
-  const SLOT_KEYS = ["A", "B", "C"];
-  /* Lanes are numbered on screen; internal keys stay A/B/C for the existing
-     settings and shortcuts. Letters therefore mean operands/frames only. */
-  const LANE_LABEL = { A: "1", B: "2", C: "3" };
-  const laneLabel = (key) => LANE_LABEL[key] || key;
-
-  /* Global frame names (author, 2026-11-06): operands are A/B, C/D, E/F and
-     the derived frame is Z1/Z2/Z3. Frames are unique across lanes, so the
-     source matrix lists six operand rows (A–F) and nine frame outputs. */
-  const FRAME_NAMES = {
-    A: { a: "A", b: "B", z: "Z1" },
-    B: { a: "C", b: "D", z: "Z2" },
-    C: { a: "E", b: "F", z: "Z3" },
-  };
-  const frameName = (laneKey, frame) =>
-    (FRAME_NAMES[laneKey] || FRAME_NAMES.A)[frame] || frame.toUpperCase();
-  const OPSYM = { and: "∧", or: "∨", xor: "⊕", add: "+", sub: "\u2212" };
   const DEMO = { cols: [], rows: [], i: 0 };
-
-  const makeReg = (N) => {
-    const n = N >> 2;
-    return {
-      bits: new Uint8Array(N),
-      anim: new Array(n).fill(0),    // rendered nibble values (floats, eased)
-      target: new Array(n).fill(0),  // settled nibble values (ints)
-    };
-  };
-
-  const makeSlot = (key, N, binop = "xor") => ({
-    key,
-    A: makeReg(N),
-    B: makeReg(N),
-    Z: makeReg(N),
-    showB: false,
-    binop,
-    edit: "a",           // "a" | "b" — which operand drags/presets act on
-    focus: "a",          // "a" | "b" | "z" — which frame the strip/readouts show
-    frameVis: { a: true, b: true, z: true },  // 2-D per-lane frame visibility
-    seededB: false,
-    lfoB: "0",
-    colA: -1,
-    colB: -1,
-  });
-
-  const S = {
-    N: 64,
-    slots: {
-      A: makeSlot("A", 64, "xor"),
-      B: makeSlot("B", 64, "xor"),
-      C: makeSlot("C", 64, "and"),
-    },
-    slot: "A",
-    split3d: false,
-    splitPair: ["A", "B"],
-    activePane: 0,
-    copyArmed: false,
-    compact: false,
-    view3d: false,
-    lfo: { on: false, mode: "rotcw", rate: 4, t: 0, base: null },
-    lfoAcc: 0,
-    drag: -1,
-    hoverReg: null,
-    hoverJ: -1,
-    get A() { return this.slots[this.slot].A; },
-    get B() { return this.slots[this.slot].B; },
-    get Z() { return this.slots[this.slot].Z; },
-    get showB() { return this.slots[this.slot].showB; },
-    set showB(v) { this.slots[this.slot].showB = v; },
-    get binop() { return this.slots[this.slot].binop; },
-    set binop(v) { this.slots[this.slot].binop = v; },
-    get edit() { return this.slots[this.slot].edit; },
-    set edit(v) { this.slots[this.slot].edit = v; },
-    get seededB() { return this.slots[this.slot].seededB; },
-    set seededB(v) { this.slots[this.slot].seededB = v; },
-  };
-
-  const curSlot = () => S.slots[S.slot];
-
-  const nibCount = () => S.N >> 2;
-
-  /* Place value of nibble j (0 = MSB): the exponent of two that its LSB is
-     worth. A constant of the *position* — 4 less for every step right, since
-     each step is one hex digit — and wholly independent of what the other
-     nibbles hold. Contribution = nibbleValue * 2^weight. */
-  const nibWeightPow = (j) => 4 * (nibCount() - 1 - j);
-
-  const regOf = (k, sl = curSlot()) => (k === "b" ? sl.B : k === "z" ? sl.Z : sl.A);
-  const editKey = (sl = curSlot()) => (sl.showB && sl.edit === "b" ? "b" : "a");
-  const editReg = (sl = curSlot()) => regOf(editKey(sl), sl);
-
-  /* Focus is what the strip and readouts show; edit is what a write targets.
-     Z can be focused but never edited (DESIGN §10.8), so its strip is read-only. */
-  const focusKey = (sl = curSlot()) => {
-    if (sl.focus === "z") return "z";
-    return sl.showB && sl.focus === "b" ? "b" : "a";
-  };
-  const focusReg = (sl = curSlot()) => regOf(focusKey(sl), sl);
-  const focusEditable = (sl = curSlot()) => focusKey(sl) !== "z";
-  const frameLabel = (sl = curSlot(), frame = focusKey(sl)) => frameName(sl.key, frame);
-
-  function nibAt(bits, j) {
-    const b = S.N - 1 - 4 * j;
-    return (bits[b] << 3) | (bits[b - 1] << 2) | (bits[b - 2] << 1) | bits[b - 3];
-  }
-
-  function setNibAt(bits, j, v) {
-    const b = S.N - 1 - 4 * j;
-    bits[b]     = (v >> 3) & 1;
-    bits[b - 1] = (v >> 2) & 1;
-    bits[b - 2] = (v >> 1) & 1;
-    bits[b - 3] = v & 1;
-  }
-
-  const nibValue = (r, j) => nibAt(r.bits, j);
-  const setNibValue = (r, j, v) => setNibAt(r.bits, j, v);
-
-  function syncTarget(r, instant = false) {
-    const n = nibCount();
-    if (r.target.length !== n) {
-      r.target = new Array(n);
-      r.anim = new Array(n);
-    }
-    for (let j = 0; j < n; j++) r.target[j] = nibValue(r, j);
-    if (instant) r.anim = r.target.slice();
-  }
-
-  /* Arithmetic ops (ADD / SUB) need the whole word, so they go through
-     BigInt. BigInt `&` is two's complement over infinite sign extension,
-     which makes the mod-2^N wrap correct even for negative results. */
-  const isArith = (sl = curSlot()) => sl.binop === "add" || sl.binop === "sub";
-
-  function regToBig(r) {
-    let v = 0n;
-    for (let i = S.N - 1; i >= 0; i--) v = (v << 1n) | BigInt(r.bits[i]);
-    return v;
-  }
-
-  function bigToReg(v, r) {
-    const mask = (1n << BigInt(S.N)) - 1n;
-    v &= mask;
-    for (let i = 0; i < S.N; i++) { r.bits[i] = Number(v & 1n); v >>= 1n; }
-  }
-
-  /* Z is always A <op> B.
-     Bitwise ops work bit for bit; ADD/SUB carry and borrow across the word —
-     which is precisely why neither equals XOR. */
-  function recomputeZ(instant = false, sl = curSlot()) {
-    const op = sl.binop;
-
-    if (op === "add" || op === "sub") {
-      const a = regToBig(sl.A);
-      const b = regToBig(sl.B);
-      bigToReg(op === "add" ? a + b : a - b, sl.Z);
-    } else {
-      const a = sl.A.bits, b = sl.B.bits, z = sl.Z.bits;
-      for (let i = 0; i < S.N; i++) {
-        const x = a[i], y = b[i];
-        z[i] = op === "and" ? (x & y) : op === "or" ? (x | y) : (x ^ y);
-      }
-    }
-    syncTarget(sl.Z, instant);
-  }
+  const store = createStore(S);
 
   /* Grow / shrink around the centre: the outermost nibbles on each side
      stay pinned and new nibbles appear at the ∞ point. All three display
@@ -976,11 +841,15 @@
   }
 
   function commit(instant = false) {
-    syncTarget(S.A, instant);
-    syncTarget(S.B, instant);
-    recomputeZ(instant);
-    renderStrip();
-    updateReadouts();
+    /* One transaction boundary: the state writes happen, then the renderers
+       read the settled tree. Routing evaluation joins this block in F2. */
+    store.patch(() => {
+      syncTarget(S.A, instant);
+      syncTarget(S.B, instant);
+      recomputeZ(instant);
+      renderStrip();
+      updateReadouts();
+    });
   }
 
   /* ══════════════════════════════════════════════════════════

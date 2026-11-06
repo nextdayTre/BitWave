@@ -6,6 +6,8 @@
 
 **Toolchain update 2026-11-06 (D19):** the Vite 8 + TypeScript + `vite-plugin-singlefile` build is installed. `src/index.html` + `src/main.js` + `src/styles/app.css` build to the single-file `bitwave-v2.html`, and a `--compare` screenshot gate proves rebuild parity. `src/main.js` is still one extracted module; splitting it into `state/`, `render/`, `ui/` is F2.
 
+**State update 2026-11-06 (D20):** `src/state/instrument.ts` (single tree, frame names, selection helpers) and `src/state/store.ts` (nested patches collapse to one transaction) are in, and the app's register/derive math delegates to `src/core`. `commit()` runs inside the store transaction. Renderers, input handlers and the remaining writers still live in `src/main.js`; `evaluateAll()` joins the transaction next.
+
 Governing constraints: `DESIGN.md` is the visual source of truth, no new hue is introduced below, and §11 (lines 419–437) must pass after every phase.
 
 ---

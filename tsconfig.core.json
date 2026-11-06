@@ -10,5 +10,5 @@
     "lib": ["ES2022"],
     "types": []
   },
-  "include": ["src/core/**/*.ts"]
+  "include": ["src/core/**/*.ts", "src/state/**/*.ts"]
 }

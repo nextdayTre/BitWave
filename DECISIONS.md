@@ -4,7 +4,7 @@ Implementation decisions taken to keep the plan moving. Each one is reversible
 while the codebase is small; the ones the plan marked for the author are noted.
 Format is deliberately short: decision, basis, how to reverse it.
 
-**Status:** 2026-11-06 · applies to the `src/core` extraction, the F0 baseline, the browser-verification harness, the `window.BitWave` seam and the Vite build (D19).
+**Status:** 2026-11-06 · applies to the `src/core` extraction, the F0 baseline, the browser-verification harness, the `window.BitWave` seam, the Vite build (D19) and the F2 state spine (D20).
 
 | # | Decision | Basis | Reverse by |
 |---|---|---|---|
@@ -27,6 +27,7 @@ Format is deliberately short: decision, basis, how to reverse it.
 | D17 | **Visibility eyes are per lane.** `frameVis` moves from one global `{a,b,z}` to each slot, so hiding A in lane 1 does not hide C in lane 2. | With global names, "frame A" is lane-1-specific; a single global toggle would silently hide three different frames. | Return to one shared map; eye labels would need to be generic again. |
 | D18 | **The agent/test seam is a read-only `window.BitWave` (schema 1).** `state()`, `geometry()` and `frames()` return deep-frozen plain objects; there are no setters and the global is defined non-writable. `geometry()` returns computed control-point `xs[]` plus DOM nibble rects so tests assert the DESIGN §11 alignment without scraping pixels. | AGENTS.md asks for explicit local state/render surfaces over screenshot automation; the browser harness needed a non-circular way to prove the canvas and strip agree. | Remove the surface block in `bitwave-v2.html`; the harness agent checks and the geometry assertion fail. |
 | D19 | **The build toolchain is installed and the artifact is generated.** Source is `src/index.html` + `src/main.js` + `src/styles/app.css`; `npm run build` (Vite 8.3.6 + `vite-plugin-singlefile` 2.3.4, **no minification**) emits the single-file `bitwave-v2.html`; `npm run dev` serves the source; `npm run typecheck` checks the core. Rebuild parity is a gate: `tools/browser-check.mjs --compare` requires identical screenshots across six states. The zero-dependency `node --test` runner from D5 stays. | PLAN §6/§7 F0 requires multi-file source with single-file delivery, and the sandbox that blocked npm/Chromium no longer applies; the D5 deferral is over for the build toolchain only. | Delete `vite.config.mjs`, `tools/build-artifact.mjs` and the `src/index.html`/`main.js`/`styles` tree; the app reverts to editing the HTML directly (git history has both). |
+| D20 | **The state tree is a DOM-free module behind a transaction store.** `src/state/instrument.ts` owns the singleton `S`, factories, global frame names and focus/edit selection, delegating nibble/register/derive math to `src/core`. `src/state/store.ts` is a generic `createStore` whose `patch()` collapses nested transactions into one revision and one notification pass. `commit()` in the app runs inside it. | F2's spine needs one tree and one write boundary; the IIFE held state and DOM together. Moving the tree out is the first slice; renderers and the remaining writers follow. | Move the tree back into `main.js` and `commit()` out of the store; `tests/state.test.ts` and the parity gate fail. |
 
 ## Open decisions still with the author
 
