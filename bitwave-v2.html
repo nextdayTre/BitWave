@@ -4,6 +4,10 @@
 
   Same engine, same visual system, same feature set. User-facing changes only:
     · lanes are numbered 1 / 2 / 3 (letters now mean operands/frames only)
+    · a Pro-Q4-style frame navigator browses lanes and their A/Z/B frames
+      with static mini-curves; selecting a frame focuses/edits it
+    · the old "logic B" toggle and 2D/3D segment are gone: the navigator
+      enables/selects B, and one "3D" toggle switches the depth field
     · lane controls and display controls are separate groups
     · copy mode says what it does and Escape cancels it
     · segmented controls expose aria-pressed; ambiguous preset names are labelled
@@ -256,7 +260,163 @@
 
   .pane-head.focused .stage-expr { color: var(--text); }
 
-  /* ── bit strip ────────────────────────────────────────── */
+  /* ── frame navigator — Pro-Q4-style lane/frame selection ── */
+  .frames-panel {
+    position: absolute;
+    z-index: 3;
+    top: 8px;
+    bottom: 8px;
+    left: var(--pad);
+    width: min(340px, calc(100% - 2 * var(--pad)));
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 5px;
+  }
+
+  .fp-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 8px 10px;
+    border-bottom: 1px solid var(--line-soft);
+  }
+
+  .fp-title {
+    margin: 0;
+    font-size: 10px;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--dim);
+  }
+
+  .fp-body { overflow-y: auto; padding: 4px 0 6px; }
+
+  .lane-btn {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+    width: 100%;
+    padding: 8px 10px;
+    border: 0;
+    border-left: 2px solid transparent;
+    background: transparent;
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 11.5px;
+    font-weight: 600;
+    text-align: left;
+    cursor: pointer;
+  }
+
+  .lane-btn:hover { background: var(--panel-hover); }
+  .lane-btn[aria-expanded="true"] {
+    border-left-color: var(--accent);
+    background: rgba(52, 211, 153, 0.06);
+  }
+
+  .lane-num {
+    flex: 0 0 auto;
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--dimmer);
+    letter-spacing: 0.05em;
+  }
+
+  .lane-meta {
+    min-width: 0;
+    margin-left: auto;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-family: var(--mono);
+    font-size: 9.5px;
+    color: var(--dim);
+  }
+
+  .frame-btn {
+    display: grid;
+    grid-template-columns: 76px minmax(0, 1fr) 88px;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    padding: 5px 10px 5px 20px;
+    border: 0;
+    border-left: 2px solid transparent;
+    background: transparent;
+    color: var(--dim);
+    text-align: left;
+    cursor: pointer;
+  }
+
+  .frame-btn:hover { background: var(--panel-hover); }
+  .frame-btn.is-active {
+    color: var(--text);
+    border-left-color: var(--accent);
+    background: rgba(52, 211, 153, 0.07);
+  }
+
+  .frame-label { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
+
+  .frame-swatch { width: 12px; height: 2px; flex: 0 0 auto; background: var(--accent); opacity: 0.75; }
+  .frame-btn[data-frame="b"] .frame-swatch {
+    background: repeating-linear-gradient(90deg, var(--accent) 0 4px, transparent 4px 7px);
+  }
+  .frame-btn[data-frame="z"] .frame-swatch { height: 3px; opacity: 1; }
+
+  .frame-glyph { font-family: var(--mono); font-size: 11.5px; color: var(--text); }
+  .frame-sub {
+    font-family: var(--sans);
+    font-size: 9px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--dimmer);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .frame-preview { display: block; width: 100%; height: 24px; }
+  .frame-preview polyline {
+    fill: none;
+    stroke: var(--accent);
+    stroke-width: 1.2;
+    stroke-opacity: 0.8;
+    vector-effect: non-scaling-stroke;
+  }
+  .frame-preview.z polyline { stroke-width: 1.7; stroke-opacity: 1; }
+  .frame-preview.b polyline { stroke-dasharray: 4 3; }
+
+  .frame-hex {
+    font-family: var(--mono);
+    font-size: 9px;
+    color: var(--dim);
+    text-align: right;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .frame-btn.is-active .frame-hex { color: var(--text); }
+
+  .fp-foot {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 7px 10px;
+    border-top: 1px solid var(--line-soft);
+    color: var(--dim);
+    font-size: 10px;
+  }
+
+  .lane-btn:focus-visible,
+  .frame-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+  /* ── bit strip ─────────────────────────────────────────── */
   .strip {
     position: relative;
     border-top: 1px solid var(--line-soft);
@@ -593,6 +753,17 @@
   <canvas id="wave"></canvas>
   <div class="hint" id="hint">drag a nibble · click a bit</div>
   <div class="stage-bar" id="stageBar" hidden></div>
+  <aside class="frames-panel" id="framesPanel" hidden aria-label="Frame navigator">
+    <div class="fp-head">
+      <h2 class="fp-title">frames</h2>
+      <button class="op" id="framesClose" type="button" aria-label="Close frame navigator" title="Close (Esc)">×</button>
+    </div>
+    <div class="fp-body" id="framesBody"></div>
+    <div class="fp-foot">
+      <span>A solid · Z glow · B dashed</span>
+      <button class="op" id="unpairB" type="button" hidden title="Remove operand B from this lane">unpair B</button>
+    </div>
+  </aside>
 </section>
 
 <section class="strip" id="strip" data-edit="A">
@@ -644,13 +815,8 @@
     <button class="op" data-preset="square">square</button>
   </div>
 
-  <div class="group">
+  <div class="group" id="logicGroup">
     <label>logic</label>
-    <button class="op" id="toggleB" aria-pressed="false" title="Add a second operand register">B</button>
-    <div class="seg" id="editSeg" role="group" aria-label="Operand to edit" hidden>
-      <button class="op on" data-edit="a" title="Edit operand A" aria-pressed="true">A</button>
-      <button class="op" data-edit="b" title="Edit operand B" aria-pressed="false">B</button>
-    </div>
     <button class="op accent" data-binop="and" hidden>AND</button>
     <button class="op accent" data-binop="or" hidden>OR</button>
     <button class="op accent" data-binop="xor" hidden>XOR</button>
@@ -665,16 +831,14 @@
       <button class="op" data-slot="B" title="Lane 2 (Alt+2)" aria-pressed="false" aria-keyshortcuts="Alt+2">2</button>
       <button class="op" data-slot="C" title="Lane 3 (Alt+3)" aria-pressed="false" aria-keyshortcuts="Alt+3">3</button>
     </div>
+    <button class="op" id="framesBtn" aria-expanded="false" aria-controls="framesPanel" title="Browse frames A, Z, B across lanes">frames</button>
     <button class="op" id="splitBtn" aria-pressed="false" aria-keyshortcuts="Alt+S" title="Split main 3D view into two side-by-side visualizers (Alt+S)">split</button>
     <button class="op" id="copySlotBtn" aria-pressed="false" title="Copy the focused lane into another lane (click, then pick 1, 2, or 3)">copy to…</button>
   </div>
 
   <div class="group">
     <label>view</label>
-    <div class="seg" id="viewSeg" role="group" aria-label="Display mode">
-      <button class="op on" data-view="2d" aria-pressed="true">2D</button>
-      <button class="op" data-view="3d" aria-pressed="false" title="A and B as wavetable frames, result between them">3D</button>
-    </div>
+    <button class="op" id="depthBtn" aria-pressed="false" title="Show the depth field: A at frame 1, Z at 128, B at 256">3D</button>
   </div>
 
   <div class="group">
@@ -2011,61 +2175,42 @@
 
   /* ══════════════════════════════════════════════════════════
      OPERAND B / BINARY LOGIC
+     B is enabled from the frame navigator (or a CSV B column / 3D).
      ══════════════════════════════════════════════════════════ */
 
-  const toggleB = document.getElementById("toggleB");
-  const editSeg = document.getElementById("editSeg");
+  const logicGroup = document.getElementById("logicGroup");
   const binopBtns = [...document.querySelectorAll("[data-binop]")];
 
   function syncEditUi() {
-    toggleB.hidden = S.view3d;
-    editSeg.hidden = !S.showB;
+    logicGroup.hidden = !S.showB;
     binopBtns.forEach((b) => {
       b.hidden = !S.showB;
       b.classList.toggle("on", b.dataset.binop === S.binop);
       b.setAttribute("aria-pressed", String(b.dataset.binop === S.binop));
-    });
-    toggleB.setAttribute("aria-pressed", String(S.showB));
-    editSeg.querySelectorAll("[data-edit]").forEach((b) => {
-      const active = b.dataset.edit === editKey();
-      b.classList.toggle("on", active);
-      b.setAttribute("aria-pressed", String(active));
     });
     stripEl.dataset.edit = editKey().toUpperCase();
     lfoBSel.value = curSlot().lfoB;
     lfoBSel.hidden = S.lfo.mode === "csvStep" || (!S.view3d && !S.showB);
   }
 
-  toggleB.addEventListener("click", () => {
-    if (S.view3d) return;            // 3-D requires both operands
-    S.showB = !S.showB;
-    if (S.showB) {
-      S.edit = "b";
-      // Seed B the first time so AND/OR/XOR immediately read as masking.
-      if (!S.seededB) {
-        S.seededB = true;
-        applyTable("square", S.B);
-      }
-    } else {
-      S.edit = "a";
-    }
+  /* The old "B" toggle's only unique capability was unpairing the second
+     operand. The navigator keeps that, without the ambiguous button. */
+  function unpairB() {
+    if (S.view3d) return;
+    const sl = curSlot();
+    if (!sl.showB) return;
+    lfoStop();
+    sl.showB = false;
+    sl.edit = "a";
     S.hoverReg = null;
     S.hoverJ = -1;
     syncEditUi();
+    syncViewUi();
     renderStrip();
     updateReadouts();
-  });
-
-  editSeg.querySelectorAll("[data-edit]").forEach((b) => {
-    b.addEventListener("click", () => {
-      S.edit = b.dataset.edit;
-      S.hoverReg = null;
-      S.hoverJ = -1;
-      syncEditUi();
-      renderStrip();
-      updateReadouts();
-    });
-  });
+    if (!framesPanel.hidden) renderFramesPanel(S.slot);
+    else framesBtn.focus();
+  }
 
   binopBtns.forEach((b) => {
     b.addEventListener("click", () => {
@@ -2081,12 +2226,20 @@
      LANE — 2-D canvas, lanes 1/2/3 & parallel 3-D split
      ══════════════════════════════════════════════════════════ */
 
-  const viewSeg = document.getElementById("viewSeg");
+  const depthBtn = document.getElementById("depthBtn");
   const slotSeg = document.getElementById("slotSeg");
   const splitBtn = document.getElementById("splitBtn");
   const copySlotBtn = document.getElementById("copySlotBtn");
+  const framesBtn = document.getElementById("framesBtn");
+  const framesPanel = document.getElementById("framesPanel");
+  const framesBody = document.getElementById("framesBody");
+  const framesClose = document.getElementById("framesClose");
+  const unpairBBtn = document.getElementById("unpairB");
   const hintEl = document.getElementById("hint");
   const stageBarEl = document.getElementById("stageBar");
+
+  const SVG_NS = "http://www.w3.org/2000/svg";
+  const FRAME_ORDER = ["a", "z", "b"];
 
   let stageDom = null;
 
@@ -2315,11 +2468,11 @@
   }
 
   function syncViewUi() {
-    viewSeg.querySelectorAll("[data-view]").forEach((b) => {
-      const active = (b.dataset.view === "3d") === S.view3d;
-      b.classList.toggle("on", active);
-      b.setAttribute("aria-pressed", String(active));
-    });
+    depthBtn.setAttribute("aria-pressed", String(S.view3d));
+    depthBtn.classList.toggle("on", S.view3d);
+    depthBtn.title = S.view3d
+      ? "Return to the 2D register view"
+      : "Show the depth field: A at frame 1, Z at 128, B at 256";
     slotSeg.querySelectorAll("[data-slot]").forEach((b) => {
       const active = b.dataset.slot === S.slot;
       b.classList.toggle("on", active);
@@ -2344,16 +2497,12 @@
     syncStageBar();
   }
 
-  viewSeg.querySelectorAll("[data-view]").forEach((b) => {
-    b.addEventListener("click", () => {
-      S.copyArmed = false;
-      const want3d = b.dataset.view === "3d";
-      S.view3d = want3d;
-      if (!want3d) S.split3d = false;
-      else if (S.split3d) S.split3d = false;
-      if (S.view3d) enableBOnSlot(curSlot());
-      refreshActiveSlotUi();
-    });
+  depthBtn.addEventListener("click", () => {
+    S.copyArmed = false;
+    S.view3d = !S.view3d;
+    if (!S.view3d) S.split3d = false;
+    if (S.view3d) enableBOnSlot(curSlot());
+    refreshActiveSlotUi();
   });
 
   slotSeg.querySelectorAll("[data-slot]").forEach((b) => {
@@ -2365,6 +2514,176 @@
   copySlotBtn.addEventListener("click", () => {
     S.copyArmed = !S.copyArmed;
     syncViewUi();
+  });
+
+  /* ── frame navigator ─────────────────────────────────────────
+     Pro-Q4-style lane/frame selection: static mini-curves, active lane
+     expanded, click a frame to focus it. No animation, no new state. */
+
+  function previewPoints(reg) {
+    const vals = reg.target;
+    if (!vals || vals.length === 0) return "";
+    const w = 96;
+    const h = 24;
+    const pad = 2;
+    const xs = vals.map((_, j) => (vals.length === 1 ? w / 2 : (j / (vals.length - 1)) * w));
+    const ys = vals.map((v) => h - pad - (v / 15) * (h - pad * 2));
+    const sp = buildSpline(xs, ys);
+    const pts = [];
+    for (let i = 0; i <= 48; i++) {
+      const x = (i / 48) * w;
+      pts.push(`${x.toFixed(1)},${evalSpline(sp, x).toFixed(1)}`);
+    }
+    return pts.join(" ");
+  }
+
+  function makePreview(reg, frame) {
+    const svg = document.createElementNS(SVG_NS, "svg");
+    svg.setAttribute("class", `frame-preview ${frame}`);
+    svg.setAttribute("viewBox", "0 0 96 24");
+    svg.setAttribute("preserveAspectRatio", "none");
+    svg.setAttribute("aria-hidden", "true");
+    const line = document.createElementNS(SVG_NS, "polyline");
+    line.setAttribute("points", previewPoints(reg));
+    svg.appendChild(line);
+    return svg;
+  }
+
+  const frameReg = (sl, frame) => (frame === "a" ? sl.A : frame === "b" ? sl.B : sl.Z);
+  const frameSub = (frame) => (frame === "z" ? "derived" : "operand");
+
+  function buildFrameRow(laneKey, frame) {
+    const sl = S.slots[laneKey];
+    const reg = frameReg(sl, frame);
+    const active = laneKey === S.slot && frame !== "z" && editKey(sl) === frame;
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "frame-btn" + (active ? " is-active" : "");
+    btn.dataset.lane = laneKey;
+    btn.dataset.frame = frame;
+    btn.setAttribute("aria-label", `Lane ${laneLabel(laneKey)} frame ${frame.toUpperCase()}, ${frameSub(frame)}`);
+    btn.title = `Lane ${laneLabel(laneKey)} · ${frame.toUpperCase()} (${frameSub(frame)})`;
+
+    const label = document.createElement("span");
+    label.className = "frame-label";
+    const swatch = document.createElement("span");
+    swatch.className = "frame-swatch";
+    const glyph = document.createElement("span");
+    glyph.className = "frame-glyph";
+    glyph.textContent = frame.toUpperCase();
+    const sub = document.createElement("span");
+    sub.className = "frame-sub";
+    sub.textContent = frameSub(frame);
+    label.append(swatch, glyph, sub);
+    btn.appendChild(label);
+
+    btn.appendChild(makePreview(reg, frame));
+
+    const hex = document.createElement("span");
+    hex.className = "frame-hex";
+    hex.textContent = toHexOf(reg);
+    hex.title = toHexOf(reg);
+    btn.appendChild(hex);
+
+    btn.addEventListener("click", () => selectFrame(laneKey, frame));
+    return btn;
+  }
+
+  function buildLaneButton(laneKey) {
+    const sl = S.slots[laneKey];
+    const expanded = laneKey === S.slot;
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "lane-btn";
+    btn.dataset.lane = laneKey;
+    btn.setAttribute("aria-expanded", String(expanded));
+    btn.setAttribute("aria-label", `Lane ${laneLabel(laneKey)}${expanded ? ", expanded" : ""}`);
+    const num = document.createElement("span");
+    num.className = "lane-num";
+    num.textContent = `LANE ${laneLabel(laneKey)}`;
+    const meta = document.createElement("span");
+    meta.className = "lane-meta";
+    meta.textContent = slotExprText(sl, false);
+    btn.append(num, meta);
+    btn.addEventListener("click", () => {
+      S.copyArmed = false;
+      if (S.slot !== laneKey) selectSlot(laneKey);
+      renderFramesPanel(laneKey);
+    });
+    return btn;
+  }
+
+  function renderFramesPanel(focusLane) {
+    framesBody.textContent = "";
+    for (const laneKey of SLOT_KEYS) {
+      framesBody.appendChild(buildLaneButton(laneKey));
+      if (laneKey !== S.slot) continue;
+      for (const frame of FRAME_ORDER) framesBody.appendChild(buildFrameRow(laneKey, frame));
+    }
+    unpairBBtn.hidden = !curSlot().showB || S.view3d;
+    if (focusLane) {
+      const head = framesBody.querySelector(`.lane-btn[data-lane="${focusLane}"]`);
+      if (head) head.focus();
+    }
+  }
+
+  function openFrames() {
+    S.copyArmed = false;
+    syncViewUi();
+    renderFramesPanel();
+    framesPanel.hidden = false;
+    framesBtn.setAttribute("aria-expanded", "true");
+    const first =
+      framesPanel.querySelector(".frame-btn.is-active") ||
+      framesPanel.querySelector(".frame-btn") ||
+      framesClose;
+    first.focus();
+  }
+
+  function closeFrames(returnFocus) {
+    if (framesPanel.hidden) return;
+    framesPanel.hidden = true;
+    framesBtn.setAttribute("aria-expanded", "false");
+    if (returnFocus) framesBtn.focus();
+  }
+
+  function selectFrame(laneKey, frame) {
+    S.copyArmed = false;
+    if (S.view3d) {
+      S.view3d = false;
+      S.split3d = false;
+    }
+    if (S.slot !== laneKey) selectSlot(laneKey);
+    if (frame === "a") {
+      S.edit = "a";
+    } else if (frame === "b") {
+      if (!S.showB) enableB();
+      S.edit = "b";
+    } else {
+      const previous = S.edit;
+      if (!S.showB) enableB();
+      S.edit = previous;
+    }
+    S.hoverReg = null;
+    S.hoverJ = -1;
+    syncEditUi();
+    syncViewUi();
+    renderStrip();
+    updateReadouts();
+    closeFrames(true);
+  }
+
+  framesBtn.addEventListener("click", () => {
+    if (framesPanel.hidden) openFrames();
+    else closeFrames(true);
+  });
+  framesClose.addEventListener("click", () => closeFrames(true));
+  unpairBBtn.addEventListener("click", unpairB);
+
+  document.addEventListener("pointerdown", (e) => {
+    if (framesPanel.hidden) return;
+    if (framesPanel.contains(e.target) || e.target === framesBtn) return;
+    closeFrames(false);
   });
 
   /* ══════════════════════════════════════════════════════════
@@ -2541,6 +2860,7 @@
 
   function applyExample(idx, instant, keepLfo = false) {
     if (!DEMO.rows.length) return;
+    if (!framesPanel.hidden) closeFrames(false);
     if (!keepLfo) lfoStop();
     const n = DEMO.rows.length;
     DEMO.i = ((idx % n) + n) % n;
@@ -2749,6 +3069,11 @@
   /* Keyboard shortcuts: Alt+1/2/3 switch views, Alt+S toggles split,
      and Arrow keys step CSV examples when focus isn't in a control. */
   document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && !framesPanel.hidden) {
+      closeFrames(true);
+      e.preventDefault();
+      return;
+    }
     if (e.key === "Escape" && S.copyArmed) {
       S.copyArmed = false;
       syncViewUi();
@@ -2756,9 +3081,9 @@
       return;
     }
     if (e.altKey && !e.ctrlKey && !e.metaKey) {
-      if (e.key === "1" || e.code === "Digit1") { selectSlot("A"); e.preventDefault(); return; }
-      if (e.key === "2" || e.code === "Digit2") { selectSlot("B"); e.preventDefault(); return; }
-      if (e.key === "3" || e.code === "Digit3") { selectSlot("C"); e.preventDefault(); return; }
+      if (e.key === "1" || e.code === "Digit1") { selectSlot("A"); if (!framesPanel.hidden) renderFramesPanel(); e.preventDefault(); return; }
+      if (e.key === "2" || e.code === "Digit2") { selectSlot("B"); if (!framesPanel.hidden) renderFramesPanel(); e.preventDefault(); return; }
+      if (e.key === "3" || e.code === "Digit3") { selectSlot("C"); if (!framesPanel.hidden) renderFramesPanel(); e.preventDefault(); return; }
       if (e.key === "s" || e.key === "S" || e.code === "KeyS") { setSplitMode(!(S.view3d && S.split3d)); e.preventDefault(); return; }
     }
     if (!DEMO.rows.length) return;
