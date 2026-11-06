@@ -51,12 +51,15 @@ The instrument is the two HTML files. The rest is preserved context:
 
 ## Preservation
 
-This directory is a Git repository. The current state is tagged and also backed
-up as a single-file bundle under `backups/` (ignored by Git), so it can be
-restored or cloned without a remote:
+This directory is a Git repository. Each checkpoint is tagged and also backed up
+as a single-file bundle under `backups/` (ignored by Git), so it can be restored
+or cloned without a remote:
 
 ```bash
-git clone backups/bitwave-v2-2026-11-06.bundle bitwave-restore
+git clone backups/bitwave-v2-2026-11-06-focus.bundle bitwave-restore
 ```
+
+Tags: `v2-checkpoint-2026-11-06` (frame navigator, eyes, wheel-step) and
+`v2-focus-2026-11-06` (global frame names, focus lens, browser harness).
 
 For off-machine safety, add a remote and push the `main` branch and tags.
