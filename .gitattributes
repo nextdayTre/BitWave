@@ -1,0 +1,8 @@
+# Preserve LF in the text artifacts (the HTML files are shipped byte-for-byte).
+* text=auto eol=lf
+*.html text eol=lf
+*.md text eol=lf
+*.svg text eol=lf
+*.json text eol=lf
+*.ts text eol=lf
+*.css text eol=lf
