@@ -8,6 +8,7 @@
 > 1. **No A/B/C lanes.** The three parallel instruments are **lanes 1/2/3** in UI, docs and code; letters belong only to frames/operands (A, Z, B). The naming collision is closed.
 > 2. **No cable graphics.** Routing is a compact **SOURCE → DESTINATION matrix table** (Serum-2 style) with drop-down rows — no cables, no jacks, no drag, no overlay in the 3-D field. Simplicity over spectacle.
 > 3. **Dimming is hands-off.** No `--dim`/`--dimmer`/contrast token changes. Colour and intensity are a future mapping axis, and the instrument is not a toy. Q8 is closed; accessibility work must not alter the palette.
+> 4. **Routing is the existing CSV column import, housed as a matrix.** The six operand inputs already bind to sources through dropdowns (`colA`/`colB` in the `data` group, populated by the imported file); loading, importing, per-column typing and right-alignment stay exactly as they are. The matrix is only the structural housing for those six bindings — one fixed row per input — and the one new capability is that a binding may also point at a frame output. No separate routing mode, no second import path, no dynamic add/remove rows.
 
 ---
 
@@ -22,7 +23,7 @@ So the plan is:
 1. **Keep exactly what you love.** The instrument, the single-file artifact, the 0 px strip↔curve contract, the two-hue system, the CSV stepper and observation logger, the split 3-D view, the no-onboarding stance. Nothing below replaces them.
 2. **Make the source multi-file, keep HTML as an output.** The stifling part is not HTML — it is *authoring inside one inline script with four mutable globals*. Source becomes a tested TypeScript core plus render adapters; `bitwave.html` (one double-clickable file) remains a first-class build artifact for classroom/USB use.
 3. **Build the spine once.** A framework-agnostic core, an explicit `evaluateAll()` state transition, and renderers that receive frozen view-models. Routing, keyboard editing, undo, autosave and share links then become features *on* the spine instead of rewrites *of* it.
-4. **Ship a routing matrix on top of it.** A compact SOURCE → DESTINATION table (lanes 1/2/3; frames A/Z/B) with one route per input, drop-downs and a `z⁻¹` state chip for feedback. No cables, no jacks, no dragging. Z remains derived, never a destination.
+4. **Ship the source table that houses routing.** Six fixed rows, one per operand input (lanes 1/2/3 × A/B); each SOURCE drop-down lists the imported CSV columns first (the existing mechanism) and frame outputs second. One source per input, a `z⁻¹` chip for same-lane feedback, no cables/jacks/dragging. Z remains derived, never a destination.
 5. **Fix the accessibility floor as a first-class milestone, not a cleanup.** Today a keyboard-only user cannot set a single value: no nibble is focusable and the canvas has no text alternative. Roles, names, keyboard editing, target sizes, reduced motion and zoom reflow are P0. **Contrast token changes are out of scope by author decision** — the palette stays as-is.
 6. **Defer the reversible decisions, not the expensive ones.** Framework, desktop shell and PWA can wait; the golden trace, the state spine, the schema version field and the single-file artifact test cannot.
 
@@ -98,24 +99,27 @@ The model is small and pure enough to test (nibble maths, BigInt ADD/SUB wrap, b
 
 ---
 
-## 3. Feature A — in-tool routing (routing matrix)
+## 3. Feature A — input routing (matrix housing)
 
-### 3.1 What a route is in this instrument
+**This is not a second data path.** The instrument already binds each operand input to a source through the CSV column dropdowns in the `data` group (`colA`/`colB`; `loadCSV` populates them, `applyExample` writes the cell into A or B on every step). That mechanism is the routing system. The matrix is its structural housing: the same six bindings, one fixed row per operand input, made visible as a table instead of six scattered selects. Loading a file stays trivial and unchanged; the only genuinely new thing is that a binding's source may also be a frame output, evaluated by the clocked `evaluateAll()` pass. Everything else below is the existing data path, organised.
 
-Each lane is already a three-frame device: operand **A**, derived **Z = A op B**, operand **B** (`makeSlot`, `735–747`). The missing thing is edges.
+### 3.1 What a binding is in this instrument
 
-- **Sources (9 outputs):** `A`, `B`, `Z` of each of the three lanes. Because `S.N` is global and every register is exactly `N` bits (`726–733`), a route is a plain bit-array copy — no scaling, sign extension or sample-rate gymnastics.
-- **Destinations (6 inputs):** `A` and `B` of each lane. **`Z` is never a destination** — it is a function of its lane's operands, resize zeroes it (`899–902`), and an external write to it would survive one transaction then vanish (DESIGN §10.8; the stale-Z failure class).
-- **Fan-out:** unlimited (one output can feed several inputs — an audio mult).
-- **Fan-in:** **one route per input in v1.** A second route replaces the first, as Blender's single-link sockets do. Last-write-wins and priority-replace depend on invisible ordering; the audio-natural alternative — summing at one inlet (`set | add mod 2^N | xor`) — is the v1.1 upgrade and is the bit-level analogue of additive mixing.
+Each lane is already a three-frame device: operand **A**, derived **Z = A op B**, operand **B** (`makeSlot`, `735–747`). The six operand inputs (`A`/`B` × lanes 1/2/3) each bind to exactly one source. That is the rule the existing CSV column dropdowns already enforce.
+
+- **Primary source — a CSV column.** The imported dataset supplies the options; loading/importing is unchanged. Per-column typing (`bin`/`hex`), right-alignment, overflow truncation and the widest-column default stay exactly as they are (DESIGN §10.16, §10.17, §10.21). `applyExample()` writes the cell into the bound input on every CSV step — this is the working mechanism, not something to replace.
+- **Optional source — a frame output.** `A`/`B`/`Z` × lanes 1–3 (nine outputs), evaluated by the clocked route pass. This is the **only new capability**; it occupies the same row and obeys the same one-source-per-input rule.
+- **Destinations (6 inputs):** `A` and `B` of each lane, fixed. **`Z` is never a destination** — it is a function of its lane's operands, resize zeroes it (`899–902`), and an external write to it would survive one transaction then vanish (DESIGN §10.8; the stale-Z failure class).
+- **Fan-out:** unlimited (one frame output can feed several inputs — an audio mult).
+- **Fan-in:** **one source per input in v1.** A second frame route replaces the first, as Blender's single-link sockets do. Last-write-wins and priority-replace depend on invisible ordering; the audio-natural alternative — summing at one inlet (`set | add mod 2^N | xor`) — is the v1.1 upgrade and is the bit-level analogue of additive mixing.
 
 ### 3.2 Candidate models and verdict
 
 | Model | What it gives | Cost | Verdict |
 |---|---|---|---|
-| (i) **Matrix rows / cross-lane routes** | Familiar patch-sheet; 9→6; topological | Small table UI | **Ship** |
-| (ii) **Within-lane feedback `Z→A/B`** | The teaching jackpot: a two-state oscillator is one row | Needs an explicit delay rule | **Ship, labelled** |
-| (iii) Routing matrix | Dense overview | 54 cells → 54 focus stops; no per-cell mix/delay | This is now (i): a source/destination table, not a crosspoint grid |
+| (i) **Source table / bindings** | Reuses the existing CSV column dropdowns; six fixed inputs; frame sources additive | One housing table + frame optgroup | **Ship** |
+| (ii) **Within-lane feedback `Z→A/B`** | The teaching jackpot: a two-state oscillator is one source choice | Needs an explicit delay rule | **Ship, labelled** |
+| (iii) Crosspoint grid | Dense overview | 54 cells → 54 focus stops; no per-cell mix/delay | Reject: six fixed input rows are clearer |
 | (iv) Named buses | Scales past ~10 lanes | Mapping layer, no payoff at 3 lanes | Reject for now |
 | (v) Linear chain (lane order = processing order) | Zero UI | Display order silently changes arithmetic | Reject |
 | (vi) General DAG | Maximum power | (i)'s cost + cycle authoring | Ship as restricted DAG: (i)+(ii) |
@@ -124,7 +128,7 @@ Each lane is already a three-frame device: operand **A**, derived **Z = A op B**
 
 **Authority / normalled-jack rule.** A patched input is *driven*. On the first route, its pre-patch value is **parked**; when the route is removed it is restored byte-identically — the LFO promise (DESIGN §10.18) reused. While driven, base writes (drag, bit click, preset, unary op, B seed, CSV column, LFO sweep) skip it; the strip labels the driver (`3·Z → 1·A`) and disables edit affordances with a visible reason instead of silently ignoring input. This is the audio-patching concept of a normalled input: plugging in breaks the normal path, and unplugging restores it.
 
-**One evaluation entry point.** All writers finish their base writes, then `applyRoutes()` runs, then `recomputeZ` + `syncTarget` for **all** lanes, then render. It runs only on transaction boundaries — drag move, bit click, preset/op, CSV step, LFO tick, route add/remove, resize — **never per animation frame**. Focus never participates; clicking a lane changes no numbers.
+**One evaluation entry point.** All writers finish their base writes, then `applyRoutes()` runs, then `recomputeZ` + `syncTarget` for **all** lanes, then render. It runs only on transaction boundaries — drag move, bit click, preset/op, CSV step, LFO tick, binding change, resize — **never per animation frame**. Focus never participates; clicking a lane changes no numbers.
 
 **Cycle breaking.** Two cycle shapes exist: a self-loop (`3·Z → 3·A`) and a cross-lane cycle. A zero-delay cycle has no fixed point (with `A = A xor B`, unless `B = 0`, there is nothing to converge to), so a cycle must be broken by an **implicit one-evaluation delay**. No stored state is needed: snapshot the delayed source values before writing, then write. That snapshot *is* the previous evaluation's result, and it survives resize and unroute. Phase-shift feedback is exactly the digital-audio delay line every feedback patch requires. Label those rows `z⁻¹` — not with a second dash language, because B already owns the dash (DESIGN §8).
 
@@ -135,7 +139,7 @@ Each lane is already a three-frame device: operand **A**, derived **Z = A op B**
 | Manual edit | the user's port, if not driven | `evaluateAll()` |
 | CSV step | mapped columns for non-driven ports | `evaluateAll()` |
 | LFO tick | sweep non-driven ports, all lanes | `evaluateAll()`, then render |
-| Route add/remove | park / restore destination | `markDelays()` → `evaluateAll()` → matrix render |
+| Binding change | re-park / restore destination | `markDelays()` → `evaluateAll()` → source-table render |
 | Resize | `lfoStop`; remap A/B **and parked bases**; set `S.N` | recompute + `evaluateAll()` |
 | Copy lane | copy *base* registers; routes belong to the rack, untouched | `evaluateAll()` |
 | Lane focus | none | UI render only |
@@ -152,19 +156,27 @@ After step 1, lane 1's truth counts are `24 / 27 / 8 / 5` (sum 64, invariant hol
 
 ### 3.4 UI inside the design system
 
-**Canonical editor: a routing matrix.** Routing lives in a compact table band between `.meta` and `.controls` (a sixth grid row, opened from a `matrix` toggle in the `view` group). Columns: `#` · **SOURCE** · **DESTINATION** · **STATE** · remove. SOURCE offers nine options grouped by lane (`Lane 3 · Z`); DESTINATION offers six (`Lane 1 · A`; Z never listed). Rows are always editable; an empty row shows a dim `—`. `+ add route` appends a row; choosing a destination already driven by another row **replaces** that row (one route per input) and the status says what changed. STATE reads `1:1` or a `z⁻¹` chip for within-lane feedback. Destination options already taken by another row are disabled, so the table cannot show two drivers for one input.
+**The matrix is the housing, not a new mode.** It belongs where the CSV column dropdowns already live — the `data` group — and adds no toggle, no sixth band, no separate view. One compact table with **six fixed rows**, one per operand input: `SOURCE` select · `DESTINATION` (static label) · `STATE` chip. SOURCE options are grouped:
+
+- `data · <column>` from the imported file — the existing `colA`/`colB` behaviour, default when a file is loaded and unchanged in typing/alignment;
+- `frame · Lane N · A/Z/B` — the new in-tool routing source;
+- `—` — unbound.
+
+STATE reads `data` (column applied on step), `1:1` (live frame), `z⁻¹` (same-lane Z feedback), or `—`. A loaded CSV fills the six rows exactly as today's pickers would; the table simply makes the whole binding board visible at once. There is no add/remove and no replacement logic — the inputs are fixed, one source each. Loading a file is still the same easy action it is today. The six rows stay visible even with no file so frame sources work; data options appear/disable with the dataset.
+
+**No new state, no duplicate truth.** Each row is a view over the two facts that already exist for that input: the CSV column index (`colA`/`colB`) and any incoming frame route. Choosing a data column writes the column index and clears the frame route; choosing a frame writes the route and clears the column index; `—` clears both. The table stores nothing of its own, so import, typing, alignment and the observation logger cannot drift.
 
 **No cable graphics anywhere.** Not on the stage, not in the 3-D field, no jack hit-testing, no drag. The table is the whole interface; the field stays read-only (DESIGN §10.12) and never gains routing overlays.
 
-**Visual grammar (no third hue, no new token):** `--accent` carries live values and the `z⁻¹` chip; chrome stays neutral (`--panel`, `--line`, `--dim`); the edited row uses `--panel-hover` + accent border, mirroring `button.op.on`; `--inf` stays reserved for ∞, the zero-crossing and MRB underlines. Invalid choices are absent from the select, not red. Typography follows DESIGN §4: mono for lanes/frames/state, sans for column labels and prose.
+**Visual grammar (no third hue, no new token):** `--accent` carries live frame bindings and the `z⁻¹` chip; `data` bindings stay muted chrome; the `--inf` warmth stays reserved for ∞, the zero-crossing and MRB underlines. Invalid choices are absent from the select, not red. Typography follows DESIGN §4: mono for source/destination labels, sans for column headers and prose.
 
-**720 px:** the matrix keeps its columns but compresses — row number hides, the STATE chip wraps under DESTINATION, and the table scrolls horizontally inside its own wrapper while the page itself never overflows. `--pad` is already 16 px there.
+**720 px:** the table compresses — DESTINATION abbreviates to `1·A`, the STATE chip wraps under it, and the table scrolls horizontally inside its own wrapper while the page itself never overflows. `--pad` is already 16 px there.
 
 ### 3.5 If you do it in today's file (and why I would not)
 
-The routing deep-dive gives the full touch list: new `S.routes` / `S.routePark`, `applyRoutes`, `evaluateAll`, `markDelays`, port helpers, driven-port guards in drag/bit/preset/ops/CSV/LFO/seed, parked remap in `resizeRegister`, `baseOf` in `copySlotInto`, matrix DOM/CSS, observation columns. It is ~150 new + ~70 changed lines for the engine and guards, ~130 for the matrix table — a credible **~370 LOC, 3-phase, ~4–5 day** feature in the current file.
+The routing deep-dive gives the full touch list: new `S.routes` / `S.routePark`, `applyRoutes`, `evaluateAll`, `markDelays`, port helpers, driven-port guards in drag/bit/preset/ops/CSV/LFO/seed, parked remap in `resizeRegister`, `baseOf` in `copySlotInto`, source-table DOM/CSS, observation columns. The engine and guards are ~150 new + ~70 changed lines; the source table is mostly a re-housing of the existing `colA`/`colB` selects plus the frame optgroup, ~60–100 lines — a credible **~250–300 LOC, 2–3 phase** change with a much smaller UI risk than a new view.
 
-The catch is the second pass. Routing's natural home is the core's evaluation model, and the current file has no seam for it: you would write `evaluateAll()` against the `S` facade, then rewrite it against the extracted store. That is not fatal — it is 1–2 extra days — but it is two chances to regress the invariants. **Recommendation:** build a throwaway *interaction* spike (matrix rows + add/replace + one driven guard, no persistence) to validate the feel, then build the engine once in the new core (§7, F1). If routing must ship for a class in the next month, the routing-first path is in §7.2 and is honest about the port cost.
+The catch is the second pass. Routing's natural home is the core's evaluation model, and the current file has no seam for it: you would write `evaluateAll()` against the `S` facade, then rewrite it against the extracted store. That is not fatal — it is 1–2 extra days — but it is two chances to regress the invariants. **Recommendation:** build a throwaway *interaction* spike (six fixed rows + source options + one data/frame chip, no persistence) to validate the housing, then build the engine once in the new core (§7, F1). If routing must ship for a class in the next month, the routing-first path is in §7.2 and is honest about the port cost.
 
 ### 3.6 Verification additions (before merge)
 
@@ -177,13 +189,14 @@ The catch is the second pass. Routing's natural home is the core's evaluation mo
 7. Route + LFO: patched inputs are never overwritten; stop restores the pre-LFO snapshot.
 8. Route + CSV: a driven destination ignores its column but keeps the mapping; unplug restores it.
 9. Keyboard-only: add, inspect, remove a route; status announced; focus never lost.
-10. Matrix: Z never appears in the destination options; choosing a destination already driven by another row replaces that row and announces what changed.
+10. Source table: exactly six rows (fixed destinations); the destination column never contains Z; every row has one source; the `data` / `1:1` / `z⁻¹` / `—` chip matches the binding.
 11. Zero console errors; no overflow at 360/420 px; pixel histogram contains no third hue; no cable/jack/canvas routing chrome exists.
+12. CSV regression: load a file → the six rows populate exactly as today's per-lane pickers did; per-column typing, right-alignment and truncation are unchanged; stepping writes each bound input.
 
 ### 3.7 Open routing options (defaults chosen, cheap to flip)
 
-- **Fan-in** (v1.1): per-input mix `set | add mod 2^N | xor`, exposed as a `MIX` column in the matrix. `add mod 2^N` is the additive-synthesis analogue — two wavetables summed at one inlet is a genuinely new teaching state, not just plumbing.
-- **Sources:** ship all nine frames (`A/Z/B` × 3 lanes). `A→B` is a direct out; `Z→A` is the interesting one.
+- **Fan-in** (v1.1): per-input mix `set | add mod 2^N | xor`, exposed as a `MIX` column in the source table. `add mod 2^N` is the additive-synthesis analogue — two wavetables summed at one inlet is a genuinely new teaching state, not just plumbing.
+- **Sources:** data columns are the primary/default source and stay exactly as they are; frame outputs are the new optional group in the same select.
 - **Lane naming:** settled (author, 2026-11-06) — **lanes 1/2/3** in UI, docs and code; letters only for frames/operands.
 - **Route presets / "patch memory"** and copy-patch: later; the rack owns routes, lanes don't.
 
@@ -253,20 +266,20 @@ The 0 px strip↔curve alignment and `--pad` single-writer rule; the two-hue sys
 
 ## 5. Feature C — GUI cohesion (the IA pass)
 
-Not a restyle: a **stable module order, one canonical home per control, and names that don't collide.** The routing matrix is the first component added under these rules and a useful test of them.
+Not a restyle: a **stable module order, one canonical home per control, and names that don't collide.** The source table is the first component added under these rules and a useful test of them.
 
 | Module | Before | After |
 |---|---|---|
-| **Source** (data) | 6 of 9 controls appear only after import; no demo; no errors | fixed: `import` / `demo` / `◀ n/N ▶` / columns / `log` / `export` / status line; disabled placeholders instead of disappearing |
+| **Source** (data) | 6 of 9 controls appear only after import; no demo; no errors | fixed: `import` / `demo` / `◀ n/N ▶` / **six-row source table (data columns + frame outputs)** / `log` / `export` / status line; disabled placeholders instead of disappearing |
 | **Register** | header slider labelled "register" | header `width`; A\|B edit target as a radio pair; hex entry field |
 | **Operate** | `op` group last; `amount` also drives the LFO | `operate`: amount + the seven unary ops |
 | **Derive** | `logic` third; binops hidden until B; truth table stranded in meta | `derive`: operand B, binop radios, truth/carry attached to the meta band |
 | **Motion** | `lfo` | `motion`: LFO, mode, rate, B phase |
-| **View** | duplicated lane/split controls; stage bar hidden in 2-D | `view`: 2D/3D, `matrix`, `copy to…`; lane select + split live in an **always-visible stage bar** |
+| **View** | duplicated lane/split controls; stage bar hidden in 2-D | `view`: 2D/3D, `copy to…`; lane select + split live in an **always-visible stage bar** |
 | **Strip** | four click-only glyphs; vanishes in compact | one focusable nibble spinbutton per nibble; bits become its value text; compact keeps the control |
 | **Modes** | armed invisibly | explicit `copy to…` menu (focus moves in, `Escape` cancels, live status) |
 
-Also: lanes are **1 / 2 / 3** everywhere — UI, docs and code — so letters belong only to frames and operands; the stage expression becomes routing-aware (`3·Z ⊕ B → Z`); one declared keyboard map (`?` opens a utility panel, not onboarding); duplicate controls removed rather than synchronised.
+Also: lanes are **1 / 2 / 3** everywhere — UI, docs and code — so letters belong only to frames and operands; the stage expression becomes routing-aware (`3·Z ⊕ B → Z`); one declared keyboard map (`?` opens a utility panel, not onboarding); duplicate controls removed rather than synchronised. **The source table is not a new view**: it turns the existing per-lane column dropdowns into one six-row housing; frame sources are the only addition.
 
 ---
 
@@ -330,7 +343,7 @@ Done means: golden trace matches, §11 green on the dev server **and** on `file:
 | **F0 Baseline** | `git init`; Vite+TS+Vitest+Playwright scaffold; capture golden trace from today's file; CI; single-file build of the *existing* app | A safety net before any move | CI green on untouched `index.html`; artifact passes §11 | 2–3 d |
 | **F1 Core + routing engine** | Extract spline → register/number maths (explicit `N`) → ops → derive → geometry → CSV parser into DOM-free core; add `routes`/`routePark`/`evaluateAll`/`markDelays` **as pure model** | Tested engine, routing included | core `tsc` no-DOM; §11 + §3.6 unit green; golden trace matches | 4–6 d |
 | **F2 State spine + renderers** | store + commands; `evaluateAll` on every transaction; canvas `FrameInput`; strip reconcile; readouts; stage bar; pointer + keyboard controllers; delete `S` facade and focused-only `commit` | The app on the spine | §11 + screenshots unchanged or explained; 256-bit frame budget holds; core has no render calls | 5–8 d |
-| **F3 Routing matrix UI** | `matrix` toggle + SOURCE/DESTINATION table, add/replace/remove, disabled taken inputs, `z⁻¹` state chip, live status; no cable/jack/3-D chrome | The feature you asked for, accessible | §3.6 #1–11; keyboard-only add/remove; no overflow at 360 px; tokens only | 2–3 d |
+| **F3 Source-table housing** | Turn the existing `colA`/`colB` picks into one six-row table; add the `frame` optgroup, `data`/`1:1`/`z⁻¹` state chips and live status; no toggle, no add/remove, no cable/jack/3-D chrome | Routing, without a second import path | CSV import regression (same typing/alignment) + §3.6 #1–12; keyboard-only; 360 px | 1–2 d |
 | **F4 A11y P0 + IA pass** | §4.2 fixes; lanes 1/2/3 UI; stable module order; reserve space; canonical homes; explicit `copy to…` + Escape; one keyboard map | A tool a keyboard-only student can use | axe zero critical/serious; keyboard task script; zoom at 200/400 %; no palette changes | 3–5 d |
 | **F5 Persistence & reach** | `.bitwave` v1 + migration, autosave, URL share, embedded demo dataset, CSV error status, remove stale `.bak` | Work survives; state is shareable | round-trip fixtures; share URL ≤ ~2 KB; save→reload identical | 3–5 d |
 | **F6 Distribution** | PWA manifest/SW for the hosted build; Tauri 2 only if triggered | Installable / native file dialogs | installed offline works; artifact unchanged | 2–4 d web, +5–8 d Tauri |
@@ -356,11 +369,11 @@ Do the routing deep-dive's 4 phases in the current file (~5–8 days), then pay 
 Changing the instrument means amending the source of truth **before** code. The full package:
 
 - **§3 Colour:** new `--dim` / `--dimmer` / `--line` values; the alpha bumps for focus ring, B-mate, zero-crossing, ∞ ring; a note that off-bit contrast is a data-legibility requirement, not decoration; optional `prefers-contrast` mode. State the 1.9×→1.1× luminance compression and that hierarchy moves to size/tracking/weight.
-- **§5/§7/§9:** stage floor + page scroll at zoom (keep the 100 vh instrument on normal viewports); reduced-motion behaviour; matrix band and its 720 px stacking; target sizes (24 px).
-- **§8 new components:** `routing matrix`, `route row`, `source/destination select`, `state chip` (`1:1` / `z⁻¹`), `driven-port` state, nibble spinbutton/hex entry; each must cite which existing token supplies every value. **Also rename lane terminology in §8 and §9 (done in core; UI pending)**; no jack or cable component exists.
+- **§5/§7/§9:** stage floor + page scroll at zoom (keep the 100 vh instrument on normal viewports); reduced-motion behaviour; source table in the data group and its 720 px stacking; target sizes (24 px).
+- **§8 new components:** `source table`, `binding row`, `source select` (data columns + frame outputs), `state chip` (`data` / `1:1` / `z⁻¹`), `driven-port` state, nibble spinbutton/hex entry; each must cite which existing token supplies every value. **Also rename lane terminology in §8 and §9 (done in core; UI pending)**; no jack or cable component exists; there is no matrix toggle or separate route view.
 - **§10 new invariants:** (a) `evaluateAll()` is the only evaluation entry point and runs on transactions, not frames; (b) routes apply after base writes, before Z/truth/log; (c) patched inputs park and restore byte-identically; (d) Z is never a routing destination; (e) cycles are broken by a labelled one-evaluation delay; (f) focus never changes evaluated values; (g) the strip is the semantic editor and the canvas is a lens; (h) reserved-space layout — no control may be removed from the DOM to change mode.
 - **§11:** add routing §3.6 and accessibility/zoom/contrast checks; keep the existing headless-CDP pass.
-- **§12 Roadmap:** move "Shareable state" to shipped; add routing matrix, project file, a11y pass, source migration.
+- **§12 Roadmap:** move "Shareable state" to shipped; add source-table housing, project file, a11y pass, source migration.
 - **§13 protocol:** add "any new control must declare its keyboard path and accessible name".
 
 ---
@@ -413,6 +426,6 @@ Q6 and Q8 were answered by the author on 2026-11-06 and are closed. Q1–Q5, Q7 
 - [UX & accessibility audit](docs/analysis/ux-a11y.md) — interaction inventory, severity table, measured contrast, target sizes, reflow analysis, IA before/after.
 - [Architecture plan](docs/analysis/architecture.md) — coupling map, module contracts, framework matrix, packaging, persistence schema, CI, migration gates.
 - [Target architecture diagram](docs/diagrams/target-architecture.svg). The routing UI is the matrix described in §3.4; the earlier cable/patch-model diagram has been removed (author decision 2026-11-06).
-- [Routing matrix prototype](spike/routing-matrix.html) — SOURCE/DESTINATION table, no cables.
+- [Routing matrix prototype](spike/routing-matrix.html) — six fixed input rows; source selects list data columns and frame outputs; no cables.
 
 *The picture and the truth should be one object. Right now the truth is trapped in one file; this plan sets it free without changing what it looks like.*

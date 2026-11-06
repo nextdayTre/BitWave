@@ -3,37 +3,33 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>BitWave — routing matrix spike</title>
+<title>BitWave — input source matrix</title>
 <!--
-  BitWave — routing matrix spike
-  ==============================
-  A standalone interaction prototype of BitWave's routing UI, modelled on the
-  Serum 2 modulation matrix: one compact patch sheet, one SOURCE select and one
-  DESTINATION select per row, a derived STATE chip, and a remove button.
-
+  BitWave — input source matrix (routing housing)
+  ==============================================
   WHAT IT IS
-  - A single-file, dependency-free prototype that opens directly from file://.
-  - A test of "patch sheet, not diagram": no cables, canvas, cards, jacks,
-    dragging or 3-D. The table is the whole editor.
+  - Single-file, dependency-free prototype of the fixed six-row housing for
+    BitWave's existing per-input source dropdowns (the CSV column selectors).
+  - Six rows, one per operand input: Lane 1/2/3 · A/B. DESTINATION is static
+    text; SOURCE is the existing dropdown, offering imported data columns and
+    live frame outputs. STATE is derived from the binding.
+  - This is the structural housing, not a new routing system: one input reads
+    one source, exactly as the current column dropdowns already behave.
 
   WHAT IT IS NOT
-  - No DSP, no evaluation, no audio. Nothing is routed, computed or delayed;
-    the board is placeholder state.
-  - No persistence: reload returns to the initial example board.
-  - No project file, no share link, no undo.
-  - Replacement is a model invariant only; the disabled <option>s are the
-    normal path that prevents a second driver (see setDestination()).
-
-  TERMINOLOGY
-  - The three parallel instruments are lanes 1 / 2 / 3 (not A/B/C), so the
-    operand frames inside a lane can stay A / Z / B without collision.
-  - Sources are Lane N · A / Z / B (nine). Destinations are Lane N · A / B
-    (six). Z is derived and is never offered as a destination.
+  - No DSP, no evaluation, no audio. Nothing is computed, mixed or delayed;
+    the state chips are labels only.
+  - No dynamic row controls, no diagram editing, no port dragging.
+  - No persistence, share link or undo; reload restores the defaults.
+  - Sample data columns (id, sine, square, payload) stand in for an imported
+    file. The frame entries are placeholders.
 
   CONSTRAINTS
-  - Tokens only, from DESIGN.md §3. --inf is declared and deliberately unused.
-  - No third hue, no gradients, no box-shadow (focus rings use outline), no
-    network, no modules, no external assets. Classic-script IIFE.
+  - DESIGN.md tokens only; --inf and --handle-hi stay reserved/unused. One
+    accent hue, no third hue. Classic-script IIFE, no modules, no network,
+    no external assets; opens from file://.
+  - Native selects, 32px targets, focus-visible, aria-live status, reduced
+    motion honoured, no horizontal page overflow at 360px.
 -->
 <style>
   /* ---------------------------------------------------------------- tokens */
@@ -43,121 +39,111 @@
     --line: #1b212b; --line-soft: #141920; --line-hi: #2a3341;
     --text: #e8edf5; --dim: #67728a; --dimmer: #3f4859;
     --accent: #34d399; --accent-hi: #5eead4; --accent-low: #22c55e;
-    --inf: #f5b544; --handle-hi: #eafaf3; /* --inf: reserved structure hue, never used */
+    --inf: #f5b544; --handle-hi: #eafaf3; /* reserved; deliberately unused */
     --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
     --sans: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
     --pad: 40px;
   }
 
-  /* ---------------------------------------------------------------- base */
+  /* ------------------------------------------------------------------ base */
   * { box-sizing: border-box; }
   html { color-scheme: dark; }
-  body { margin: 0; background: var(--bg); color: var(--text); font: 13px/1.4 var(--sans);
-    -webkit-font-smoothing: antialiased; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+    font: 13px/1.4 var(--sans); -webkit-font-smoothing: antialiased; }
   .sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0;
     overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
-  :where(button, select):focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  select:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 
-  /* ---------------------------------------------------------------- shell */
-  .shell { max-width: 980px; margin: 0 auto; padding: clamp(24px, 4.5vw, 44px) var(--pad) 40px; }
+  /* ----------------------------------------------------------------- shell */
+  .shell { max-width: 900px; margin: 0 auto;
+    padding: clamp(24px, 4.5vw, 42px) var(--pad) 36px; }
   .head { display: flex; align-items: flex-end; justify-content: space-between;
-    gap: 10px 20px; margin: 0 0 18px; }
+    flex-wrap: wrap; gap: 10px 20px; margin: 0 0 12px; }
   .eyebrow { margin: 0 0 6px; font: 500 10px/1.2 var(--sans); letter-spacing: .09em;
     text-transform: uppercase; color: var(--dim); }
-  h1 { margin: 0; font: 600 16px/1.25 var(--sans); color: var(--text); }
-  .head .meta { margin: 0; font: 11.5px/1.4 var(--mono); color: var(--dim);
+  h1 { margin: 0; font: 600 16px/1.25 var(--sans); }
+  .meta { margin: 0; font: 11.5px/1.4 var(--mono); color: var(--dim);
     font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .lede { margin: 0 0 8px; max-width: 66ch; font: 12px/1.5 var(--sans);
+    color: var(--dim); }
+  .legend { display: flex; flex-wrap: wrap; gap: 4px 18px; margin: 0 0 18px;
+    font: 10.5px/1.45 var(--sans); color: var(--dim); }
+  .legend b { font: 400 10px/1 var(--mono); color: var(--text); }
+  .legend b.acc { color: var(--accent); }
 
-  /* --------------------------------------------------------------- matrix */
-  .matrix { background: var(--panel); border: 1px solid var(--line); border-radius: 5px;
-    overflow: hidden; }
+  /* ---------------------------------------------------------------- matrix */
+  .matrix { background: var(--panel); border: 1px solid var(--line);
+    border-radius: 5px; overflow: hidden; }
   .toolbar { display: flex; align-items: center; justify-content: space-between;
-    flex-wrap: wrap; gap: 8px 12px; padding: 9px 12px; border-bottom: 1px solid var(--line-soft); }
-  .toolbar-left { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
+    gap: 8px 12px; padding: 9px 12px; border-bottom: 1px solid var(--line-soft); }
   .toolbar h2 { margin: 0; font: 500 10px/1.2 var(--sans); letter-spacing: .09em;
     text-transform: uppercase; color: var(--dim); }
-  .count { font: 10.5px/1.2 var(--mono); color: var(--dimmer);
+  .count { font: 10px/1.2 var(--mono); color: var(--dimmer);
     font-variant-numeric: tabular-nums; white-space: nowrap; }
-  .actions { display: flex; gap: 8px; }
-
-  .btn { display: inline-flex; align-items: center; justify-content: center; min-height: 32px;
-    padding: 0 11px; border: 1px solid var(--line); border-radius: 5px; background: var(--panel-hi);
-    color: var(--text); font: 11.5px/1 var(--mono); white-space: nowrap; cursor: pointer; }
-  .btn:hover:not(:disabled) { background: var(--panel-hover); border-color: var(--line-hi); }
-  .btn:disabled { background: transparent; border-color: var(--line-soft); color: var(--dimmer);
-    cursor: not-allowed; }
-  .btn.quiet { background: transparent; color: var(--dim); }
-  .btn.quiet:hover:not(:disabled) { background: var(--panel-hi); border-color: var(--line-hi);
-    color: var(--text); }
 
   .table-wrap { width: 100%; overflow-x: auto; }
   table { width: 100%; border-collapse: collapse; table-layout: fixed; }
-  thead th { padding: 8px 10px; border-bottom: 1px solid var(--line); background: var(--panel);
+  thead th { padding: 8px 10px; border-bottom: 1px solid var(--line);
     font: 500 10px/1.2 var(--sans); letter-spacing: .09em; text-transform: uppercase;
     color: var(--dim); text-align: left; white-space: nowrap; }
-  th.c-num { width: 44px; }
-  th.c-state { width: 92px; }
-  th.c-rm { width: 44px; }
-  tbody td { padding: 3px 10px; border-bottom: 1px solid var(--line-soft); vertical-align: middle; }
+  thead .c-input { width: 30%; }
+  thead .c-state { width: 15%; }
+  tbody td { padding: 6px 10px; border-bottom: 1px solid var(--line-soft);
+    vertical-align: middle; text-align: left; }
   tbody tr:nth-child(even) { background: var(--line-soft); }
+  tbody tr:hover { background: var(--panel-hover); }
   tbody tr:last-child td { border-bottom: 0; }
-  td.c-num { padding-left: 10px; padding-right: 4px; font: 11.5px/1 var(--mono);
-    color: var(--dimmer); font-variant-numeric: tabular-nums; }
-  th.c-rm, td.c-rm { padding-left: 4px; padding-right: 6px; text-align: right; }
+  td.c-input { font: 11.5px/1 var(--mono); color: var(--text); white-space: nowrap;
+    font-variant-numeric: tabular-nums; }
+  td.c-source { padding-top: 4px; padding-bottom: 4px; }
   td.c-state { white-space: nowrap; }
 
-  .pick { display: block; width: 100%; min-width: 0; height: 32px; padding: 0 6px;
-    border: 1px solid var(--line); border-radius: 5px; background: var(--panel-hi);
-    color: var(--text); font: 11.5px/1 var(--mono); font-variant-numeric: tabular-nums;
-    cursor: pointer; }
+  .pick { display: block; width: 100%; max-width: 100%; min-width: 0; height: 32px;
+    padding: 0 8px; border: 1px solid var(--line); border-radius: 5px;
+    background: var(--panel-hi); color: var(--text); font: 11.5px/1 var(--mono);
+    font-variant-numeric: tabular-nums; cursor: pointer; }
   .pick:hover { border-color: var(--line-hi); }
   .pick.is-empty { color: var(--dim); }
   .pick option { background: var(--panel-hi); color: var(--text); }
-  .pick option:disabled { color: var(--dimmer); }
+  .pick optgroup { background: var(--panel-hi); color: var(--dim); font-style: normal; }
 
-  .rm { display: inline-flex; align-items: center; justify-content: center; width: 32px;
-    height: 32px; padding: 0; border: 1px solid transparent; border-radius: 5px;
-    background: transparent; color: var(--dim); font: 15px/1 var(--mono); cursor: pointer; }
-  .rm:hover { background: var(--panel-hover); border-color: var(--line); color: var(--text); }
-
+  .state { font: 10.5px/1 var(--mono); color: var(--dim); letter-spacing: .03em;
+    font-variant-numeric: tabular-nums; }
+  .state.is-unbound { color: var(--dimmer); }
   .chip { display: inline-flex; align-items: center; height: 20px; padding: 0 7px;
-    border: 1px solid var(--line); border-radius: 99px; background: transparent; color: var(--dim);
-    font: 10px/1 var(--mono); letter-spacing: .04em; font-variant-numeric: tabular-nums;
-    white-space: nowrap; }
-  .chip.delay { border-color: var(--accent); color: var(--accent); }
-  .dash { color: var(--dimmer); font: 11.5px/1 var(--mono); }
+    border: 1px solid var(--accent); border-radius: 99px; color: var(--accent);
+    font: 10px/1 var(--mono); letter-spacing: .04em; }
 
-  .status { margin: 0; min-height: 17px; padding: 8px 12px 9px;
-    border-top: 1px solid var(--line-soft); font: 10.5px/1.35 var(--sans); color: var(--dim); }
-  .foot { margin: 14px 0 0; font: 10.5px/1.5 var(--sans); color: var(--dim); }
+  .status { margin: 0; min-height: 19px; padding: 8px 12px 9px;
+    border-top: 1px solid var(--line-soft); font: 10.5px/1.35 var(--sans);
+    color: var(--dim); }
 
   /* Motion is colour-only, and only when the user allows it. */
   @media (prefers-reduced-motion: no-preference) {
-    .btn, .pick, .rm { transition: background-color 110ms linear, border-color 110ms linear,
-      color 110ms linear; }
+    .pick, tbody tr { transition: background-color 110ms linear,
+      border-color 110ms linear, color 110ms linear; }
   }
 
   /* ----------------------------------------------------------- <= 720 px */
   @media (max-width: 720px) {
     :root { --pad: 16px; }
-    .shell { padding-top: 24px; }
-    .head { flex-wrap: wrap; align-items: flex-start; }
-    .head .meta { white-space: normal; }
-    th.c-num, td.c-num { display: none; }
-    th.c-state { width: 64px; }
-    th.c-rm { width: 40px; }
-    thead th { padding-left: 6px; padding-right: 6px; }
-    tbody td { padding-left: 6px; padding-right: 6px; }
-    th.c-rm, td.c-rm { padding-left: 2px; padding-right: 4px; }
+    .shell { padding-top: 24px; padding-bottom: 28px; }
+    .head { align-items: flex-start; }
+    .meta { white-space: normal; }
+    .legend { gap: 4px 14px; margin-bottom: 14px; }
     .toolbar { padding: 8px 10px; }
     .status { padding-left: 10px; padding-right: 10px; }
+    thead th { padding-left: 6px; padding-right: 6px; }
+    tbody td { padding-left: 6px; padding-right: 6px; }
   }
 
   /* ----------------------------------------------------------- <= 420 px */
   @media (max-width: 420px) {
-    th.c-state { width: 52px; }
-    .pick { padding: 0 4px; font-size: 11px; }
-    .chip { padding: 0 5px; }
+    .lede { font-size: 11.5px; }
+    .legend { font-size: 10px; gap: 4px 12px; }
+    .pick { font-size: 11px; padding: 0 5px; }
+    thead .c-input { width: 31%; }
+    tbody td { padding-left: 4px; padding-right: 4px; }
   }
 </style>
 </head>
@@ -165,351 +151,208 @@
 <main class="shell">
   <header class="head">
     <div>
-      <p class="eyebrow">BitWave · routing spike</p>
-      <h1>routing matrix</h1>
+      <p class="eyebrow">BitWave · routing housing</p>
+      <h1>input source matrix</h1>
     </div>
-    <p class="meta">3 lanes · 9 sources · 6 inputs</p>
+    <p class="meta">3 lanes · 6 inputs</p>
   </header>
+
+  <p class="lede">Structural housing for each input's existing source dropdown — the CSV column import is unchanged.</p>
+  <p class="legend" id="legend">
+    <span><b>data</b> imported column, applied on CSV step</span>
+    <span><b>frame</b> live in-tool output</span>
+    <span><b class="acc">z⁻¹</b> one-evaluation feedback</span>
+  </p>
 
   <section class="matrix" aria-labelledby="matrix-heading">
     <div class="toolbar">
-      <div class="toolbar-left">
-        <h2 id="matrix-heading">routes</h2>
-        <span class="count" id="route-count" aria-hidden="true">4 / 8</span>
-      </div>
-      <div class="actions">
-        <button type="button" class="btn" id="add-route" title="Append an empty route row">+ add route</button>
-        <button type="button" class="btn quiet" id="reset-routes">reset</button>
-      </div>
+      <h2 id="matrix-heading">source bindings</h2>
+      <span class="count" id="bound-count" aria-hidden="true">5 / 6 bound</span>
     </div>
-
     <div class="table-wrap">
       <table>
-        <caption class="sr-only">
-          Routing matrix: one source per input. Sources are Lane 1–3 frames A, Z and B;
-          destinations are Lane 1–3 frames A and B. Frame Z is derived and is never a
-          destination. Each row shows a source, a destination, its derived state and a
-          remove button.
-        </caption>
+        <caption class="sr-only">Six fixed operand inputs, one source per input. Sources are an imported data column or a live frame output. Frame Z is derived and is never a destination.</caption>
         <thead>
           <tr>
-            <th scope="col" class="c-num">#</th>
-            <th scope="col" class="c-select">source</th>
-            <th scope="col" class="c-select">destination</th>
+            <th scope="col" class="c-input">destination</th>
+            <th scope="col" class="c-source">source</th>
             <th scope="col" class="c-state">state</th>
-            <th scope="col" class="c-rm"><span class="sr-only">remove</span></th>
           </tr>
         </thead>
         <tbody id="rows"></tbody>
       </table>
     </div>
-
-    <p class="status" id="status" role="status" aria-live="polite" aria-atomic="true">Ready — 3 example routes.</p>
+    <p class="status" id="status" role="status" aria-live="polite" aria-atomic="true">Ready — change a source to rebind that input.</p>
   </section>
-
-  <p class="foot">One source per input · driven inputs lock their local controls · Z is derived and never a destination.</p>
 </main>
 
 <script>
 (function () {
   'use strict';
 
-  /* ---------------------------------------------------------------- model */
+  /* ----------------------------------------------------------------- model */
 
-  var MAX_ROWS = 8, INITIAL_ROW_COUNT = 4;
-  var LANES = [1, 2, 3], FRAMES = ['A', 'Z', 'B'];
-  var SOURCE_KEYS = [], DEST_KEYS = [];
-  LANES.forEach(function (lane) {
-    FRAMES.forEach(function (frame) { SOURCE_KEYS.push(lane + frame); });
-    DEST_KEYS.push(lane + 'A', lane + 'B');
-  });
+  var LANES = [1, 2, 3];
+  var FRAMES = ['A', 'Z', 'B'];
+  var DATA_COLS = ['id', 'sine', 'square', 'payload'];
 
-  // Lane 3 · Z → Lane 1 · A, Lane 1 · Z → Lane 2 · A, Lane 2 · Z → Lane 2 · B.
-  var INITIAL_ROUTES = [
-    { src: '3Z', dst: '1A' },
-    { src: '1Z', dst: '2A' },
-    { src: '2Z', dst: '2B' }   // same lane Z -> B: shows the z⁻¹ chip
+  // Six fixed inputs, one source each. Defaults show data, frame and unbound.
+  var INPUTS = [
+    { lane: 1, frame: 'A', value: 'data:sine' },
+    { lane: 1, frame: 'B', value: 'data:square' },
+    { lane: 2, frame: 'A', value: 'frame:3Z' },
+    { lane: 2, frame: 'B', value: 'frame:1Z' },
+    { lane: 3, frame: 'A', value: 'data:payload' },
+    { lane: 3, frame: 'B', value: '' }
   ];
 
-  var rows = [];        // [{ id, src, dst }] — port keys, '' when unset
-  var nextRowId = 1;
-
-  /* ------------------------------------------------------------------ dom */
+  /* ------------------------------------------------------------------- dom */
 
   var rowsBody = document.getElementById('rows');
-  var addBtn = document.getElementById('add-route');
-  var resetBtn = document.getElementById('reset-routes');
   var statusEl = document.getElementById('status');
-  var countEl = document.getElementById('route-count');
+  var countEl = document.getElementById('bound-count');
+  var stateCells = [];
 
-  /* -------------------------------------------------------------- helpers */
+  /* ---------------------------------------------------------------- labels */
 
-  function makeElement(tag, className, text) {
+  function destLabel(input) {
+    return 'Lane ' + input.lane + ' · ' + input.frame;
+  }
+
+  function sourceLabel(value) {
+    if (!value) return '—';
+    var parts = value.split(':');
+    if (parts[0] === 'data') return 'data · ' + parts[1];
+    var port = parts[1];
+    return 'frame · Lane ' + port.charAt(0) + ' · ' + port.charAt(1);
+  }
+
+  // data: applied on the CSV step. frame: live output, 1:1 unless the same
+  // lane's Z feeds its own A/B, which is the one-evaluation-delay case.
+  function stateFor(input, value) {
+    if (!value) return { label: '—', kind: 'unbound' };
+    if (value.indexOf('data:') === 0) return { label: 'data', kind: 'data' };
+    var port = value.slice(6);
+    if (port.charAt(1) === 'Z' && Number(port.charAt(0)) === input.lane) {
+      return { label: 'z⁻¹', kind: 'delay', title: 'one-evaluation delay — feedback' };
+    }
+    return { label: '1:1', kind: 'feed' };
+  }
+
+  function messageFor(input, value) {
+    if (!value) return destLabel(input) + ' unbound.';
+    var state = stateFor(input, value);
+    var suffix = state.kind === 'delay' ? ' (z⁻¹, one-evaluation delay)'
+      : state.kind === 'feed' ? ' (1:1)' : '';
+    return destLabel(input) + ' now reads ' + sourceLabel(value) + suffix + '.';
+  }
+
+  /* -------------------------------------------------------------- elements */
+
+  function el(tag, className, text) {
     var node = document.createElement(tag);
     if (className) node.className = className;
     if (text != null) node.textContent = text;
     return node;
   }
 
-  // '3Z' -> 'Lane 3 · Z'; '' -> the empty-cell dash.
-  function portLabel(key) {
-    return key ? 'Lane ' + key.charAt(0) + ' · ' + key.charAt(1) : '—';
+  function option(value, label) {
+    var node = el('option');
+    node.value = value;
+    node.textContent = label;
+    return node;
   }
 
-  // Z read by the same lane's A or B: the one-evaluation-delay feedback case.
-  function isDelay(src, dst) {
-    return Boolean(src) && Boolean(dst) &&
-      src.charAt(0) === dst.charAt(0) && src.charAt(1) === 'Z';
+  function buildSourceSelect(input) {
+    var select = document.createElement('select');
+    select.className = 'pick';
+    select.setAttribute('aria-label', destLabel(input) + ' source');
+
+    var placeholder = option('', '—');
+    select.appendChild(placeholder);
+
+    var dataGroup = document.createElement('optgroup');
+    dataGroup.label = 'data';
+    DATA_COLS.forEach(function (col) {
+      dataGroup.appendChild(option('data:' + col, 'data · ' + col));
+    });
+    select.appendChild(dataGroup);
+
+    var frameGroup = document.createElement('optgroup');
+    frameGroup.label = 'frame';
+    LANES.forEach(function (lane) {
+      FRAMES.forEach(function (frame) {
+        frameGroup.appendChild(option('frame:' + lane + frame,
+          'frame · Lane ' + lane + ' · ' + frame));
+      });
+    });
+    select.appendChild(frameGroup);
+
+    select.value = input.value;
+    if (!input.value) select.classList.add('is-empty');
+
+    select.addEventListener('change', function () {
+      setSource(input, select.value);
+      select.classList.toggle('is-empty', !select.value);
+    });
+    return select;
   }
 
-  function findRow(rowId) {
-    for (var i = 0; i < rows.length; i += 1) if (rows[i].id === rowId) return rows[i];
-    return null;
+  /* ---------------------------------------------------------------- render */
+
+  function renderState(index) {
+    var input = INPUTS[index];
+    var cell = stateCells[index];
+    var state = stateFor(input, input.value);
+    cell.textContent = '';
+    if (state.kind === 'delay') {
+      var chip = el('span', 'chip', state.label);
+      chip.title = state.title;
+      cell.appendChild(chip);
+    } else {
+      cell.appendChild(el('span', 'state is-' + state.kind, state.label));
+    }
   }
 
-  function rowIndex(rowId) {
-    for (var i = 0; i < rows.length; i += 1) if (rows[i].id === rowId) return i;
-    return -1;
+  function buildRow(input, index) {
+    var tr = document.createElement('tr');
+    tr.appendChild(el('td', 'c-input', destLabel(input)));
+
+    var sourceCell = el('td', 'c-source');
+    sourceCell.appendChild(buildSourceSelect(input));
+    tr.appendChild(sourceCell);
+
+    stateCells[index] = el('td', 'c-state');
+    tr.appendChild(stateCells[index]);
+    renderState(index);
+    return tr;
   }
 
-  function rowNumber(rowId) {
-    var index = rowIndex(rowId);
-    return index < 0 ? '?' : String(index + 1);
-  }
-
-  function announce(message) { statusEl.textContent = message; }
-
-  function describeRoute(row) {
-    if (!row.src || !row.dst) return null;
-    var delay = isDelay(row.src, row.dst) ? ' (z⁻¹, one-evaluation delay)' : '';
-    return 'Routed ' + portLabel(row.src) + ' → ' + portLabel(row.dst) + delay + '.';
+  function updateCount() {
+    var bound = INPUTS.filter(function (input) { return Boolean(input.value); }).length;
+    countEl.textContent = bound + ' / ' + INPUTS.length + ' bound';
   }
 
   /* ------------------------------------------------------------- mutation */
 
-  function setSource(rowId, key) {
-    var row = findRow(rowId);
-    if (!row) return;
-    row.src = key;
-
-    var message;
-    if (!key) message = 'Row ' + rowNumber(rowId) + ' source cleared.';
-    else if (!row.dst) message = 'Row ' + rowNumber(rowId) + ' source set to ' + portLabel(key) +
-      '. Choose a destination.';
-    else message = describeRoute(row);
-
-    render({ rowId: rowId, field: 'src' });
-    announce(message);
-  }
-
-  function setDestination(rowId, key) {
-    var row = findRow(rowId);
-    if (!row) return;
-
-    // One source per input. The disabled options normally prevent this, so the
-    // guard is belt-and-braces: if a conflict is ever presented, the earlier
-    // driver is emptied and the replacement is stated exactly once.
-    var replaced = null;
-    if (key) {
-      rows.forEach(function (candidate) {
-        if (candidate.id !== rowId && candidate.dst === key) {
-          replaced = { src: candidate.src, dst: candidate.dst };
-          candidate.src = '';
-          candidate.dst = '';
-        }
-      });
-    }
-
-    row.dst = key;
-
-    var message;
-    if (replaced) {
-      message = 'Replaced ' + portLabel(key) + ': was ' + portLabel(replaced.src) +
-        ', now ' + portLabel(row.src) + '.';
-    } else if (!key) {
-      message = 'Row ' + rowNumber(rowId) + ' destination cleared.';
-    } else if (!row.src) {
-      message = 'Row ' + rowNumber(rowId) + ' destination set to ' + portLabel(key) +
-        '. Choose a source.';
-    } else {
-      message = describeRoute(row);
-    }
-
-    render({ rowId: rowId, field: 'dst' });
-    announce(message);
-  }
-
-  function addRoute() {
-    if (rows.length >= MAX_ROWS) return;
-    var row = { id: 'r' + nextRowId, src: '', dst: '' };
-    nextRowId += 1;
-    rows.push(row);
-    render();
-    focusField(row.id, 'src');
-    announce('Added route row ' + rows.length + (rows.length >= MAX_ROWS
-      ? '. Matrix is full (8 rows).'
-      : '. Choose a source and destination.'));
-  }
-
-  function removeRow(rowId) {
-    var index = rowIndex(rowId);
-    if (index < 0) return;
-
-    var row = rows[index];
-    var message = row.src && row.dst
-      ? 'Removed route ' + portLabel(row.src) + ' → ' + portLabel(row.dst) + '.'
-      : 'Removed empty row ' + (index + 1) + '.';
-
-    rows.splice(index, 1);
-    render();
-
-    // Focus the row that took its place; fall back to the new last row, then to
-    // "add route" once the board is empty.
-    var next = rows[Math.min(index, rows.length - 1)] || null;
-    if (next) focusField(next.id, 'rm'); else addBtn.focus();
-    announce(message);
-  }
-
-  function resetRoutes() {
-    rows = [];
-    for (var i = 0; i < INITIAL_ROW_COUNT; i += 1) {
-      rows.push({ id: 'r' + nextRowId, src: '', dst: '' });
-      nextRowId += 1;
-    }
-    render();
-    resetBtn.focus();
-    announce('Reset: all routes cleared; ' + rows.length + ' empty rows.');
-  }
-
-  /* --------------------------------------------------------------- render */
-
-  function render(focus) {
-    rowsBody.textContent = '';
-
-    // Destination ownership: an input may be selected by exactly one row.
-    var claimed = Object.create(null);
-    rows.forEach(function (row) { if (row.dst) claimed[row.dst] = row.id; });
-    rows.forEach(function (row, index) { rowsBody.appendChild(buildRow(row, index, claimed)); });
-
-    updateToolbar();
-    if (focus) focusField(focus.rowId, focus.field);
-  }
-
-  function buildRow(row, index, claimed) {
-    var tr = document.createElement('tr');
-    tr.dataset.rowId = row.id;
-    tr.appendChild(makeElement('td', 'c-num', String(index + 1)));
-    tr.appendChild(buildSelectCell(row, index, 'src', claimed));
-    tr.appendChild(buildSelectCell(row, index, 'dst', claimed));
-    tr.appendChild(buildStateCell(row));
-    tr.appendChild(buildRemoveCell(row, index));
-    return tr;
-  }
-
-  function buildSelectCell(row, index, field, claimed) {
-    var td = makeElement('td', 'c-select');
-    var select = document.createElement('select');
-
-    select.className = 'pick';
-    select.dataset.rowId = row.id;
-    select.dataset.field = field;
-    select.setAttribute('aria-label', 'Row ' + (index + 1) +
-      (field === 'src' ? ' source' : ' destination'));
-
-    var placeholder = document.createElement('option');
-    placeholder.value = '';
-    placeholder.textContent = '—';
-    select.appendChild(placeholder);
-
-    var keys = field === 'src' ? SOURCE_KEYS : DEST_KEYS;
-    keys.forEach(function (key) {
-      var option = document.createElement('option');
-      option.value = key;
-      option.textContent = portLabel(key);
-      if (field === 'dst') {
-        var owner = claimed[key];
-        if (owner && owner !== row.id) option.disabled = true;
-      }
-      select.appendChild(option);
-    });
-
-    select.value = row[field] || '';
-    if (!select.value) select.classList.add('is-empty');
-    select.addEventListener('change', function () {
-      if (field === 'src') setSource(row.id, select.value);
-      else setDestination(row.id, select.value);
-    });
-
-    td.appendChild(select);
-    return td;
-  }
-
-  function buildStateCell(row) {
-    var td = makeElement('td', 'c-state');
-    if (!row.src || !row.dst) {
-      td.appendChild(makeElement('span', 'dash', '—'));
-    } else if (isDelay(row.src, row.dst)) {
-      var chip = makeElement('span', 'chip delay', 'z⁻¹');
-      chip.title = 'one-evaluation delay — feedback';
-      td.appendChild(chip);
-    } else {
-      td.appendChild(makeElement('span', 'chip', '1:1'));
-    }
-    return td;
-  }
-
-  function buildRemoveCell(row, index) {
-    var td = makeElement('td', 'c-rm');
-    var button = document.createElement('button');
-
-    button.type = 'button';
-    button.className = 'rm';
-    button.dataset.rowId = row.id;
-    button.dataset.field = 'rm';
-
-    var name = row.src && row.dst
-      ? 'Remove route ' + portLabel(row.src) + ' to ' + portLabel(row.dst)
-      : 'Remove empty row ' + (index + 1);
-    button.setAttribute('aria-label', name);
-    button.title = name;
-
-    var glyph = makeElement('span', null, '×');
-    glyph.setAttribute('aria-hidden', 'true');
-    button.appendChild(glyph);
-    button.addEventListener('click', function () { removeRow(row.id); });
-
-    td.appendChild(button);
-    return td;
-  }
-
-  function updateToolbar() {
-    var full = rows.length >= MAX_ROWS;
-    addBtn.disabled = full;
-    addBtn.title = full ? 'Matrix is full (8 rows)' : 'Append an empty route row';
-    countEl.textContent = rows.length + ' / ' + MAX_ROWS;
-  }
-
-  function focusField(rowId, field) {
-    var target = rowsBody.querySelector('[data-row-id="' + rowId + '"][data-field="' + field + '"]');
-    if (target) target.focus();
+  // Only the affected row's state cell and the status line change; the select
+  // itself is never rebuilt, so focus stays on it after a choice.
+  function setSource(input, value) {
+    input.value = value;
+    renderState(INPUTS.indexOf(input));
+    updateCount();
+    statusEl.textContent = messageFor(input, value);
   }
 
   /* ----------------------------------------------------------------- boot */
 
   function boot() {
-    INITIAL_ROUTES.forEach(function (route) {
-      rows.push({ id: 'r' + nextRowId, src: route.src, dst: route.dst });
-      nextRowId += 1;
+    INPUTS.forEach(function (input, index) {
+      rowsBody.appendChild(buildRow(input, index));
     });
-    while (rows.length < INITIAL_ROW_COUNT) {
-      rows.push({ id: 'r' + nextRowId, src: '', dst: '' });
-      nextRowId += 1;
-    }
-    render();
+    updateCount();
   }
 
-  addBtn.addEventListener('click', addRoute);
-  resetBtn.addEventListener('click', resetRoutes);
   boot();
 }());
 </script>
