@@ -1,6 +1,6 @@
 # BitWave — implementation status
 
-**Updated:** 2026-11-06 · **Phase:** F0 **done** (harness + Vite build + parity gate), F1 core **done**, **F2 in progress** (state tree, store, actions, core `evaluateAll` live), F3 housing spike **done**; frame names, focus lens and the read-only `window.BitWave` seam **shipped**.
+**Updated:** 2026-11-06 · **Phase:** F0 **done** (harness + Vite build + parity gate), F1 core **done**, **F2 in progress** (state, store, actions, core `evaluateAll`, render layer extracted), F3 housing spike **done**; frame names, focus lens and the read-only `window.BitWave` seam **shipped**.
 **Source of truth:** [`PLAN.md`](PLAN.md) for the plan, [`DECISIONS.md`](DECISIONS.md) for choices taken, [`DESIGN.md`](DESIGN.md) for the visual contract. `index.html` is still untouched and remains the shipping instrument.
 
 ## Author decisions (2026-11-06)
@@ -31,9 +31,9 @@ cell enough? Confirm before the matrix lands in the app.
 
 | Phase | Status | Notes |
 |---|---|---|
-| **F0 Baseline** | **Done** | Git; Vite 8.3.6 + TypeScript 7 + `vite-plugin-singlefile` installed; `npm run build` emits the single-file `bitwave-v2.html` from `src/`; unit suite (48), typecheck and the browser harness (24 checks) all green; rebuild parity is a gate (`--compare`). |
+| **F0 Baseline** | **Done** | Git; Vite 8.3.6 + TypeScript 7 + `vite-plugin-singlefile` installed; `npm run build` emits the single-file `bitwave-v2.html` from `src/`; unit suite (55), typecheck and the browser harness (25 checks) all green; rebuild parity is a gate (`--compare`). |
 | **F1 Core + routing engine** | **Done** | 11 DOM-free modules; lanes 1/2/3; 38 core tests green. |
-| **F2 State spine + renderers** | **In progress** | Done: DOM-free tree, transaction store, `actions.ts`, and `src/state/routing.ts` running the core `evaluateAll()` inside `commit()`; drag, bit/wheel, ops/presets, CSV step, resize, binop, LFO, copy and unpair all write inside `store.patch`. Remaining: split `render/` and `ui/` out of `main.js`, and wrap the view-state writers (lane select, view mode, frame visibility). |
+| **F2 State spine + renderers** | **In progress** | Done: DOM-free tree, transaction store, `actions.ts`, core `evaluateAll()` in `commit()`, and the render layer split into `src/render/` (canvas + 3-D field, strip, readouts) with `src/state/dataset.ts`; CSV parsing/typing now comes from `src/core/csv.ts`; every writer (register and view state) runs inside `store.patch`. Remaining: split the UI layer (stage bar, frame navigator, controls, keyboard) out of `main.js` so it becomes a composition root. |
 | **F3 Source-table housing** | **Spike done** | Six fixed input rows, one source each; SOURCE = data column or frame output; STATE = `data`/`1:1`/`z⁻¹`. No add/remove, no new mode, no new state. |
 | **F4–F6** | Not started | A11y/IA (no palette changes), persistence UI, distribution. |
 
@@ -41,22 +41,28 @@ cell enough? Confirm before the matrix lands in the app.
 
 - `npm test` → **55 tests, 55 pass, 0 fail** (38 core + 10 state + 7 actions/routing);
   `npm run typecheck` → **clean**.
-- `npm run build` → **`bitwave-v2.html`, 106.6 KB, single file**, no external references
+- `npm run build` → **`bitwave-v2.html`, 107.6 KB, single file**, no external references
   (`tools/build-artifact.mjs` gate).
+- **F2 slice 3 — render layer out:** `src/render/canvas.js` (2-D curve, 3-D field,
+  legend, `fitCanvas`/`--pad`), `src/render/strip.js` (editor strip + fast patch),
+  `src/render/readouts.js` (hex/dec/truth/trend/3-D rows) and `src/state/dataset.ts`.
+  The spline now comes from `src/core/spline.ts`, and CSV parsing/typing/alignment
+  from `src/core/csv.ts`; the app's duplicate parsers are gone.
+- **View state is on the spine too:** lane select, split/3-D mode, copy arming,
+  frame visibility, stage bar open and LFO controls all run inside `store.patch`.
 - **F2 slice 2 — commands + real evaluation:** `src/state/actions.ts` (unary ops and
   presets delegate to `src/core/ops.ts`; focus/edit/visibility/binop/bit/nibble/copy/
   unpair commands) and `src/state/routing.ts` (core `LaneMap` view over the app slots
   with shared registers + `evaluate()` running the core `evaluateAll()`). All register
-  writers (drag, bit/wheel, ops/presets, CSV step, resize, binop, LFO, copy, unpair)
-  now run inside `store.patch`; `recomputeZ` is gone from the app.
+  writers run inside `store.patch`; `recomputeZ` is gone from the app.
 - **Routing proven in Node:** `tests/actions.test.ts` adds a route from the core
   (`Z3 → A`) through the adapter, checks the app tree updates and that unroute
   restores the parked base byte-identically.
 - **Parity still exact:** `--compare` against the hand-written reference →
   **6/6 states pixel-identical**; the browser check now also drives a bit click and
   a wheel nudge on the live artifact (25/25 checks; 26/26 with `--compare`).
-- `npm run check:browser` → **24/24 checks pass** (25/25 with `--shots`, 25/25 with
-  `--compare`, 26/26 with both) on the built `bitwave-v2.html`:
+- `npm run check:browser` → **25/25 checks pass** (26/26 with `--shots` or
+  `--compare`) on the built `bitwave-v2.html`:
   zero console errors; no overflow or clipped controls at 360/420/720/1440;
   `canvas.width` = viewport; `--pad` 40/16 and compact mode per DESIGN §5/§9;
   strip gap/nibble width follow the §5 formula (1440: gap 12.00, nibble 73.75);
@@ -98,6 +104,8 @@ cell enough? Confirm before the matrix lands in the app.
 | [`src/state/store.ts`](src/state/store.ts) | Transaction boundary: `get`/`patch`/`subscribe`, nested patches collapse |
 | [`src/state/actions.ts`](src/state/actions.ts) | Commands: core unary ops/presets, focus/binop/visibility/bit/nibble/copy/unpair |
 | [`src/state/routing.ts`](src/state/routing.ts) | Core `LaneMap` adapter + `evaluate()` running `src/core/routing.ts` |
+| [`src/state/dataset.ts`](src/state/dataset.ts) | Dataset state (columns, rows, cursor) shared by the shell and canvas code |
+| [`src/render/`](src/render/canvas.js) | Canvas + 3-D field, strip, readouts; the only DOM/canvas renderers |
 | [`vite.config.mjs`](vite.config.mjs) | Vite 8 build: `src/` → `dist/index.html`, no minification |
 | [`tools/build-artifact.mjs`](tools/build-artifact.mjs) | Single-file gate: verifies no external refs, writes `bitwave-v2.html` |
 | [`src/core/`](src/core/index.ts) | DOM-free engine (11 modules, ~1,350 lines), lanes 1/2/3 |
@@ -107,7 +115,7 @@ cell enough? Confirm before the matrix lands in the app.
 | [`tools/browser-check.mjs`](tools/browser-check.mjs) | Zero-dependency CDP harness: 25 checks (26 with `--shots` or `--compare`) |
 | [`tools/make-example-project.ts`](tools/make-example-project.ts) | Regenerates the example |
 | `window.BitWave` in [`bitwave-v2.html`](bitwave-v2.html) | Read-only, schema-1 state/geometry surface; contract in [`AGENTS.md`](AGENTS.md) |
-| [`DECISIONS.md`](DECISIONS.md) | D1–D21, including the author decisions above |
+| [`DECISIONS.md`](DECISIONS.md) | D1–D22, including the author decisions above |
 
 ## Known gaps and blockers
 
@@ -119,10 +127,9 @@ cell enough? Confirm before the matrix lands in the app.
    proves the canvas control points and the DOM nibble centres agree (worst
    offset 0.00 px, §11 limit 1.5 px), but the drawn spline's own pixels are not
    sampled; the §11 check asserts geometry, not raster output.
-3. **F2 remains half done.** Register writes and evaluation are on the spine, but
-   `src/main.js` still holds every renderer and input handler, and the view-state
-   writers (lane select, 3-D/split, frame visibility) still mutate directly rather
-   than through `store.patch`.
+3. **The UI layer is still in `main.js`.** The stage bar, frame navigator, control
+   handlers, CSV import UI, observations and keyboard map have not been split into
+   `src/ui/` yet; `main.js` is ~1,900 lines and is not a composition root.
 4. **No routing UI yet** — the routing engine evaluates in the app and is covered by
    a Node test (`Z3 → A`), but the six-row source table is not wired and no route is
    created from the UI; that is F3.
@@ -136,10 +143,10 @@ cell enough? Confirm before the matrix lands in the app.
 
 ## Next actions
 
-1. **F2 spine (continue):** split `render/` (canvas, strip, readouts, stage bar,
-   field) and `ui/` (controls, pointer, keyboard) out of `main.js`; wrap the view
-   state writers in `store.patch`; add renderer adapters so evaluation and rendering
-   are separate phases of one transaction. `npm run build` + `--compare` screenshots
+1. **F2 spine (continue):** split the UI layer into `src/ui/` — stage bar, frame
+   navigator, control handlers, CSV import UI, observations and keyboard map — and
+   leave `main.js` as the composition root (state → store → renderers → UI). Then F2
+   is done and the matrix is a data change. `npm run build` + `--compare` screenshots
    remain the regression proof at every step.
 2. **F3 in the app:** replace the per-lane `colA`/`colB` selects with the six-row
    source table; keep import/typing/alignment identical; add frame sources and

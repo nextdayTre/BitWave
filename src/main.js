@@ -4,23 +4,18 @@ import {
   S,
   SIZES,
   SLOT_KEYS,
-  bigToReg,
   curSlot,
   editKey,
   editReg,
   focusEditable,
   focusKey,
-  focusReg,
   frameLabel,
   frameName,
-  isArith,
   laneLabel,
   nibAt,
   nibCount,
   nibValue,
-  nibWeightPow,
   regOf,
-  regToBig,
   setNibAt,
   syncTarget,
 } from "./state/instrument.ts";
@@ -39,18 +34,33 @@ import {
 import { evaluate } from "./state/routing.ts";
 import { createStore } from "./state/store.ts";
 
+import { DEMO } from "./state/dataset.ts";
+import {
+  alignBits,
+  cellToBits,
+  columnMode,
+  columnWidth,
+  isDataRow,
+  normCell,
+  parseDelimited,
+} from "./core/csv.ts";
+import { buildSpline, evalSpline } from "./core/spline.ts";
+import { G, canvasEl as canvas, draw, fitCanvas, getPad, shortCol } from "./render/canvas.js";
+import { nibsEl, patchNibble, renderStrip, stripEl, syncHoverClasses } from "./render/strip.js";
+import { toHexOf, updateReadouts } from "./render/readouts.js";
+
 (() => {
   "use strict";
 
   /* ══════════════════════════════════════════════════════════
-     APP SHELL — DOM, canvas, input and renderers.
-     The mutable state tree lives in `src/state/instrument.ts`;
-     writes in `commit()` run inside the `src/state/store.ts`
-     transaction. Rendering still lives here until the F2
-     render/ui split.
+     APP SHELL — controls, pointer/keyboard input, stage bar, frame
+     navigator, CSV import, observations and boot.
+     State lives in `src/state/`; renderers in `src/render/`. Every
+     mutation runs inside a `store.patch(...)` transaction, then the
+     renderers read the settled tree. `main.js` is becoming the
+     composition root rather than the app.
      ══════════════════════════════════════════════════════════ */
 
-  const DEMO = { cols: [], rows: [], i: 0 };
   const store = createStore(S);
 
   /* Grow / shrink around the centre: the outermost nibbles on each side
@@ -117,742 +127,6 @@ import { createStore } from "./state/store.ts";
      level shoulders; with two control points it degenerates to
      smoothstep, which is exactly the sketch.
      ══════════════════════════════════════════════════════════ */
-
-  function buildSpline(xs, ys) {
-    const n = xs.length;
-    const h = new Array(n - 1);
-    const d = new Array(n - 1);
-    const m = new Array(n);
-
-    for (let i = 0; i < n - 1; i++) {
-      h[i] = xs[i + 1] - xs[i];
-      d[i] = h[i] === 0 ? 0 : (ys[i + 1] - ys[i]) / h[i];
-    }
-
-    m[0] = 0;
-    m[n - 1] = 0;
-
-    for (let i = 1; i < n - 1; i++) {
-      if (d[i - 1] * d[i] <= 0) {
-        m[i] = 0;                                     // local extremum → level off
-      } else {
-        const w1 = 2 * h[i] + h[i - 1];               // Fritsch–Butland weighting
-        const w2 = h[i] + 2 * h[i - 1];
-        m[i] = (w1 + w2) / (w1 / d[i - 1] + w2 / d[i]);
-      }
-    }
-    return { xs, ys, m, h, n };
-  }
-
-  function evalSpline(sp, x) {
-    const { xs, ys, m, h, n } = sp;
-    if (x <= xs[0]) return ys[0];
-    if (x >= xs[n - 1]) return ys[n - 1];
-
-    let i = 0;
-    while (i < n - 2 && x > xs[i + 1]) i++;
-
-    const t = (x - xs[i]) / h[i];
-    const t2 = t * t;
-    const t3 = t2 * t;
-
-    return (2 * t3 - 3 * t2 + 1) * ys[i]
-         + (t3 - 2 * t2 + t) * h[i] * m[i]
-         + (-2 * t3 + 3 * t2) * ys[i + 1]
-         + (t3 - t2) * h[i] * m[i + 1];
-  }
-
-  /* ══════════════════════════════════════════════════════════
-     RENDER — canvas
-     ══════════════════════════════════════════════════════════ */
-
-  const canvas = document.getElementById("wave");
-  const ctx = canvas.getContext("2d");
-  const MONO = 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace';
-
-  /* Canvas can't read CSS vars directly — resolve the few it needs once
-     so retheming stays a :root-only edit. */
-  const ROOT = getComputedStyle(document.documentElement);
-  const C_ACCENT = ROOT.getPropertyValue("--accent").trim() || "#34d399";
-  const C_ACCENT_HI = ROOT.getPropertyValue("--accent-hi").trim() || "#5eead4";
-  const C_ACCENT_LOW = ROOT.getPropertyValue("--accent-low").trim() || "#22c55e";
-  const C_DIMMER = ROOT.getPropertyValue("--dimmer").trim() || "#3f4859";
-  const C_HANDLE_HI = ROOT.getPropertyValue("--handle-hi").trim() || "#eafaf3";
-  const C_LINE = ROOT.getPropertyValue("--line").trim() || "#1b212b";
-
-  const shortCol = (s, max = 16) => {
-    const t = String(s || "").trim();
-    return t.length > max ? t.slice(0, max - 1) + "\u2026" : t;
-  };
-
-  /* Turn a hex token into rgba() so canvas fills stay token-driven. */
-  function rgbaToken(hex, a) {
-    const h = hex.replace("#", "");
-    const full = h.length === 3 ? h.split("").map((c) => c + c).join("") : h;
-    const n = parseInt(full, 16);
-    return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
-  }
-
-  let VW = 0, VH = 0;
-  let PAD = 40;                       // single gutter authority, written by fitCanvas()
-  let G = { x0: 0, x1: 0, y0: 0, y1: 0, pw: 0, ph: 0, nibW: 0, nibGap: 0, spA: null, spB: null, legendHits: [] };
-
-  function fitCanvas() {
-    const r = canvas.getBoundingClientRect();
-    const dpr = Math.min(window.devicePixelRatio || 1, 2);
-    VW = Math.max(1, Math.round(r.width));
-    VH = Math.max(1, Math.round(r.height));
-    canvas.width = Math.round(VW * dpr);
-    canvas.height = Math.round(VH * dpr);
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-
-    // Keep the bit strip's gutter identical to the plot's gutter.
-    // The breakpoint is DESIGN §5/§9: one 720px breakpoint, 16px at or below it.
-    PAD = VW <= 720 ? 16 : 40;
-    document.documentElement.style.setProperty("--pad", PAD + "px");
-  }
-
-  function strokeCurve(sp, x0, x1) {
-    ctx.beginPath();
-    const steps = Math.max(2, Math.ceil(x1 - x0));
-    for (let s = 0; s <= steps; s++) {
-      const x = x0 + ((x1 - x0) * s) / steps;
-      const y = evalSpline(sp, x);
-      if (s === 0) ctx.moveTo(x, y);
-      else ctx.lineTo(x, y);
-    }
-    ctx.stroke();
-  }
-
-  function paintCurve(sp, opts) {
-    const { x0, x1, y0, y1 } = G;
-    if (opts.glow) {
-      ctx.setLineDash([]);
-      ctx.strokeStyle = "rgba(52,211,153,0.14)";
-      ctx.lineWidth = 9;
-      strokeCurve(sp, x0, x1);
-    }
-    ctx.setLineDash(opts.dash || []);
-    if (opts.grad) {
-      const g = ctx.createLinearGradient(0, y0, 0, y1);
-      g.addColorStop(0, C_ACCENT_HI);
-      g.addColorStop(1, C_ACCENT_LOW);
-      ctx.strokeStyle = g;
-    } else {
-      ctx.strokeStyle = opts.color;
-    }
-    ctx.lineWidth = opts.width;
-    strokeCurve(sp, x0, x1);
-    ctx.setLineDash([]);
-  }
-
-  /* Top-right legend: each entry is also a show/hide control. The eye glyph
-     carries the state; a hidden frame stays listed (dimmed, crossed) so it can
-     always be brought back. */
-  function drawEyeGlyph(cx, cy, visible) {
-    ctx.save();
-    ctx.lineWidth = 1;
-    ctx.strokeStyle = visible ? "rgba(103,114,138,0.9)" : "rgba(63,72,89,0.9)";
-    ctx.beginPath();
-    ctx.moveTo(cx - 6, cy);
-    ctx.quadraticCurveTo(cx, cy - 5, cx + 6, cy);
-    ctx.quadraticCurveTo(cx, cy + 5, cx - 6, cy);
-    ctx.stroke();
-    ctx.beginPath();
-    ctx.arc(cx, cy, 1.7, 0, Math.PI * 2);
-    ctx.stroke();
-    if (!visible) {
-      ctx.beginPath();
-      ctx.moveTo(cx - 5, cy + 4);
-      ctx.lineTo(cx + 5, cy - 4);
-      ctx.stroke();
-    }
-    ctx.restore();
-  }
-
-  function drawLegend(x1, ly) {
-    const items = [
-      { key: "a", t: frameName(S.slot, "a"), w: 1.8, dash: null, a: 0.82 },
-      { key: "b", t: frameName(S.slot, "b"), w: 1.8, dash: [6, 4], a: 0.82 },
-      { key: "z", t: frameName(S.slot, "z"), w: 2.5, dash: null, a: 1 },
-    ];
-    ctx.font = `10px ${MONO}`;
-    ctx.textBaseline = "middle";
-    ctx.textAlign = "left";
-
-    const eyeW = 14;
-    const lineW = 17;
-    const textGap = 4;
-    const itemGap = 14;
-    let total = 0;
-    for (const it of items) {
-      total += eyeW + lineW + textGap + ctx.measureText(it.t).width + itemGap;
-    }
-
-    let lx = x1 - total;
-    const hits = [];
-    for (const it of items) {
-      const vis = curSlot().frameVis[it.key];
-      drawEyeGlyph(lx + 7, ly, vis);
-      ctx.save();
-      ctx.setLineDash(it.dash || []);
-      ctx.lineWidth = it.w;
-      ctx.strokeStyle = `rgba(52,211,153,${vis ? it.a : 0.18})`;
-      ctx.beginPath();
-      ctx.moveTo(lx + eyeW, ly);
-      ctx.lineTo(lx + eyeW + lineW, ly);
-      ctx.stroke();
-      ctx.restore();
-      ctx.fillStyle = vis ? C_DIMMER : "rgba(63,72,89,0.55)";
-      ctx.fillText(it.t, lx + eyeW + lineW + textGap, ly);
-
-      const itemW = eyeW + lineW + textGap + ctx.measureText(it.t).width + itemGap;
-      hits.push({ x: lx - 4, y: ly - 10, w: itemW + 4, h: 20, key: it.key });
-      lx += itemW;
-    }
-    G.legendHits = hits;
-  }
-
-  /* ══════════════════════════════════════════════════════════
-     3-D FIELD
-     The two operands sit at the far and near ends of a wavetable —
-     frame 1 and frame 256 — and the operation's result is the middle
-     frame, 128. Three planes in axonometric projection, not 256
-     animated frames: the depth axis exists to show the relationship
-     between the inputs and the result, not to imply morphing.
-     ══════════════════════════════════════════════════════════ */
-
-  function drawField3d(n, sl = curSlot(), rect = G) {
-    const AX = rect.x0, BX = rect.x1, AY = rect.y0, BY = rect.y1;
-    const paneW = Math.max(20, BX - AX);
-    const ph = Math.max(20, BY - AY);
-    /* Aspect-clamp box width so ultra-wide screens do not flatten the depth
-       angle, while preserving the exact 0.58 / 0.48 / 0.14 / 0.155 ratios. */
-    const pw = Math.min(paneW, ph * 2.45);
-    /* Shift cx slightly right so near.left and far.right have equal margins. */
-    const cx = (AX + BX) / 2 + pw * 0.029;
-    const cy = (AY + BY) / 2;
-
-    /* The planes must be meaningfully smaller than the offset between them,
-       or three similar waveforms collapse into one blob. */
-    const iw = pw * 0.58, ih = ph * 0.48;    // middle plane
-    const dx = pw * 0.14, dy = ph * 0.155;   // depth offset per frame step
-
-    // d = +1 is the far frame, 0 the middle, -1 the near frame.
-    /* Appearance is a MONOTONIC function of depth — farther is dimmer and
-       thinner — because that is the only cue that actually reads as depth.
-       A highlight on one plane inverts the order and flattens the box. */
-    const plane = (d) => {
-      const s = 1 - d * 0.10;
-      const c = (1 - d) / 2;                    // closeness: far 0 → near 1
-      return {
-        w: iw * s, h: ih * s,
-        ox: cx + d * dx, oy: cy - d * dy,
-        alpha: 0.30 + 0.55 * c,
-        width: 1.1 + 0.9 * c,
-        edge: 0.05 + 0.08 * c,
-      };
-    };
-
-    /* Volume edges first, so they sit behind every plane. The projection is
-       linear in d, so the middle plane's corner lies exactly on the line
-       between the outer two — one stroke spans all three. */
-    const far = plane(1);
-    const near = plane(-1);
-    ctx.strokeStyle = rgbaToken(C_ACCENT, 0.10);
-    ctx.lineWidth = 1;
-    for (const sx of [-0.5, 0.5]) {
-      for (const sy of [-0.5, 0.5]) {
-        ctx.beginPath();
-        ctx.moveTo(far.ox + sx * far.w, far.oy + sy * far.h);
-        ctx.lineTo(near.ox + sx * near.w, near.oy + sy * near.h);
-        ctx.stroke();
-      }
-    }
-
-    const plate = (reg, d, o) => {
-      const p = plane(d);
-      const left = p.ox - p.w / 2;
-      const top = p.oy - p.h / 2;
-      const bottom = p.oy + p.h / 2;
-
-      /* Outline only. Translucent rectangle fills stack additively wherever
-         the planes overlap, so the intersections light up and the box reads
-         as flat stacked panels rather than as one volume. */
-      ctx.strokeStyle = rgbaToken(C_ACCENT, p.edge);
-      ctx.lineWidth = 1;
-      ctx.strokeRect(left, top, p.w, p.h);
-
-      const xs = new Array(n);
-      const ys = new Array(n);
-      for (let j = 0; j < n; j++) {
-        xs[j] = left + ((j + 0.5) / n) * p.w;
-        ys[j] = bottom - (reg.anim[j] / 15) * p.h;
-      }
-      const sp = buildSpline(xs, ys);
-
-      ctx.lineJoin = "round";
-      ctx.lineCap = "round";
-      ctx.setLineDash(o.dash || []);
-      ctx.strokeStyle = rgbaToken(C_ACCENT, p.alpha);
-      ctx.lineWidth = p.width;
-      strokeCurve(sp, left, left + p.w);
-      ctx.setLineDash([]);
-
-      ctx.font = `10px ${MONO}`;
-      ctx.textAlign = "left";
-      ctx.textBaseline = "top";
-      ctx.fillStyle = rgbaToken(C_DIMMER, 0.50 + 0.45 * ((1 - d) / 2));
-      ctx.fillText(o.label, left + 6, top + 5, Math.max(20, p.w - 12));
-    };
-
-    const showCol = DEMO.rows.length > 0 && iw >= 145;
-    const colAName = showCol && sl.colA >= 0 && DEMO.cols[sl.colA] ? ` \u00B7 ${shortCol(DEMO.cols[sl.colA])}` : "";
-    const colBName = showCol && sl.colB >= 0 && DEMO.cols[sl.colB] ? ` \u00B7 ${shortCol(DEMO.cols[sl.colB])}` : "";
-    const sym = OPSYM[sl.binop] || "\u2295";
-
-    const fa = frameName(sl.key, "a");
-    const fb = frameName(sl.key, "b");
-    const fz = frameName(sl.key, "z");
-    plate(sl.A, 1, { label: `1 \u00B7 ${fa}${colAName}` });
-    plate(sl.Z, 0, { label: `128 \u00B7 ${fz} \u00B7 ${fa} ${sym} ${fb}` });
-    plate(sl.B, -1, { label: `256 \u00B7 ${fb}${colBName}`, dash: [6, 4] });
-  }
-
-  /* Ruler, zero-crossing level and the ∞ axis. Drawn after the depth stack
-     (so the stack cannot erase them) but before the curves. */
-  function drawGuides(x0, x1, y0, y1, cx, cy, yOf) {
-    ctx.font = `10px ${MONO}`;
-    ctx.textAlign = "right";
-    ctx.textBaseline = "middle";
-    for (const v of [0, 4, 8, 12, 15]) {
-      const y = Math.round(yOf(v)) + 0.5;
-      ctx.strokeStyle = "rgba(255,255,255,0.04)";
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      ctx.moveTo(x0, y);
-      ctx.lineTo(x1, y);
-      ctx.stroke();
-      ctx.fillStyle = C_DIMMER;
-      ctx.fillText(v.toString(16).toUpperCase(), x0 - 9, y);
-    }
-
-    ctx.setLineDash([2, 5]);
-    ctx.strokeStyle = "rgba(245,181,68,0.26)";
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(x0, Math.round(cy) + 0.5);
-    ctx.lineTo(x1, Math.round(cy) + 0.5);
-    ctx.stroke();
-    ctx.setLineDash([]);
-
-    ctx.strokeStyle = "rgba(245,181,68,0.10)";
-    ctx.beginPath();
-    ctx.moveTo(Math.round(cx) + 0.5, y0);
-    ctx.lineTo(Math.round(cx) + 0.5, y1);
-    ctx.stroke();
-  }
-
-  function draw() {
-    if (!VW || !VH) return;
-
-    const padX = PAD;                   // read the gutter; never recompute it here (§10.4)
-    const narrow = padX < 40;
-    const padT = 34;
-    const padB = 26;
-
-    const x0 = padX;
-    const x1 = Math.max(x0 + 10, VW - padX);
-    const y0 = padT;
-    const y1 = Math.max(y0 + 10, VH - padB);
-    const pw = x1 - x0;
-    const ph = y1 - y0;
-
-    G.x0 = x0; G.x1 = x1; G.y0 = y0; G.y1 = y1; G.pw = pw; G.ph = ph;
-
-    /* Column geometry — computed once here and pushed to the strip,
-       so every control point sits dead centre over its bit cells. */
-    const n = nibCount();
-    const nibGap = Math.max(1.5, Math.min(12, (pw / n) * 0.16));
-    const nibW = (pw - (n - 1) * nibGap) / n;
-    G.nibW = nibW;
-    G.nibGap = nibGap;
-    const gapPx = nibGap.toFixed(2) + "px";
-    if (nibsEl.style.gap !== gapPx) nibsEl.style.gap = gapPx;
-
-    /* Below ~46px per nibble the four bit glyphs stop being legible,
-       so drop to a hex-only strip rather than overlapping digits.
-       The weight row thins out, so the strip must re-render on change. */
-    const compact = pw / n < 46;
-    if (S.compact !== compact) {
-      S.compact = compact;
-      stripEl.classList.toggle("compact", compact);
-      renderStrip();
-    }
-
-    const yOf = (v) => y1 - (v / 15) * ph;
-    const cx = (x0 + x1) / 2;
-    const cy = yOf(7.5);
-
-    ctx.clearRect(0, 0, VW, VH);
-    G.legendHits = [];
-
-    /* control points — these mirror the bit strip's nibble groups */
-    const xs = new Array(n);
-    for (let j = 0; j < n; j++) xs[j] = x0 + j * (nibW + nibGap) + nibW / 2;
-
-    const spFor = (r) => buildSpline(xs, r.anim.map(yOf));
-
-    ctx.lineJoin = "round";
-    ctx.lineCap = "round";
-
-    const ek = focusKey();
-    let handleSp = null;
-
-    if (S.view3d) {
-      /* The field is self-contained: no ruler, no handles, no ∞ marker.
-         Split 3-D subdivides only the canvas plot, keeping G.x0..G.x1 intact. */
-      const fieldY0 = Math.min(y1 - 10, y0 + 6);
-      if (S.split3d) {
-        const mid = Math.floor(VW / 2);
-        const splitPad = narrow ? 10 : Math.min(28, Math.max(16, Math.round(VW * 0.02)));
-
-        ctx.save();
-        ctx.beginPath();
-        ctx.rect(0, 0, mid, VH);
-        ctx.clip();
-        drawField3d(n, S.slots[S.splitPair[0]], {
-          x0: splitPad,
-          x1: Math.max(splitPad + 20, mid - splitPad),
-          y0: fieldY0,
-          y1,
-        });
-        ctx.restore();
-
-        ctx.save();
-        ctx.beginPath();
-        ctx.rect(mid + 1, 0, VW - mid - 1, VH);
-        ctx.clip();
-        drawField3d(n, S.slots[S.splitPair[1]], {
-          x0: mid + 1 + splitPad,
-          x1: Math.max(mid + 21 + splitPad, VW - splitPad),
-          y0: fieldY0,
-          y1,
-        });
-        ctx.restore();
-
-        ctx.strokeStyle = C_LINE;
-        ctx.lineWidth = 1;
-        ctx.beginPath();
-        ctx.moveTo(mid + 0.5, 0);
-        ctx.lineTo(mid + 0.5, VH);
-        ctx.stroke();
-      } else {
-        drawField3d(n, curSlot(), { x0, x1, y0: fieldY0, y1 });
-      }
-      G.spA = null;
-      G.spB = null;
-    } else {
-      drawGuides(x0, x1, y0, y1, cx, cy, yOf);
-    }
-
-    if (S.view3d) {
-      /* nothing further — the field is complete */
-    } else if (!S.showB) {
-      const spA = spFor(S.A);
-      G.spA = curSlot().frameVis.a ? spA : null;
-      G.spB = null;
-      if (curSlot().frameVis.a) paintCurve(spA, { width: 2.2, grad: true, glow: true });
-      handleSp = ek !== "z" && curSlot().frameVis.a ? spA : null;
-    } else {
-      const spA = spFor(S.A);
-      const spB = spFor(S.B);
-      const spZ = spFor(S.Z);
-      G.spA = curSlot().frameVis.a ? spA : null;
-      G.spB = curSlot().frameVis.b ? spB : null;
-
-      /* The operand you can edit outweighs its mode-mate, so the
-         instrument always shows you where your hands are. */
-      if (curSlot().frameVis.a) {
-        paintCurve(spA, {
-          width: ek === "a" ? 1.8 : 1.3,
-          dash: null,
-          color: `rgba(52,211,153,${ek === "a" ? 0.82 : 0.3})`,
-        });
-      }
-      if (curSlot().frameVis.b) {
-        paintCurve(spB, {
-          width: ek === "b" ? 1.8 : 1.3,
-          dash: [6, 4],
-          color: `rgba(52,211,153,${ek === "b" ? 0.82 : 0.3})`,
-        });
-      }
-      if (curSlot().frameVis.z) paintCurve(spZ, { width: 2.5, grad: true, glow: true });
-
-      drawLegend(x1, y0 + 8);
-      handleSp = ek === "z"
-        ? null
-        : ek === "b"
-          ? (curSlot().frameVis.b ? spB : null)
-          : (curSlot().frameVis.a ? spA : null);
-    }
-
-    /* handles — only on the operand you can actually edit */
-    const dense = n > 32;
-    for (let j = 0; handleSp && j < n; j++) {
-      const active =
-        (S.drag === j && S.hoverReg === ek) ||
-        (S.drag < 0 && S.hoverReg === ek && S.hoverJ === j);
-      if (!active && dense) continue;
-
-      const x = xs[j];
-      const y = handleSp.ys[j];
-      const r = active ? 4.4 : 2.5;
-
-      ctx.beginPath();
-      ctx.arc(x, y, r, 0, Math.PI * 2);
-      ctx.fillStyle = active ? C_HANDLE_HI : "rgba(52,211,153,0.8)";
-      ctx.fill();
-
-      if (active) {
-        ctx.beginPath();
-        ctx.arc(x, y, r + 4, 0, Math.PI * 2);
-        ctx.strokeStyle = "rgba(52,211,153,0.4)";
-        ctx.lineWidth = 1.5;
-        ctx.stroke();
-      }
-    }
-
-    /* In 3-D there is nothing to hover: the field is read-only.
-       Returning here also skips the ∞ marker, which the field replaces. */
-    if (S.view3d) return;
-
-    /* Hover readout — the nibble's quantitative potential at its position:
-       value × 2^weight. At the LSB this reads "n × 2^0", i.e. just n. */
-    if (S.hoverJ >= 0 && S.hoverReg === ek && handleSp) {
-      const j = S.hoverJ;
-      const v = regOf(ek).target[j];
-      const txt = `${v} \u00D7 2^${nibWeightPow(j)}`;
-      const hx = Math.min(x1 - 44, Math.max(x0 + 44, xs[j]));
-      const hy = Math.max(y0 + 13, handleSp.ys[j] - 15);
-
-      ctx.font = `10px ${MONO}`;
-      ctx.textAlign = "center";
-      ctx.textBaseline = "bottom";
-      ctx.fillStyle = C_HANDLE_HI;
-      ctx.fillText(txt, hx, hy);
-      ctx.textAlign = "left";
-    }
-
-    /* ∞ marker */
-    ctx.save();
-    ctx.beginPath();
-    ctx.arc(cx, cy, 7.5, 0, Math.PI * 2);
-    ctx.strokeStyle = "rgba(245,181,68,0.45)";
-    ctx.lineWidth = 1;
-    ctx.stroke();
-
-    ctx.beginPath();
-    ctx.arc(cx, cy, 2.6, 0, Math.PI * 2);
-    ctx.fillStyle = "rgba(245,181,68,0.95)";
-    ctx.fill();
-
-    ctx.font = `600 14px ${MONO}`;
-    ctx.textAlign = "left";
-    ctx.textBaseline = "middle";
-    ctx.fillStyle = "rgba(245,181,68,0.85)";
-    ctx.fillText("∞", cx + 14, cy);
-    ctx.restore();
-  }
-
-  /* ══════════════════════════════════════════════════════════
-     RENDER — bit strip
-     ══════════════════════════════════════════════════════════ */
-
-  const stripEl = document.getElementById("strip");
-  const nibsEl = document.getElementById("nibs");
-  const metaEl = document.getElementById("meta");
-  const slotBadgeEl = document.getElementById("slotBadge");
-  const truthEl = document.getElementById("truth");
-  const hexEl = document.getElementById("hex");
-  const decEl = document.getElementById("dec");
-  const hexAEl = document.getElementById("hexA");
-  const hexBEl = document.getElementById("hexB");
-  const hexZEl = document.getElementById("hexZ");
-  const popEl = document.getElementById("pop");
-  const trendEl = document.getElementById("trend");
-
-  /* The strip always shows the register you are editing. */
-  function renderStrip() {
-    const r = focusReg();
-    const n = nibCount();
-    const compact = S.compact;
-    const readonly = !focusEditable();
-
-    const midA = S.N / 2 - 1;
-    const midB = S.N / 2;
-
-    let html = "";
-    for (let j = 0; j < n; j++) {
-      const base = S.N - 1 - 4 * j;
-      const v = nibValue(r, j);
-
-      html += `<div class="nib" data-j="${j}"><div class="bits">`;
-      for (let k = 0; k < 4; k++) {
-        const b = base - k;
-        const cls = [
-          "bit",
-          r.bits[b] ? "on" : "",
-          (b === midA || b === midB) ? "mid" : "",
-        ].join(" ").trim();
-        html += `<i class="${cls}" data-b="${b}">${r.bits[b]}</i>`;
-      }
-      html += `</div>`;
-      html += `<div class="hex" title="scroll to adjust this nibble">${v.toString(16).toUpperCase()}</div>`;
-      html += `<div class="dec">${v}</div>`;
-
-      /* At 256-bit density a weight under every column would collide, so
-         mark every 8th nibble plus the LSB — the scale still reads, and the
-         ratio between marks is always 2^32. */
-      const showWt = !compact || j % 8 === 0 || j === n - 1;
-      html += `<div class="wt">${showWt ? "2^" + nibWeightPow(j) : ""}</div>`;
-      html += `</div>`;
-    }
-    nibsEl.innerHTML = html;
-    stripEl.dataset.edit = frameLabel();
-    stripEl.classList.toggle("is-readonly", readonly);
-    stripEl.setAttribute("aria-readonly", readonly ? "true" : "false");
-    syncHoverClasses();
-  }
-
-  function patchNibble(j) {
-    const r = editReg();
-    const el = nibsEl.querySelector(`.nib[data-j="${j}"]`);
-    if (!el) return;
-    const base = S.N - 1 - 4 * j;
-    const cells = el.querySelectorAll(".bit");
-    for (let k = 0; k < 4; k++) {
-      const b = base - k;
-      cells[k].textContent = r.bits[b];
-      cells[k].classList.toggle("on", !!r.bits[b]);
-    }
-    const v = nibValue(r, j);
-    el.querySelector(".hex").textContent = v.toString(16).toUpperCase();
-    const dec = el.querySelector(".dec");
-    if (dec) dec.textContent = v;
-  }
-
-  function syncHoverClasses() {
-    const kids = nibsEl.children;
-    const hotKey = focusKey();
-    for (let j = 0; j < kids.length; j++) {
-      kids[j].classList.toggle("hot", j === S.hoverJ && S.hoverReg === hotKey);
-    }
-  }
-
-  /* ══════════════════════════════════════════════════════════
-     READOUTS
-     ══════════════════════════════════════════════════════════ */
-
-  function toHexOf(r) {
-    const n = nibCount();
-    let s = "";
-    for (let j = 0; j < n; j++) s += nibValue(r, j).toString(16).toUpperCase();
-    return s;
-  }
-
-  function toDecimalOf(r) {
-    let v = 0n;
-    for (let b = S.N - 1; b >= 0; b--) v = (v << 1n) | BigInt(r.bits[b]);
-    return v.toString();
-  }
-
-  const PAIRS = [[0, 0], [0, 1], [1, 0], [1, 1]];
-
-  const binFn = (a, b) =>
-    S.binop === "and" ? (a & b) : S.binop === "or" ? (a | b) : (a ^ b);
-
-  /* The truth table is live data: the `n` column counts how many bit
-     positions in A and B actually hold each input pair, so the four
-     counts always sum to the register width. */
-  function renderTruth() {
-    const fa = frameName(S.slot, "a");
-    const fb = frameName(S.slot, "b");
-    const fz = frameName(S.slot, "z");
-    /* Arithmetic has no four-row truth table: the result depends on the
-       whole word through the carry/borrow, not on the bit pair. */
-    if (isArith()) {
-      const a = regToBig(S.A);
-      const b = regToBig(S.B);
-      const over = S.binop === "add"
-        ? (a + b) >= (1n << BigInt(S.N))
-        : a < b;
-      const label = S.binop === "add" ? "carry out" : "borrow out";
-      truthEl.innerHTML =
-        `<div class="truth-h">${fa} ${OPSYM[S.binop]} ${fb} → ${fz}</div>` +
-        `<div class="truth-grid ar">` +
-        `<span class="th">${label}</span>` +
-        `<span class="ct${over ? " yes" : ""}">${over ? "yes" : "no"}</span>` +
-        `</div>`;
-      return;
-    }
-
-    const counts = [0, 0, 0, 0];
-    for (let i = 0; i < S.N; i++) {
-      counts[(S.A.bits[i] << 1) | S.B.bits[i]]++;
-    }
-
-    let html = `<div class="truth-h">${fa} ${OPSYM[S.binop]} ${fb} → ${fz}</div>`;
-    html += `<div class="truth-grid">`;
-    html += `<span class="th">a</span><span class="th">b</span><span class="th">→</span><span class="th">n</span>`;
-    for (const [a, b] of PAIRS) {
-      const z = binFn(a, b);
-      html += `<span>${a}</span><span>${b}</span>`;
-      html += `<span class="z${z ? " on" : ""}">${z}</span>`;
-      html += `<span class="ct">${counts[(a << 1) | b]}</span>`;
-    }
-    html += `</div>`;
-    truthEl.innerHTML = html;
-  }
-
-  function updateReadouts(withDecimal = true) {
-    /* The truth table is exactly the right companion to the 3-D field. */
-    metaEl.classList.toggle("ab", S.showB);
-    stripEl.dataset.edit = frameLabel();
-
-    if (slotBadgeEl) {
-      slotBadgeEl.hidden = !S.view3d && S.slot === "A";
-      slotBadgeEl.textContent = `lane ${laneLabel(S.slot)}`;
-    }
-
-    if (S.showB) {
-      hexAEl.previousElementSibling.textContent = frameName(S.slot, "a");
-      hexBEl.previousElementSibling.textContent = frameName(S.slot, "b");
-      hexZEl.previousElementSibling.textContent = frameName(S.slot, "z");
-      popEl.previousElementSibling.textContent = `pop ${frameName(S.slot, "z")}`;
-      hexAEl.textContent = toHexOf(S.A);
-      hexBEl.textContent = toHexOf(S.B);
-      hexZEl.textContent = toHexOf(S.Z);
-      let pop = 0;
-      for (let i = 0; i < S.N; i++) pop += S.Z.bits[i];
-      popEl.textContent = String(pop);
-      renderTruth();
-    } else {
-      hexEl.textContent = toHexOf(S.A);
-      if (withDecimal) {
-        const d = toDecimalOf(S.A);
-        decEl.textContent = d;
-        decEl.title = d;
-      }
-    }
-
-    /* Endpoint trend of the frame being shown. */
-    const r = focusReg();
-    const n = nibCount();
-    const diff = r.target[n - 1] - r.target[0];
-    trendEl.classList.toggle("flat", diff === 0);
-    trendEl.textContent = diff < 0 ? "step-down" : diff > 0 ? "step-up" : "level";
-  }
 
   function commit(instant = false) {
     /* One transaction boundary: base writes, then the clocked evaluation
@@ -1087,16 +361,18 @@ import { createStore } from "./state/store.ts";
   function lfoStart() {
     if (S.lfo.on) return;
     if (S.lfo.mode === "csvStep" && (!DEMO.rows || !DEMO.rows.length)) return;
-    const base = {};
-    for (const k of SLOT_KEYS) {
-      const sl = S.slots[k];
-      base[k] = { a: sl.A.bits.slice(), b: sl.B.bits.slice() };
-    }
-    S.lfo.base = base;
-    S.lfo.t = 0;
-    S.lfo.on = true;
-    S.lfoAcc = 0;
-    lfoBtn.setAttribute("aria-pressed", "true");
+    store.patch(() => {
+      const base = {};
+      for (const k of SLOT_KEYS) {
+        const sl = S.slots[k];
+        base[k] = { a: sl.A.bits.slice(), b: sl.B.bits.slice() };
+      }
+      S.lfo.base = base;
+      S.lfo.t = 0;
+      S.lfo.on = true;
+      S.lfoAcc = 0;
+      lfoBtn.setAttribute("aria-pressed", "true");
+    });
   }
 
   function lfoStop() {
@@ -1191,18 +467,24 @@ import { createStore } from "./state/store.ts";
   lfoBtn.addEventListener("click", () => (S.lfo.on ? lfoStop() : lfoStart()));
 
   lfoModeSel.addEventListener("change", () => {
-    S.lfo.mode = lfoModeSel.value;
-    if (S.lfo.on) { S.lfo.t = 0; }        // restart the shape cleanly
-    syncEditUi();
+    store.patch(() => {
+      S.lfo.mode = lfoModeSel.value;
+      if (S.lfo.on) { S.lfo.t = 0; }      // restart the shape cleanly
+      syncEditUi();
+    });
   });
 
   lfoRateSel.addEventListener("change", () => {
-    S.lfo.rate = Number(lfoRateSel.value) || 4;
-    S.lfoAcc = 0;
+    store.patch(() => {
+      S.lfo.rate = Number(lfoRateSel.value) || 4;
+      S.lfoAcc = 0;
+    });
   });
 
   lfoBSel.addEventListener("change", () => {
-    curSlot().lfoB = lfoBSel.value;
+    store.patch(() => {
+      curSlot().lfoB = lfoBSel.value;
+    });
   });
 
   function applyTable(name, reg = editReg()) {
@@ -1465,66 +747,74 @@ import { createStore } from "./state/store.ts";
   }
 
   function focusSplitPane(paneIdx) {
-    S.activePane = paneIdx === 1 ? 1 : 0;
-    S.slot = S.splitPair[S.activePane];
-    enableBOnSlot(curSlot());
-    refreshActiveSlotUi();
+    store.patch(() => {
+      S.activePane = paneIdx === 1 ? 1 : 0;
+      S.slot = S.splitPair[S.activePane];
+      enableBOnSlot(curSlot());
+      refreshActiveSlotUi();
+    });
   }
 
   function selectSlotInPane(paneIdx, key) {
-    if (S.copyArmed) {
-      S.copyArmed = false;
-      copySlotInto(S.slot, key);
-    }
-    S.splitPair[paneIdx] = key;
-    S.activePane = paneIdx;
-    S.slot = key;
-    enableBOnSlot(curSlot());
-    refreshActiveSlotUi();
+    store.patch(() => {
+      if (S.copyArmed) {
+        S.copyArmed = false;
+        copySlotInto(S.slot, key);
+      }
+      S.splitPair[paneIdx] = key;
+      S.activePane = paneIdx;
+      S.slot = key;
+      enableBOnSlot(curSlot());
+      refreshActiveSlotUi();
+    });
   }
 
   function selectSlot(key) {
     if (!S.slots[key]) return;
-    if (S.copyArmed) {
-      S.copyArmed = false;
-      copySlotInto(S.slot, key);
-    }
-    if (S.view3d && S.split3d) {
-      if (S.splitPair[0] === key && S.splitPair[1] !== key) {
-        S.activePane = 0;
-      } else if (S.splitPair[1] === key && S.splitPair[0] !== key) {
-        S.activePane = 1;
-      } else {
-        S.splitPair[S.activePane] = key;
+    store.patch(() => {
+      if (S.copyArmed) {
+        S.copyArmed = false;
+        copySlotInto(S.slot, key);
       }
-    }
-    S.slot = key;
-    if (S.view3d) enableBOnSlot(curSlot());
-    refreshActiveSlotUi();
+      if (S.view3d && S.split3d) {
+        if (S.splitPair[0] === key && S.splitPair[1] !== key) {
+          S.activePane = 0;
+        } else if (S.splitPair[1] === key && S.splitPair[0] !== key) {
+          S.activePane = 1;
+        } else {
+          S.splitPair[S.activePane] = key;
+        }
+      }
+      S.slot = key;
+      if (S.view3d) enableBOnSlot(curSlot());
+      refreshActiveSlotUi();
+    });
   }
 
   function setSplitMode(on) {
-    S.copyArmed = false;
-    if (on) {
-      S.view3d = true;
-      S.split3d = true;
-      if (!S.splitPair.includes(S.slot)) {
-        const other = S.splitPair[0] === S.slot ? "B" : S.splitPair[0];
-        S.splitPair = [other === S.slot ? "A" : other, S.slot];
-        S.activePane = 1;
+    store.patch(() => {
+      S.copyArmed = false;
+      if (on) {
+        S.view3d = true;
+        S.split3d = true;
+        if (!S.splitPair.includes(S.slot)) {
+          const other = S.splitPair[0] === S.slot ? "B" : S.splitPair[0];
+          S.splitPair = [other === S.slot ? "A" : other, S.slot];
+          S.activePane = 1;
+        } else {
+          S.activePane = S.splitPair[0] === S.slot ? 0 : 1;
+        }
+        if (S.splitPair[0] === S.splitPair[1]) {
+          S.splitPair[1] = S.splitPair[0] === "A" ? "B" : "A";
+        }
+        enableBOnSlot(S.slots[S.splitPair[0]]);
+        enableBOnSlot(S.slots[S.splitPair[1]]);
       } else {
-        S.activePane = S.splitPair[0] === S.slot ? 0 : 1;
+        S.split3d = false;
+        if (S.view3d) enableBOnSlot(curSlot());
       }
-      if (S.splitPair[0] === S.splitPair[1]) {
-        S.splitPair[1] = S.splitPair[0] === "A" ? "B" : "A";
-      }
-      enableBOnSlot(S.slots[S.splitPair[0]]);
-      enableBOnSlot(S.slots[S.splitPair[1]]);
-    } else {
-      S.split3d = false;
-      if (S.view3d) enableBOnSlot(curSlot());
-    }
-    refreshActiveSlotUi();
+      refreshActiveSlotUi();
+    });
   }
 
   function syncViewUi() {
@@ -1558,11 +848,13 @@ import { createStore } from "./state/store.ts";
   }
 
   depthBtn.addEventListener("click", () => {
-    S.copyArmed = false;
-    S.view3d = !S.view3d;
-    if (!S.view3d) S.split3d = false;
-    if (S.view3d) enableBOnSlot(curSlot());
-    refreshActiveSlotUi();
+    store.patch(() => {
+      S.copyArmed = false;
+      S.view3d = !S.view3d;
+      if (!S.view3d) S.split3d = false;
+      if (S.view3d) enableBOnSlot(curSlot());
+      refreshActiveSlotUi();
+    });
   });
 
   slotSeg.querySelectorAll("[data-slot]").forEach((b) => {
@@ -1572,8 +864,10 @@ import { createStore } from "./state/store.ts";
   splitBtn.addEventListener("click", () => setSplitMode(!(S.view3d && S.split3d)));
 
   copySlotBtn.addEventListener("click", () => {
-    S.copyArmed = !S.copyArmed;
-    syncViewUi();
+    store.patch(() => {
+      S.copyArmed = !S.copyArmed;
+      syncViewUi();
+    });
   });
 
   /* ── frame navigator ─────────────────────────────────────────
@@ -1655,7 +949,9 @@ import { createStore } from "./state/store.ts";
 
   function setFrameVis(laneKey, frame, visible) {
     const sl = S.slots[laneKey];
-    if (sl.frameVis[frame] !== visible) toggleFrameVisibility(sl, frame);
+    if (sl.frameVis[frame] !== visible) {
+      store.patch(() => toggleFrameVisibility(sl, frame));
+    }
     if (framesPanel.hidden) return;
     const row = framesBody.querySelector(`.frame-row[data-frame="${frame}"]`);
     if (!row) return;
@@ -1758,9 +1054,11 @@ import { createStore } from "./state/store.ts";
   }
 
   function openFrames() {
-    S.copyArmed = false;
-    syncViewUi();
-    renderFramesPanel();
+    store.patch(() => {
+      S.copyArmed = false;
+      syncViewUi();
+      renderFramesPanel();
+    });
     framesPanel.hidden = false;
     framesBtn.setAttribute("aria-expanded", "true");
     const first =
@@ -1868,105 +1166,16 @@ import { createStore } from "./state/store.ts";
 
   /* Minimal RFC4180 reader: quoted fields, doubled quotes, CRLF, and
      comma-or-tab chosen by whichever appears more in the first line. */
-  function parseDelimited(text) {
-    const t = text.replace(/^\uFEFF/, "");
-    const nl = t.indexOf("\n");
-    const head = nl === -1 ? t : t.slice(0, nl);
-    const tabs = (head.match(/\t/g) || []).length;
-    const commas = (head.match(/,/g) || []).length;
-    const delim = tabs > commas ? "\t" : ",";
-
-    const rows = [];
-    let row = [], field = "", quoted = false;
-
-    for (let i = 0; i < t.length; i++) {
-      const c = t[i];
-      if (quoted) {
-        if (c === '"') {
-          if (t[i + 1] === '"') { field += '"'; i++; }
-          else quoted = false;
-        } else field += c;
-      } else if (c === '"') quoted = true;
-      else if (c === delim) { row.push(field); field = ""; }
-      else if (c === "\n") { row.push(field); rows.push(row); row = []; field = ""; }
-      else if (c !== "\r") field += c;
-    }
-    if (field !== "" || row.length) { row.push(field); rows.push(row); }
-    return rows;
-  }
-
-  const normCell = (raw) =>
-    String(raw == null ? "" : raw).trim().replace(/[\s_]/g, "");
-
-  const stripPrefix = (s) => s.replace(/^0[xX]/, "").replace(/^0[bB]/, "");
-
-  const isToken = (s) => /^[0-9a-fA-F]+$/.test(stripPrefix(s));
-
-  function isDataRow(cells) {
-    let any = false;
-    for (const c of cells) {
-      const s = normCell(c);
-      if (!s) continue;
-      if (!isToken(s)) return false;
-      any = true;
-    }
-    return any;
-  }
-
-  /* All-0/1 column → binary; anything with a bigger hex digit → hex. */
-  function columnMode(rows, ci) {
-    let sawHex = false, sawBin = false;
-    for (const r of rows) {
-      const s = stripPrefix(normCell(r[ci]));
-      if (!s || !isToken(s)) continue;
-      if (/^[01]+$/.test(s)) sawBin = true; else sawHex = true;
-    }
-    return sawHex ? "hex" : sawBin ? "bin" : "hex";
-  }
-
-  function cellToBits(raw, mode) {
-    const s = stripPrefix(normCell(raw));
-    if (!s) return null;
-
-    if (mode === "bin") {
-      if (!/^[01]+$/.test(s)) return null;
-      return s.split("").map(Number);
-    }
-    if (!/^[0-9a-fA-F]+$/.test(s)) return null;
-    const out = [];
-    for (const ch of s) {
-      const v = parseInt(ch, 16);
-      out.push((v >> 3) & 1, (v >> 2) & 1, (v >> 1) & 1, v & 1);
-    }
-    return out;
-  }
-
-  /* MSB-first bit array into a register, right-aligned. Overflow truncates. */
   function writeBitsInto(reg, arr) {
-    reg.bits.fill(0);
-    for (let k = 0; k < arr.length; k++) {
-      const idx = arr.length - 1 - k;
-      if (idx < S.N) reg.bits[idx] = arr[k];
-    }
-  }
-
-  function columnWidth(ci) {
-    if (ci < 0 || ci >= DEMO.cols.length) return 0;
-    const mode = columnMode(DEMO.rows, ci);
-    let max = 0;
-    for (const r of DEMO.rows) {
-      const b = cellToBits(r[ci], mode);
-      if (b && b.length > max) max = b.length;
-    }
-    return max;
+    reg.bits = alignBits(arr, S.N);
   }
 
   function fitToMappedColumns() {
     let maxBits = 8;
     for (const k of SLOT_KEYS) {
       const sl = S.slots[k];
-      if (sl.colA >= 0) maxBits = Math.max(maxBits, columnWidth(sl.colA));
-      if (sl.colB >= 0) maxBits = Math.max(maxBits, columnWidth(sl.colB));
+      if (sl.colA >= 0) maxBits = Math.max(maxBits, columnWidth(DEMO.rows, sl.colA));
+      if (sl.colB >= 0) maxBits = Math.max(maxBits, columnWidth(DEMO.rows, sl.colB));
     }
     let want = SIZES[0];
     for (const s of SIZES) { want = s; if (s >= maxBits) break; }
@@ -2108,7 +1317,7 @@ import { createStore } from "./state/store.ts";
 
     /* Default to the WIDEST token column, not the first: id/label columns
        are often present and the payload is what you want to see. */
-    const widths = cols.map((_, ci) => columnWidth(ci));
+    const widths = cols.map((_, ci) => columnWidth(DEMO.rows, ci));
     let best = -1, bestW = -1;
     for (let ci = 0; ci < cols.length; ci++) {
       if (widths[ci] > bestW) { bestW = widths[ci]; best = ci; }
@@ -2409,7 +1618,7 @@ import { createStore } from "./state/store.ts";
     return deepFreeze({
       schema: 1,
       viewport: { width: window.innerWidth, height: window.innerHeight },
-      pad: PAD,
+      pad: getPad(),
       canvas: {
         width: canvas.width,
         height: canvas.height,
