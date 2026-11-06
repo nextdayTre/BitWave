@@ -18,6 +18,20 @@ network, no dependencies: **open the file directly in a browser.**
 - **`index.html`** — untouched original reference build.
 - `index.html.bak` — an older snapshot, kept only as history.
 
+## Verify
+
+```bash
+npm test               # DOM-free core: 38 tests, zero dependencies
+npm run check:browser  # 16 artifact checks in headless Chromium (17 with capture)
+npm run capture        # state screenshots → .tmp-captures/
+```
+
+`check:browser` auto-detects Chromium (Playwright's browser cache, a Chrome/Edge
+install, or `BITWAVE_CHROME=…`). It opens the artifact over `file://` — the way a
+user opens it — and asserts console cleanliness, layout at 360/420/720/1440, the
+DESIGN §5 strip geometry, the frame navigator, the 3-D truth table, CSV import and
+the §11 operation vectors.
+
 ## Design and intent
 
 - [`DESIGN.md`](DESIGN.md) — the visual/geometric source of truth.
@@ -30,7 +44,8 @@ The instrument is the two HTML files. The rest is preserved context:
 
 | Path | What it is |
 |---|---|
-| `docs/`, `PLAN.md`, `DECISIONS.md`, `STATUS.md`, `src/`, `tests/`, `spike/`, `examples/`, `tools/` | Historical design analysis and a DOM-free engine extracted during exploration. Not required to run the instrument. |
+| `docs/`, `PLAN.md`, `DECISIONS.md`, `STATUS.md`, `src/`, `tests/`, `spike/`, `examples/` | Historical design analysis and a DOM-free engine extracted during exploration. Not required to run the instrument. |
+| `tools/` | `browser-check.mjs` (zero-dependency verification harness) and the example generator. |
 | `package.json`, `tsconfig.core.json` | Test/typecheck setup for the extracted core (`npm test`). |
 
 ## Preservation

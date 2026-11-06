@@ -1224,6 +1224,7 @@
   }
 
   let VW = 0, VH = 0;
+  let PAD = 40;                       // single gutter authority, written by fitCanvas()
   let G = { x0: 0, x1: 0, y0: 0, y1: 0, pw: 0, ph: 0, nibW: 0, nibGap: 0, spA: null, spB: null, legendHits: [] };
 
   function fitCanvas() {
@@ -1236,7 +1237,9 @@
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
     // Keep the bit strip's gutter identical to the plot's gutter.
-    document.documentElement.style.setProperty("--pad", (VW < 680 ? 16 : 40) + "px");
+    // The breakpoint is DESIGN §5/§9: one 720px breakpoint, 16px at or below it.
+    PAD = VW <= 720 ? 16 : 40;
+    document.documentElement.style.setProperty("--pad", PAD + "px");
   }
 
   function strokeCurve(sp, x0, x1) {
@@ -1480,8 +1483,8 @@
   function draw() {
     if (!VW || !VH) return;
 
-    const narrow = VW < 680;
-    const padX = narrow ? 16 : 40;
+    const padX = PAD;                   // read the gutter; never recompute it here (§10.4)
+    const narrow = padX < 40;
     const padT = 34;
     const padB = 26;
 

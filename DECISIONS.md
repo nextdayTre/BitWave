@@ -4,7 +4,7 @@ Implementation decisions taken to keep the plan moving. Each one is reversible
 while the codebase is small; the ones the plan marked for the author are noted.
 Format is deliberately short: decision, basis, how to reverse it.
 
-**Status:** 2026-11-05 · applies to the `src/core` extraction and F0 baseline.
+**Status:** 2026-11-06 · applies to the `src/core` extraction, the F0 baseline and the browser-verification harness.
 
 | # | Decision | Basis | Reverse by |
 |---|---|---|---|
@@ -20,6 +20,8 @@ Format is deliberately short: decision, basis, how to reverse it.
 | D10 | **Dimming is hands-off.** No changes to `--dim`, `--dimmer`, `--line`, alpha values or contrast. Colour and intensity are a future mapping axis. | Author decision 2026-11-06 (closes PLAN Q8): "The tool is not a toy." | Reopen only as an explicit mapping-layer design task. |
 | D11 | **Routing is the existing CSV column mechanism, housed as a six-row source table.** Each fixed operand input (A/B × lanes 1–3) gets one SOURCE select listing imported data columns first and frame outputs second. STATE is `data` / `1:1` / `z⁻¹` / `—`. No add/remove rows, no matrix toggle, no separate import path, no cables/jacks/drag/3-D overlays. CSV loading, typing and alignment are unchanged. | Author decision 2026-11-06: "Matrix is the structural housing for this, that is all." | UI-only; the routing engine and CSV path are unchanged. |
 | D12 | **The cable dock spike is retired.** `spike/patch-dock.html` and `docs/diagrams/patch-model.svg` are removed; `spike/routing-matrix.html` is the single reference prototype. | Same decision: one clear prototype beats two. | Git history retains both. |
+| D13 | **Browser verification is a checked-in, zero-dependency CDP harness.** `tools/browser-check.mjs` drives the shipped file over `file://` with Node's built-in WebSocket/fetch; Chromium is auto-detected (Playwright cache, Chrome/Edge, or `BITWAVE_CHROME`). `npm test` stays browser-free; `npm run check:browser` is the artifact gate. | The sandbox that blocked headless Chromium no longer applies; PLAN F0's browser gap closes without adding Playwright/Vitest (D5 stands). | Delete the script and npm script; verification reverts to manual/CI-only. |
+| D14 | **`--pad` has one writer and one reader.** `fitCanvas()` computes it once (16px at or below 720, 40px above) and stores it in `PAD`; `draw()` reads `PAD` instead of recomputing its own 680px threshold. The CSS media query stays as the pre-JS fallback. | The browser check found the app writing `--pad` with a 680px threshold while CSS/DESIGN §5/§9 use 720, and `draw()` re-deriving a second pad — the DESIGN §10.4 desync (canvas inset ≠ strip gutter). | Revert the three lines in `fitCanvas`/`draw`; the §5 strip assertion in the browser check fails if the two disagree again. |
 
 ## Open decisions still with the author
 

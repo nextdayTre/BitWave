@@ -122,7 +122,7 @@ width as values change.
 ## 5. Space and geometry
 
 `--pad` is the **single authority** for horizontal gutter. It is `40px` desktop and
-`16px` under 720px, and **JS writes it** from `fitCanvas()` so the canvas and the DOM
+`16px` at or below 720px, and **JS writes it** from `fitCanvas()` so the canvas and the DOM
 strip can never disagree. CSS declares it only as the pre-JS fallback.
 
 | Constant | Value | Where |
@@ -425,7 +425,7 @@ The visual contract is measurable, so measure it rather than eyeballing:
 - `canvas.width === viewport width` at the mobile breakpoint.
 - Zero `console.error` and zero uncaught exceptions during load + 2s of animation.
 - Bit-exact op checks: `ROL 4` on `FEDCBA9876543210` → `EDCBA9876543210F`;
-  `NOT` of the same → `123456789ABCDEF0`.
+  `NOT` of the same → `0123456789ABCDEF`.
 - `BSWAP` on `FEDCBA9876543210` → `1032547698BADCFE`; twice is the identity; it is a
   **no-op at 8 bits** (one byte has no byte order).
 - A·B with A = `8ADEFEDA85210125`, B = `FFFFFFFF00000000`:
@@ -433,8 +433,10 @@ The visual contract is measurable, so measure it rather than eyeballing:
 - Truth counts for that pair = `23, 11, 9, 21`; `popcount(Z xor) = 20`, `popcount(Z and) = 21`.
 - Editing B must not touch A (`NOT` on B leaves A byte-identical) and must re-derive Z.
 
-A headless-Chrome CDP pass drives these in seconds. Any change touching §5 or §6 must
-re-run them.
+A headless-Chrome CDP pass drives these in seconds: `npm run check:browser`
+([`tools/browser-check.mjs`](tools/browser-check.mjs), zero dependencies) asserts
+them on the shipped file over `file://`. Any change touching §5 or §6 must re-run
+them.
 
 ---
 
