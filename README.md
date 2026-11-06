@@ -82,7 +82,7 @@ and example snapshot are in [`AGENTS.md`](AGENTS.md).
 |---|---|
 | `bitwave-v2.html` | The build: one self-contained file, generated from `src/` by `npm run build`. |
 | `index.html` | Untouched original reference build. |
-| `src/` | App source: `index.html`, `main.js` (shell), `styles/app.css`; `src/state/` (instrument, store, actions, routing, dataset); `src/render/` (canvas, strip, readouts); `src/core/` (engine). |
+| `src/` | App source: `index.html`, `main.js` (composition + controllers), `styles/app.css`; `state/`, `render/`, `ui/`, `io/` modules and the `core/` engine. |
 | `tools/` | `browser-check.mjs` (verification + parity gate), `build-artifact.mjs` (single-file gate), the example generator. |
 | `vite.config.mjs`, `package.json`, `tsconfig.core.json` | Build, test and typecheck setup. |
 | `docs/`, `PLAN.md`, `DECISIONS.md`, `STATUS.md`, `tests/`, `spike/`, `examples/` | Design analysis, plan/status, core tests, housing spike and project example. |
@@ -94,7 +94,7 @@ as a single-file bundle under `backups/` (ignored by Git), so it can be restored
 or cloned without a remote:
 
 ```bash
-git clone backups/bitwave-v2-2026-11-06-render.bundle bitwave-restore
+git clone backups/bitwave-v2-2026-11-06-ui.bundle bitwave-restore
 ```
 
 Tags: `v2-checkpoint-2026-11-06` (frame navigator, eyes, wheel-step),
@@ -102,8 +102,9 @@ Tags: `v2-checkpoint-2026-11-06` (frame navigator, eyes, wheel-step),
 `v2-agent-seam-2026-11-06` (read-only `window.BitWave` state/geometry surface),
 `v2-toolchain-2026-11-06` (Vite build, `src/` source tree, rebuild parity gate),
 `v2-state-2026-11-06` (DOM-free state tree + transaction store),
-`v2-transaction-2026-11-06` (actions module, core `evaluateAll` in the transaction)
-and `v2-render-2026-11-06` (render layer split, core CSV/spline wired, view-state
-writers transaction-wrapped).
+`v2-transaction-2026-11-06` (actions, core `evaluateAll` in the transaction),
+`v2-render-2026-11-06` (render layer split) and
+`v2-ui-2026-11-06` (UI feature modules: navigator, stage bar, controls, CSV,
+keyboard, observations).
 
 For off-machine safety, add a remote and push the `main` branch and tags.

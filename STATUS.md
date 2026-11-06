@@ -1,6 +1,6 @@
 # BitWave — implementation status
 
-**Updated:** 2026-11-06 · **Phase:** F0 **done** (harness + Vite build + parity gate), F1 core **done**, **F2 in progress** (state, store, actions, core `evaluateAll`, render layer extracted), F3 housing spike **done**; frame names, focus lens and the read-only `window.BitWave` seam **shipped**.
+**Updated:** 2026-11-06 · **Phase:** F0 **done** (harness + Vite build + parity gate), F1 core **done**, **F2 spine + render + UI modules done** (pointer/lane controllers still in `main.js`), F3 housing spike **done**; frame names, focus lens and the read-only `window.BitWave` seam **shipped**.
 **Source of truth:** [`PLAN.md`](PLAN.md) for the plan, [`DECISIONS.md`](DECISIONS.md) for choices taken, [`DESIGN.md`](DESIGN.md) for the visual contract. `index.html` is still untouched and remains the shipping instrument.
 
 ## Author decisions (2026-11-06)
@@ -33,16 +33,22 @@ cell enough? Confirm before the matrix lands in the app.
 |---|---|---|
 | **F0 Baseline** | **Done** | Git; Vite 8.3.6 + TypeScript 7 + `vite-plugin-singlefile` installed; `npm run build` emits the single-file `bitwave-v2.html` from `src/`; unit suite (55), typecheck and the browser harness (25 checks) all green; rebuild parity is a gate (`--compare`). |
 | **F1 Core + routing engine** | **Done** | 11 DOM-free modules; lanes 1/2/3; 38 core tests green. |
-| **F2 State spine + renderers** | **In progress** | Done: DOM-free tree, transaction store, `actions.ts`, core `evaluateAll()` in `commit()`, and the render layer split into `src/render/` (canvas + 3-D field, strip, readouts) with `src/state/dataset.ts`; CSV parsing/typing now comes from `src/core/csv.ts`; every writer (register and view state) runs inside `store.patch`. Remaining: split the UI layer (stage bar, frame navigator, controls, keyboard) out of `main.js` so it becomes a composition root. |
-| **F3 Source-table housing** | **Spike done** | Six fixed input rows, one source each; SOURCE = data column or frame output; STATE = `data`/`1:1`/`z⁻¹`. No add/remove, no new mode, no new state. |
+| **F2 State spine + renderers** | **Mostly done** | Done: DOM-free tree, transaction store, `actions.ts`, core `evaluateAll()`; render layer (`render/canvas.js`, `strip.js`, `readouts.js`); UI feature modules (`ui/frame-navigator.js`, `stage-bar.js`, `keyboard.js`, `csv-import.js`, `controls.js`) and `io/observations.js`; every writer runs inside `store.patch`. `main.js` is down to 843 lines: composition, pointer input, lane/view controllers, loop/boot and the agent surface. Remaining: extract pointer + lane/view controllers so `main.js` is only composition. |
+| **F3 Source-table housing** | **Spike done, next** | Six fixed input rows, one source each; SOURCE = data column or frame output; STATE = `data`/`1:1`/`z⁻¹`. The spine is ready, so the matrix can now be a data change. |
 | **F4–F6** | Not started | A11y/IA (no palette changes), persistence UI, distribution. |
 
 ## Verified this session
 
 - `npm test` → **55 tests, 55 pass, 0 fail** (38 core + 10 state + 7 actions/routing);
   `npm run typecheck` → **clean**.
-- `npm run build` → **`bitwave-v2.html`, 107.6 KB, single file**, no external references
+- `npm run build` → **`bitwave-v2.html`, 111.2 KB, single file**, no external references
   (`tools/build-artifact.mjs` gate).
+- **F2 slice 4 — UI feature modules out:** `src/ui/frame-navigator.js` (panel + focus
+  lens), `src/ui/stage-bar.js` (lane selector/split/expression),
+  `src/ui/csv-import.js` (import + example stepper), `src/ui/keyboard.js`,
+  `src/ui/controls.js` (ops/presets/binop/size + LFO engine) and
+  `src/io/observations.js`. `main.js`: 1,659 → **843 lines** of composition,
+  pointer input, lane/view controllers, loop/boot and the agent surface.
 - **F2 slice 3 — render layer out:** `src/render/canvas.js` (2-D curve, 3-D field,
   legend, `fitCanvas`/`--pad`), `src/render/strip.js` (editor strip + fast patch),
   `src/render/readouts.js` (hex/dec/truth/trend/3-D rows) and `src/state/dataset.ts`.
@@ -99,13 +105,15 @@ cell enough? Confirm before the matrix lands in the app.
 
 | Artifact | Purpose |
 |---|---|
-| [`src/`](src/index.html) | App source: `index.html` template, `main.js` (renderers + input), `styles/app.css` |
+| [`src/`](src/index.html) | App source: `index.html` template, `main.js` (843-line composition + controllers), `styles/app.css` |
 | [`src/state/instrument.ts`](src/state/instrument.ts) | DOM-free state tree, frame names, factories and selection helpers |
 | [`src/state/store.ts`](src/state/store.ts) | Transaction boundary: `get`/`patch`/`subscribe`, nested patches collapse |
 | [`src/state/actions.ts`](src/state/actions.ts) | Commands: core unary ops/presets, focus/binop/visibility/bit/nibble/copy/unpair |
 | [`src/state/routing.ts`](src/state/routing.ts) | Core `LaneMap` adapter + `evaluate()` running `src/core/routing.ts` |
 | [`src/state/dataset.ts`](src/state/dataset.ts) | Dataset state (columns, rows, cursor) shared by the shell and canvas code |
 | [`src/render/`](src/render/canvas.js) | Canvas + 3-D field, strip, readouts; the only DOM/canvas renderers |
+| [`src/ui/`](src/ui/frame-navigator.js) | Frame navigator, stage bar, CSV stepper, keyboard map and controls + LFO |
+| [`src/io/`](src/io/observations.js) | Observation logger and CSV export |
 | [`vite.config.mjs`](vite.config.mjs) | Vite 8 build: `src/` → `dist/index.html`, no minification |
 | [`tools/build-artifact.mjs`](tools/build-artifact.mjs) | Single-file gate: verifies no external refs, writes `bitwave-v2.html` |
 | [`src/core/`](src/core/index.ts) | DOM-free engine (11 modules, ~1,350 lines), lanes 1/2/3 |
@@ -115,7 +123,7 @@ cell enough? Confirm before the matrix lands in the app.
 | [`tools/browser-check.mjs`](tools/browser-check.mjs) | Zero-dependency CDP harness: 25 checks (26 with `--shots` or `--compare`) |
 | [`tools/make-example-project.ts`](tools/make-example-project.ts) | Regenerates the example |
 | `window.BitWave` in [`bitwave-v2.html`](bitwave-v2.html) | Read-only, schema-1 state/geometry surface; contract in [`AGENTS.md`](AGENTS.md) |
-| [`DECISIONS.md`](DECISIONS.md) | D1–D22, including the author decisions above |
+| [`DECISIONS.md`](DECISIONS.md) | D1–D23, including the author decisions above |
 
 ## Known gaps and blockers
 
@@ -127,9 +135,10 @@ cell enough? Confirm before the matrix lands in the app.
    proves the canvas control points and the DOM nibble centres agree (worst
    offset 0.00 px, §11 limit 1.5 px), but the drawn spline's own pixels are not
    sampled; the §11 check asserts geometry, not raster output.
-3. **The UI layer is still in `main.js`.** The stage bar, frame navigator, control
-   handlers, CSV import UI, observations and keyboard map have not been split into
-   `src/ui/` yet; `main.js` is ~1,900 lines and is not a composition root.
+3. **Two controllers still live in `main.js`.** Pointer input (canvas + strip) and
+   lane/view orchestration (select, split, copy, `syncViewUi`) are not yet
+   `src/ui/` modules. They do not block F3; the spine, renderers and UI feature
+   modules are already separate.
 4. **No routing UI yet** — the routing engine evaluates in the app and is covered by
    a Node test (`Z3 → A`), but the six-row source table is not wired and no route is
    created from the UI; that is F3.
@@ -143,14 +152,13 @@ cell enough? Confirm before the matrix lands in the app.
 
 ## Next actions
 
-1. **F2 spine (continue):** split the UI layer into `src/ui/` — stage bar, frame
-   navigator, control handlers, CSV import UI, observations and keyboard map — and
-   leave `main.js` as the composition root (state → store → renderers → UI). Then F2
-   is done and the matrix is a data change. `npm run build` + `--compare` screenshots
-   remain the regression proof at every step.
-2. **F3 in the app:** replace the per-lane `colA`/`colB` selects with the six-row
-   source table; keep import/typing/alignment identical; add frame sources and
-   `z⁻¹` state. Rows are the six operand frames A–F (D15); confirm the CSV label
-   shape from the author note before wiring the imported column name.
+1. **F3 in the app (recommended next):** the spine is done, so build the six-row
+   source table as `src/ui/source-table.js` and wire the existing `colA`/`colB`
+   bindings + frame sources through `evaluate()`. Keep import/typing/alignment
+   identical; rows are the six operand frames A–F (D15); confirm the CSV label
+   shape from the author note. `npm run build` + `--compare` remain the gates.
+2. **F2 finish (can follow F3):** extract the pointer and lane/view controllers into
+   `src/ui/`, leaving `main.js` as pure composition. No behavioural change; parity
+   probes it.
 3. **F4:** roles/keyboard/targets/reduced motion/reflow, including the measured
    zoom clipping; **do not touch the palette** (Q8 closed).

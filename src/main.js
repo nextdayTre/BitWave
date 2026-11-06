@@ -2,14 +2,12 @@ import {
   FRAME_NAMES,
   OPSYM,
   S,
-  SIZES,
   SLOT_KEYS,
   curSlot,
   editKey,
   editReg,
   focusEditable,
   focusKey,
-  frameLabel,
   frameName,
   laneLabel,
   nibAt,
@@ -21,47 +19,49 @@ import {
 } from "./state/instrument.ts";
 import {
   applyPreset,
-  applyUnary,
   copyLane,
   setBinop,
   setFocus,
   setLiveNibble,
   setNibble,
   toggleBit,
-  toggleFrameVisibility,
   unpair,
 } from "./state/actions.ts";
 import { evaluate } from "./state/routing.ts";
 import { createStore } from "./state/store.ts";
 
 import { DEMO } from "./state/dataset.ts";
-import {
-  alignBits,
-  cellToBits,
-  columnMode,
-  columnWidth,
-  isDataRow,
-  normCell,
-  parseDelimited,
-} from "./core/csv.ts";
-import { buildSpline, evalSpline } from "./core/spline.ts";
+import { createFrameNavigator } from "./ui/frame-navigator.js";
+import { createStageBar } from "./ui/stage-bar.js";
+import { attachKeyboard } from "./ui/keyboard.js";
+import { createControls } from "./ui/controls.js";
+import { createCsvImport } from "./ui/csv-import.js";
+import { evalSpline } from "./core/spline.ts";
 import { G, canvasEl as canvas, draw, fitCanvas, getPad, shortCol } from "./render/canvas.js";
-import { nibsEl, patchNibble, renderStrip, stripEl, syncHoverClasses } from "./render/strip.js";
+import { nibsEl, patchNibble, renderStrip, syncHoverClasses } from "./render/strip.js";
 import { toHexOf, updateReadouts } from "./render/readouts.js";
 
 (() => {
   "use strict";
 
   /* ══════════════════════════════════════════════════════════
-     APP SHELL — controls, pointer/keyboard input, stage bar, frame
-     navigator, CSV import, observations and boot.
-     State lives in `src/state/`; renderers in `src/render/`. Every
-     mutation runs inside a `store.patch(...)` transaction, then the
-     renderers read the settled tree. `main.js` is becoming the
-     composition root rather than the app.
+     COMPOSITION ROOT + CONTROLLERS
+     Wires the store, renderers and UI modules together; keeps the
+     pointer input, lane/view orchestration, boot loop and agent
+     surface. Everything else lives under state/, render/, ui/ and io/.
      ══════════════════════════════════════════════════════════ */
 
   const store = createStore(S);
+
+  const controls = createControls({
+    store,
+    resizeRegister,
+    commit,
+    renderStrip,
+    updateReadouts,
+    syncViewUi,
+    applyExample: (...args) => csv.applyExample(...args),
+  });
 
   /* Grow / shrink around the centre: the outermost nibbles on each side
      stay pinned and new nibbles appear at the ∞ point. All three display
@@ -69,7 +69,7 @@ import { toHexOf, updateReadouts } from "./render/readouts.js";
   function resizeRegister(newN) {
     if (newN === S.N) return;
     store.patch(() => {
-      lfoStop();                     // its snapshot belongs to the old width
+      controls.lfoStop();                     // its snapshot belongs to the old width
 
       const oldN = S.N;
       const oldNibs = oldN >> 2;
@@ -190,14 +190,14 @@ import { toHexOf, updateReadouts } from "./render/readouts.js";
 
     store.patch(() => {
       if (S.drag < 0) {
-        lfoStop();
+        controls.lfoStop();
         const j = nearestNibble(px);
         if (j < 0) return;
         S.drag = j;
         S.hoverReg = nearestReg(px, py);
         S.hoverJ = j;
         setFocus(curSlot(), S.hoverReg);
-        syncEditUi();
+        controls.syncEditUi();
         renderStrip();
         canvas.classList.add("grabbing");
         document.getElementById("hint").classList.add("off");
@@ -226,7 +226,7 @@ import { toHexOf, updateReadouts } from "./render/readouts.js";
       const r = canvas.getBoundingClientRect();
       const hit = legendHitAt(e.clientX - r.left, e.clientY - r.top);
       if (hit) {
-        setFrameVis(S.slot, hit, !curSlot().frameVis[hit]);
+        frameNav.setFrameVis(S.slot, hit, !curSlot().frameVis[hit]);
         e.preventDefault();
         return;
       }
@@ -280,7 +280,7 @@ import { toHexOf, updateReadouts } from "./render/readouts.js";
     const bit = e.target.closest(".bit");
     if (!bit) return;
     if (!focusEditable()) return;   // Z is derived — never editable
-    lfoStop();
+    controls.lfoStop();
     store.patch(() => {
       const j = toggleBit(editReg(), Number(bit.dataset.b));
       evaluate();
@@ -303,7 +303,7 @@ import { toHexOf, updateReadouts } from "./render/readouts.js";
     if (!Number.isInteger(j)) return;
 
     e.preventDefault();
-    lfoStop();
+    controls.lfoStop();
     store.patch(() => {
       const reg = editReg();
       const current = nibValue(reg, j);
@@ -347,146 +347,6 @@ import { toHexOf, updateReadouts } from "./render/readouts.js";
      hardware can never hold.
      ══════════════════════════════════════════════════════════ */
 
-  const lfoBtn = document.getElementById("lfoBtn");
-  const lfoModeSel = document.getElementById("lfoMode");
-  const lfoRateSel = document.getElementById("lfoRate");
-  const amountSel = document.getElementById("amount");
-  const lfoBSel = document.getElementById("lfoB");
-
-  function lfoBConfig(v = curSlot().lfoB) {
-    const frac = v === "q" ? 0.25 : v === "h" ? 0.5 : 0;
-    return { opp: v === "opp", off: Math.round(S.N * frac) };
-  }
-
-  function lfoStart() {
-    if (S.lfo.on) return;
-    if (S.lfo.mode === "csvStep" && (!DEMO.rows || !DEMO.rows.length)) return;
-    store.patch(() => {
-      const base = {};
-      for (const k of SLOT_KEYS) {
-        const sl = S.slots[k];
-        base[k] = { a: sl.A.bits.slice(), b: sl.B.bits.slice() };
-      }
-      S.lfo.base = base;
-      S.lfo.t = 0;
-      S.lfo.on = true;
-      S.lfoAcc = 0;
-      lfoBtn.setAttribute("aria-pressed", "true");
-    });
-  }
-
-  function lfoStop() {
-    if (!S.lfo.on) return;
-    store.patch(() => {
-      S.lfo.on = false;
-      lfoBtn.setAttribute("aria-pressed", "false");
-      const snap = S.lfo.base;
-      if (snap) {
-        if (S.lfo.mode !== "csvStep") {
-          for (const k of SLOT_KEYS) {
-            const sl = S.slots[k];
-            if (snap[k]) {
-              sl.A.bits = snap[k].a.slice();
-              sl.B.bits = snap[k].b.slice();
-            }
-            syncTarget(sl.A);
-            syncTarget(sl.B);
-          }
-          evaluate();
-        }
-        S.lfo.base = null;
-        renderStrip();
-        updateReadouts();
-      }
-    });
-  }
-
-  /* Rotate (wrapping) or truncate a snapshot by a SIGNED bit count. */
-  function sweepInto(reg, baseBits, bits, rotate) {
-    const N = S.N;
-    const out = new Uint8Array(N);
-    if (rotate) {
-      const sh = ((bits % N) + N) % N;
-      for (let i = 0; i < N; i++) out[(i + sh) % N] = baseBits[i];
-    } else {
-      for (let i = 0; i < N; i++) {
-        const d = i + bits;
-        if (d >= 0 && d < N) out[d] = baseBits[i];
-      }
-    }
-    reg.bits = out;
-  }
-
-  function lfoTick() {
-    if (S.lfo.mode === "csvStep") {
-      if (DEMO.rows && DEMO.rows.length) {
-        applyExample(DEMO.i + 1, false, true);
-      }
-      return;
-    }
-
-    const base = S.lfo.base;
-    if (!base) return;
-
-    store.patch(() => {
-      const k = Math.max(1, Number(amountSel.value) || 4);
-      const rotate = S.lfo.mode !== "slide";
-      S.lfo.t++;
-      const t = S.lfo.t;
-
-      let shift;
-      if (rotate) {
-        shift = t * k * (S.lfo.mode === "rotccw" ? -1 : 1);
-      } else {
-        const maxSteps = Math.max(1, Math.ceil(S.N / k));
-        const p = t % (2 * maxSteps);
-        shift = (p <= maxSteps ? p : 2 * maxSteps - p) * k;
-      }
-
-      for (const sk of SLOT_KEYS) {
-        const sl = S.slots[sk];
-        const sb = base[sk];
-        if (!sb) continue;
-        sweepInto(sl.A, sb.a, shift, rotate);
-        if (sl.showB) {
-          const cfg = lfoBConfig(sl.lfoB);
-          /* Counter-rotation is the only offset that makes Z *change shape*;
-             a fixed offset just slides a rigid pattern around the register. */
-          sweepInto(sl.B, sb.b, (cfg.opp ? -shift : shift) + cfg.off, rotate);
-        }
-        syncTarget(sl.A);
-        syncTarget(sl.B);
-      }
-
-      evaluate();
-      renderStrip();
-      updateReadouts();
-    });
-  }
-
-  lfoBtn.addEventListener("click", () => (S.lfo.on ? lfoStop() : lfoStart()));
-
-  lfoModeSel.addEventListener("change", () => {
-    store.patch(() => {
-      S.lfo.mode = lfoModeSel.value;
-      if (S.lfo.on) { S.lfo.t = 0; }      // restart the shape cleanly
-      syncEditUi();
-    });
-  });
-
-  lfoRateSel.addEventListener("change", () => {
-    store.patch(() => {
-      S.lfo.rate = Number(lfoRateSel.value) || 4;
-      S.lfoAcc = 0;
-    });
-  });
-
-  lfoBSel.addEventListener("change", () => {
-    store.patch(() => {
-      curSlot().lfoB = lfoBSel.value;
-    });
-  });
-
   function applyTable(name, reg = editReg()) {
     applyPreset(reg, name);
     commit();
@@ -498,73 +358,31 @@ import { toHexOf, updateReadouts } from "./render/readouts.js";
      src/state/actions.ts; the render module only calls them.
      ══════════════════════════════════════════════════════════ */
 
-  document.querySelectorAll("[data-op]").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      lfoStop();                       // a manual op takes the wheel back
-      const k = Number(document.getElementById("amount").value) || 4;
-      applyUnary(editReg(), btn.dataset.op, k);
-      commit();
-    });
-  });
-
-  document.querySelectorAll("[data-preset]").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      lfoStop();
-      applyTable(btn.dataset.preset);
-    });
-  });
-
-  /* ══════════════════════════════════════════════════════════
-     OPERAND B / BINARY LOGIC
-     B is enabled from the frame navigator (or a CSV B column / 3D).
-     ══════════════════════════════════════════════════════════ */
-
-  const logicGroup = document.getElementById("logicGroup");
-  const binopBtns = [...document.querySelectorAll("[data-binop]")];
-
-  function syncEditUi() {
-    logicGroup.hidden = !S.showB;
-    binopBtns.forEach((b) => {
-      b.hidden = !S.showB;
-      b.classList.toggle("on", b.dataset.binop === S.binop);
-      b.setAttribute("aria-pressed", String(b.dataset.binop === S.binop));
-    });
-    stripEl.dataset.edit = frameLabel();
-    if (hintEl) {
-      hintEl.textContent = focusEditable()
-        ? "drag a nibble · click a bit · scroll a hex"
-        : `${frameLabel()} is derived — read-only`;
-    }
-    lfoBSel.value = curSlot().lfoB;
-    lfoBSel.hidden = S.lfo.mode === "csvStep" || (!S.view3d && !S.showB);
-  }
-
-  /* The old "B" toggle's only unique capability was unpairing the second
-     operand. The navigator keeps that, without the ambiguous button. */
   function unpairB() {
     if (S.view3d) return;
     const sl = curSlot();
     if (!sl.showB) return;
-    lfoStop();
+    controls.lfoStop();
     store.patch(() => {
       unpair(sl);
       S.hoverReg = null;
       S.hoverJ = -1;
-      syncEditUi();
+      controls.syncEditUi();
       syncViewUi();
       evaluate();
       renderStrip();
       updateReadouts();
     });
-    if (!framesPanel.hidden) renderFramesPanel(S.slot);
-    else framesBtn.focus();
+    if (frameNav.isOpen()) frameNav.render(S.slot);
+    else frameNav.focusButton();
   }
 
+  const binopBtns = [...document.querySelectorAll("[data-binop]")];
   binopBtns.forEach((b) => {
     b.addEventListener("click", () => {
       store.patch(() => {
         setBinop(curSlot(), b.dataset.binop);
-        syncEditUi();
+        controls.syncEditUi();
         syncViewUi();
         evaluate();
         updateReadouts();
@@ -580,81 +398,29 @@ import { toHexOf, updateReadouts } from "./render/readouts.js";
   const slotSeg = document.getElementById("slotSeg");
   const splitBtn = document.getElementById("splitBtn");
   const copySlotBtn = document.getElementById("copySlotBtn");
-  const framesBtn = document.getElementById("framesBtn");
-  const framesPanel = document.getElementById("framesPanel");
-  const framesBody = document.getElementById("framesBody");
-  const framesLegend = document.getElementById("framesLegend");
-  const framesClose = document.getElementById("framesClose");
-  const unpairBBtn = document.getElementById("unpairB");
+  const frameNav = createFrameNavigator({
+    store,
+    selectSlot,
+    enableBOnSlot,
+    syncEditUi: (...args) => controls.syncEditUi(...args),
+    syncViewUi,
+    renderStrip,
+    updateReadouts,
+    unpairB,
+    slotExprText,
+  });
+
+  const stageBar = createStageBar({
+    element: document.getElementById("stageBar"),
+    selectSlot,
+    selectSlotInPane,
+    setSplitMode,
+    focusSplitPane,
+    slotExprText,
+  });
   const hintEl = document.getElementById("hint");
-  const stageBarEl = document.getElementById("stageBar");
 
-  const SVG_NS = "http://www.w3.org/2000/svg";
-  const FRAME_ORDER = ["a", "z", "b"];
 
-  let stageDom = null;
-
-  function buildStageBar() {
-    const makePane = (paneIdx) => {
-      const wrap = document.createElement("div");
-      wrap.className = "pane-head";
-      wrap.dataset.pane = String(paneIdx);
-
-      const dot = document.createElement("i");
-      dot.className = "focus-dot";
-      dot.title = "Focused lane (controls & strip edit this lane)";
-      wrap.appendChild(dot);
-
-      const seg = document.createElement("div");
-      seg.className = "seg mini";
-      const btns = {};
-      for (const k of SLOT_KEYS) {
-        const b = document.createElement("button");
-        b.type = "button";
-        b.className = "op";
-        b.dataset.slot = k;
-        b.textContent = laneLabel(k);
-        b.title = `Lane ${laneLabel(k)}`;
-        b.setAttribute("aria-label", `Lane ${laneLabel(k)}`);
-        b.addEventListener("click", (ev) => {
-          ev.stopPropagation();
-          if (S.split3d) selectSlotInPane(paneIdx, k);
-          else selectSlot(k);
-        });
-        seg.appendChild(b);
-        btns[k] = b;
-      }
-      wrap.appendChild(seg);
-
-      const expr = document.createElement("span");
-      expr.className = "stage-expr";
-      wrap.appendChild(expr);
-
-      const spBtn = document.createElement("button");
-      spBtn.type = "button";
-      spBtn.className = "op mini";
-      spBtn.textContent = "split";
-      spBtn.title = paneIdx === 0
-        ? "Split main 3D view into two side-by-side visualizers (Alt+S)"
-        : "Return to single 3D view (Alt+S)";
-      spBtn.addEventListener("click", (ev) => {
-        ev.stopPropagation();
-        setSplitMode(!S.split3d);
-      });
-      if (paneIdx === 0) wrap.insertBefore(spBtn, expr);
-      else wrap.appendChild(spBtn);
-
-      wrap.addEventListener("click", () => {
-        if (S.split3d) focusSplitPane(paneIdx);
-      });
-
-      stageBarEl.appendChild(wrap);
-      return { wrap, dot, btns, expr, spBtn };
-    };
-
-    stageBarEl.innerHTML = "";
-    stageDom = { p0: makePane(0), p1: makePane(1) };
-  }
 
   function slotExprText(sl, withViewPrefix) {
     const hasCsv = DEMO.rows.length > 0;
@@ -665,45 +431,6 @@ import { toHexOf, updateReadouts } from "./render/readouts.js";
     return `${prefix}${lhs} ${sym} ${rhs} \u2192 ${frameName(sl.key, "z")}`;
   }
 
-  function syncStageBar() {
-    if (!stageDom) return;
-    stageBarEl.hidden = !S.view3d;
-    if (!S.view3d) return;
-
-    const { p0, p1 } = stageDom;
-    stageBarEl.classList.toggle("is-split", S.split3d);
-
-    if (!S.split3d) {
-      const sl = curSlot();
-      p0.dot.hidden = true;
-      p0.wrap.classList.add("focused");
-      p0.spBtn.hidden = false;
-      p0.spBtn.setAttribute("aria-pressed", "false");
-      p0.spBtn.classList.remove("on");
-      for (const k of SLOT_KEYS) p0.btns[k].classList.toggle("on", k === S.slot);
-      p0.expr.textContent = slotExprText(sl, true);
-      p1.wrap.hidden = true;
-    } else {
-      const k0 = S.splitPair[0], k1 = S.splitPair[1];
-      p0.dot.hidden = false;
-      p0.spBtn.hidden = true;
-      p0.wrap.classList.toggle("focused", S.activePane === 0);
-      for (const k of SLOT_KEYS) p0.btns[k].classList.toggle("on", k === k0);
-      p0.expr.textContent = slotExprText(S.slots[k0], false);
-
-      p1.wrap.hidden = false;
-      p1.dot.hidden = false;
-      p1.spBtn.hidden = false;
-      p1.spBtn.setAttribute("aria-pressed", "true");
-      p1.spBtn.classList.add("on");
-      p1.wrap.classList.toggle("focused", S.activePane === 1);
-      for (const k of SLOT_KEYS) p1.btns[k].classList.toggle("on", k === k1);
-      p1.expr.textContent = slotExprText(S.slots[k1], false);
-    }
-  }
-
-  /* 3-D only means anything with two operands: A and B are the ends of the
-     wavetable, so the field view brings B into existence if it isn't there. */
   function enableBOnSlot(sl = curSlot()) {
     if (sl.showB) return;
     sl.showB = true;
@@ -720,12 +447,12 @@ import { toHexOf, updateReadouts } from "./render/readouts.js";
 
   function enableB() {
     enableBOnSlot(curSlot());
-    syncEditUi();
+    controls.syncEditUi();
   }
 
   function copySlotInto(srcKey, dstKey) {
     if (srcKey === dstKey) return;
-    lfoStop();
+    controls.lfoStop();
     const src = S.slots[srcKey];
     const dst = S.slots[dstKey];
     store.patch(() => {
@@ -739,9 +466,9 @@ import { toHexOf, updateReadouts } from "./render/readouts.js";
   function refreshActiveSlotUi() {
     S.hoverReg = null;
     S.hoverJ = -1;
-    syncEditUi();
+    controls.syncEditUi();
     syncViewUi();
-    renderDemoUi();
+    csv.renderUi();
     renderStrip();
     updateReadouts();
   }
@@ -844,7 +571,7 @@ import { toHexOf, updateReadouts } from "./render/readouts.js";
     canvas.classList.toggle("split-view", isSplit);
 
     hintEl.hidden = S.view3d;
-    syncStageBar();
+    stageBar.sync();
   }
 
   depthBtn.addEventListener("click", () => {
@@ -874,573 +601,28 @@ import { toHexOf, updateReadouts } from "./render/readouts.js";
      Pro-Q4-style lane/frame selection: static mini-curves, active lane
      expanded, click a frame to focus it. No animation, no new state. */
 
-  function previewPoints(reg) {
-    const vals = reg.target;
-    if (!vals || vals.length === 0) return "";
-    const w = 96;
-    const h = 24;
-    const pad = 2;
-    const xs = vals.map((_, j) => (vals.length === 1 ? w / 2 : (j / (vals.length - 1)) * w));
-    const ys = vals.map((v) => h - pad - (v / 15) * (h - pad * 2));
-    const sp = buildSpline(xs, ys);
-    const pts = [];
-    for (let i = 0; i <= 48; i++) {
-      const x = (i / 48) * w;
-      pts.push(`${x.toFixed(1)},${evalSpline(sp, x).toFixed(1)}`);
-    }
-    return pts.join(" ");
-  }
-
-  function makePreview(reg, frame) {
-    const svg = document.createElementNS(SVG_NS, "svg");
-    svg.setAttribute("class", `frame-preview ${frame}`);
-    svg.setAttribute("viewBox", "0 0 96 24");
-    svg.setAttribute("preserveAspectRatio", "none");
-    svg.setAttribute("aria-hidden", "true");
-    const line = document.createElementNS(SVG_NS, "polyline");
-    line.setAttribute("points", previewPoints(reg));
-    svg.appendChild(line);
-    return svg;
-  }
-
-  const frameReg = (sl, frame) => (frame === "a" ? sl.A : frame === "b" ? sl.B : sl.Z);
-  const frameSub = (frame) => (frame === "z" ? "derived" : "operand");
-
-  function frameVisLabel(laneKey, frame) {
-    const visible = S.slots[laneKey].frameVis[frame];
-    return `${visible ? "Hide" : "Show"} frame ${frameName(laneKey, frame)} in the 2D view`;
-  }
-
-  function makeEyeButton(laneKey, frame) {
-    const sl = S.slots[laneKey];
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.className = "eye-btn" + (sl.frameVis[frame] ? "" : " is-hidden");
-    btn.setAttribute("aria-pressed", String(sl.frameVis[frame]));
-    btn.setAttribute("aria-label", frameVisLabel(laneKey, frame));
-    btn.title = frameVisLabel(laneKey, frame);
-    if (S.view3d) {
-      btn.disabled = true;
-      btn.setAttribute("aria-label", "2D visibility only");
-      btn.title = "2D visibility only";
-    }
-
-    const svg = document.createElementNS(SVG_NS, "svg");
-    svg.setAttribute("viewBox", "0 0 16 16");
-    svg.setAttribute("aria-hidden", "true");
-    const eye = document.createElementNS(SVG_NS, "path");
-    eye.setAttribute("d", "M1.5 8C4.3 3.8 11.7 3.8 14.5 8C11.7 12.2 4.3 12.2 1.5 8Z");
-    const pupil = document.createElementNS(SVG_NS, "circle");
-    pupil.setAttribute("cx", "8");
-    pupil.setAttribute("cy", "8");
-    pupil.setAttribute("r", "2.6");
-    const slash = document.createElementNS(SVG_NS, "path");
-    slash.setAttribute("class", "eye-slash");
-    slash.setAttribute("d", "M2.5 13.5L13.5 2.5");
-    svg.append(eye, pupil, slash);
-    btn.appendChild(svg);
-
-    btn.addEventListener("click", (ev) => {
-      ev.stopPropagation();
-      setFrameVis(laneKey, frame, !S.slots[laneKey].frameVis[frame]);
-    });
-    return btn;
-  }
-
-  function setFrameVis(laneKey, frame, visible) {
-    const sl = S.slots[laneKey];
-    if (sl.frameVis[frame] !== visible) {
-      store.patch(() => toggleFrameVisibility(sl, frame));
-    }
-    if (framesPanel.hidden) return;
-    const row = framesBody.querySelector(`.frame-row[data-frame="${frame}"]`);
-    if (!row) return;
-    row.classList.toggle("is-hidden", !visible);
-    const eye = row.querySelector(".eye-btn");
-    if (eye) {
-      eye.classList.toggle("is-hidden", !visible);
-      eye.setAttribute("aria-pressed", String(visible));
-      eye.setAttribute("aria-label", frameVisLabel(laneKey, frame));
-      eye.title = frameVisLabel(laneKey, frame);
-    }
-  }
-
-  function buildFrameRow(laneKey, frame) {
-    const sl = S.slots[laneKey];
-    const reg = frameReg(sl, frame);
-    const name = frameName(laneKey, frame);
-    const active = laneKey === S.slot && focusKey(sl) === frame;
-
-    const row = document.createElement("div");
-    row.className = "frame-row" + (active ? " is-active" : "") + (sl.frameVis[frame] ? "" : " is-hidden");
-    row.dataset.frame = frame;
-
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.className = "frame-btn";
-    const focused = active ? ", focused" : "";
-    btn.setAttribute("aria-label", `Lane ${laneLabel(laneKey)} frame ${name}, ${frameSub(frame)}${focused}`);
-    btn.title = `Lane ${laneLabel(laneKey)} · ${name} (${frameSub(frame)})`;
-
-    const label = document.createElement("span");
-    label.className = "frame-label";
-    const swatch = document.createElement("span");
-    swatch.className = "frame-swatch";
-    const glyph = document.createElement("span");
-    glyph.className = "frame-glyph";
-    glyph.textContent = name;
-    const sub = document.createElement("span");
-    sub.className = "frame-sub";
-    sub.textContent = frameSub(frame);
-    label.append(swatch, glyph, sub);
-    btn.appendChild(label);
-
-    btn.appendChild(makePreview(reg, frame));
-
-    const hex = document.createElement("span");
-    hex.className = "frame-hex";
-    hex.textContent = toHexOf(reg);
-    hex.title = toHexOf(reg);
-    btn.appendChild(hex);
-
-    btn.addEventListener("click", () => selectFrame(laneKey, frame));
-    row.append(btn, makeEyeButton(laneKey, frame));
-    return row;
-  }
-
-  function buildLaneButton(laneKey) {
-    const sl = S.slots[laneKey];
-    const expanded = laneKey === S.slot;
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.className = "lane-btn";
-    btn.dataset.lane = laneKey;
-    btn.setAttribute("aria-expanded", String(expanded));
-    btn.setAttribute("aria-label", `Lane ${laneLabel(laneKey)}${expanded ? ", expanded" : ""}`);
-    const num = document.createElement("span");
-    num.className = "lane-num";
-    num.textContent = `LANE ${laneLabel(laneKey)}`;
-    const meta = document.createElement("span");
-    meta.className = "lane-meta";
-    meta.textContent = slotExprText(sl, false);
-    btn.append(num, meta);
-    btn.addEventListener("click", () => {
-      S.copyArmed = false;
-      if (S.slot !== laneKey) selectSlot(laneKey);
-      renderFramesPanel(laneKey);
-    });
-    return btn;
-  }
-
-  function renderFramesPanel(focusLane) {
-    framesBody.textContent = "";
-    for (const laneKey of SLOT_KEYS) {
-      framesBody.appendChild(buildLaneButton(laneKey));
-      if (laneKey !== S.slot) continue;
-      for (const frame of FRAME_ORDER) framesBody.appendChild(buildFrameRow(laneKey, frame));
-    }
-    const sl = curSlot();
-    const fa = frameName(sl.key, "a");
-    const fb = frameName(sl.key, "b");
-    const fz = frameName(sl.key, "z");
-    if (framesLegend) framesLegend.textContent = `${fa} solid · ${fz} glow · ${fb} dashed`;
-    unpairBBtn.textContent = `unpair ${fb}`;
-    unpairBBtn.title = `Remove operand ${fb} from this lane`;
-    unpairBBtn.hidden = !sl.showB || S.view3d;
-    if (focusLane) {
-      const head = framesBody.querySelector(`.lane-btn[data-lane="${focusLane}"]`);
-      if (head) head.focus();
-    }
-  }
-
-  function openFrames() {
-    store.patch(() => {
-      S.copyArmed = false;
-      syncViewUi();
-      renderFramesPanel();
-    });
-    framesPanel.hidden = false;
-    framesBtn.setAttribute("aria-expanded", "true");
-    const first =
-      framesPanel.querySelector(".frame-row.is-active .frame-btn") ||
-      framesPanel.querySelector(".frame-btn") ||
-      framesClose;
-    first.focus();
-  }
-
-  function closeFrames(returnFocus) {
-    if (framesPanel.hidden) return;
-    framesPanel.hidden = true;
-    framesBtn.setAttribute("aria-expanded", "false");
-    if (returnFocus) framesBtn.focus();
-  }
-
-  /* Focus, not navigation: clicking a frame shows it in the strip and
-     readouts without leaving the current view (2-D or 3-D). Operands stay
-     editable; Z is a read-only lens (DESIGN §10.8). */
-  function selectFrame(laneKey, frame) {
-    S.copyArmed = false;
-    store.patch(() => {
-      if (!S.slots[laneKey].frameVis[frame]) toggleFrameVisibility(S.slots[laneKey], frame);
-      if (S.slot !== laneKey) selectSlot(laneKey);
-      const sl = curSlot();
-      if (frame !== "a" && !sl.showB) enableBOnSlot(sl);
-      setFocus(sl, frame);
-      S.hoverReg = null;
-      S.hoverJ = -1;
-      syncEditUi();
-      syncViewUi();
-      renderStrip();
-      updateReadouts();
-    });
-    if (!framesPanel.hidden) {
-      renderFramesPanel();
-      const focusedBtn = framesBody.querySelector(`.frame-row[data-frame="${frame}"] .frame-btn`);
-      if (focusedBtn) focusedBtn.focus();
-    }
-  }
-
-  framesBtn.addEventListener("click", () => {
-    if (framesPanel.hidden) openFrames();
-    else closeFrames(true);
-  });
-  framesClose.addEventListener("click", () => closeFrames(true));
-  unpairBBtn.addEventListener("click", unpairB);
-
-  document.addEventListener("pointerdown", (e) => {
-    if (framesPanel.hidden) return;
-    if (framesPanel.contains(e.target) || e.target === framesBtn) return;
-    closeFrames(false);
-  });
-
-  /* ══════════════════════════════════════════════════════════
-     REGISTER SIZE
-     ══════════════════════════════════════════════════════════ */
-
-  const sizeInput = document.getElementById("size");
-  const sizeOut = document.getElementById("sizeOut");
-
-  function syncSizeLabel() {
-    sizeOut.textContent = `${S.N} bits · ${nibCount()} nibbles`;
-  }
-
-  sizeInput.addEventListener("input", () => {
-    const idx = Number(sizeInput.value);
-    resizeRegister(SIZES[idx]);
-    syncSizeLabel();
-  });
-
-  /* ══════════════════════════════════════════════════════════
-     CSV EXAMPLES
-     Load a CSV/TSV, pick columns per view slot, and step through rows
-     like slides. Columns are classified per-column, because "1011" is
-     binary in a flags column and hex in an id column.
-
-     Values are RIGHT-aligned into the register (padded with zeros on
-     the left) so a cell's numeric value is preserved: 0xDEAD in a
-     64-bit register is 0x000000000000DEAD.
-     ══════════════════════════════════════════════════════════ */
-
-  const csvBtn = document.getElementById("csvBtn");
-  const csvFile = document.getElementById("csvFile");
-  const stepSeg = document.getElementById("stepSeg");
-  const exCount = document.getElementById("exCount");
-  const colAWrap = document.getElementById("colAWrap");
-  const colBWrap = document.getElementById("colBWrap");
-  const colASel = document.getElementById("colA");
-  const colBSel = document.getElementById("colB");
-  const prevEx = document.getElementById("prevEx");
-  const nextEx = document.getElementById("nextEx");
-  const obsSeg = document.getElementById("obsSeg");
-  const obsCount = document.getElementById("obsCount");
-  const logObsBtn = document.getElementById("logObsBtn");
-  const exportObsBtn = document.getElementById("exportObsBtn");
-  const observations = [];
-
-  const escHtml = (s) =>
-    String(s == null ? "" : s)
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;")
-      .replace(/"/g, "&quot;");
-
-  /* Minimal RFC4180 reader: quoted fields, doubled quotes, CRLF, and
-     comma-or-tab chosen by whichever appears more in the first line. */
-  function writeBitsInto(reg, arr) {
-    reg.bits = alignBits(arr, S.N);
-  }
-
-  function fitToMappedColumns() {
-    let maxBits = 8;
-    for (const k of SLOT_KEYS) {
-      const sl = S.slots[k];
-      if (sl.colA >= 0) maxBits = Math.max(maxBits, columnWidth(DEMO.rows, sl.colA));
-      if (sl.colB >= 0) maxBits = Math.max(maxBits, columnWidth(DEMO.rows, sl.colB));
-    }
-    let want = SIZES[0];
-    for (const s of SIZES) { want = s; if (s >= maxBits) break; }
-    if (want !== S.N) {
-      resizeRegister(want);
-      sizeInput.value = String(SIZES.indexOf(want));
-      syncSizeLabel();
-    }
-  }
-
-  function refreshColumnSelects() {
-    const opts = `<option value="-1">—</option>` +
-      DEMO.cols.map((c, i) => `<option value="${i}">${escHtml(c)}</option>`).join("");
-    colASel.innerHTML = opts;
-    colBSel.innerHTML = opts;
-    const sl = curSlot();
-    colASel.value = String(sl.colA);
-    colBSel.value = String(sl.colB);
-  }
-
-  function applyExample(idx, instant, keepLfo = false) {
-    if (!DEMO.rows.length) return;
-    store.patch(() => {
-      if (!framesPanel.hidden) closeFrames(false);
-      if (!keepLfo) lfoStop();
-      const n = DEMO.rows.length;
-      DEMO.i = ((idx % n) + n) % n;
-      const row = DEMO.rows[DEMO.i];
-
-      for (const k of SLOT_KEYS) {
-        const sl = S.slots[k];
-        if (sl.colA >= 0) {
-          const a = cellToBits(row[sl.colA], columnMode(DEMO.rows, sl.colA));
-          if (a) writeBitsInto(sl.A, a);
-          syncTarget(sl.A, instant === true);
-        }
-        if (sl.colB >= 0) {
-          const b = cellToBits(row[sl.colB], columnMode(DEMO.rows, sl.colB));
-          if (b) {
-            writeBitsInto(sl.B, b);
-            sl.seededB = true;
-          }
-          syncTarget(sl.B, instant === true);
-        }
-      }
-
-      evaluate(instant === true);
-      renderStrip();
-      updateReadouts();
-      syncViewUi();
-      renderDemoUi();
-    });
-  }
-
-  function renderDemoUi() {
-    const loaded = DEMO.rows.length > 0;
-    [stepSeg, exCount, colAWrap, colBWrap, obsSeg, obsCount].forEach((el) => { if (el) el.hidden = !loaded; });
-    if (!loaded) return;
-    const sl = curSlot();
-    exCount.textContent = `${DEMO.i + 1} / ${DEMO.rows.length}`;
-    colASel.value = String(sl.colA);
-    colBSel.value = String(sl.colB);
-    if (obsCount) obsCount.textContent = `${observations.length} obs`;
-  }
-
-  function logCurrentObservation() {
-    const exName = (DEMO.rows.length && DEMO.rows[DEMO.i] && DEMO.rows[DEMO.i][0]) || `ex_${DEMO.i + 1}`;
-    const hexA = toHexOf(S.A);
-    const hexB = S.showB ? toHexOf(S.B) : "";
-    const hexZ = S.showB ? toHexOf(S.Z) : "";
-    let popZ = 0;
-    if (S.showB) {
-      for (let i = 0; i < S.N; i++) popZ += S.Z.bits[i];
-    }
-
-    let c00 = 0, c01 = 0, c10 = 0, c11 = 0;
-    if (S.showB) {
-      for (let i = 0; i < S.N; i++) {
-        const a = S.A.bits[i], b = S.B.bits[i];
-        if (!a && !b) c00++;
-        else if (!a && b) c01++;
-        else if (a && !b) c10++;
-        else c11++;
-      }
-    }
-
-    const obs = {
-      timestamp: new Date().toISOString(),
-      view: laneLabel(S.slot),
-      index: DEMO.i + 1,
-      name: exName,
-      width_bits: S.N,
-      op: S.showB ? S.binop : "none",
-      hex_A: hexA,
-      hex_B: hexB,
-      hex_Z: hexZ,
-      pop_Z: popZ,
-      count_00: c00,
-      count_01: c01,
-      count_10: c10,
-      count_11: c11
-    };
-
-    observations.push(obs);
-    if (obsCount) obsCount.textContent = `${observations.length} obs`;
-  }
-
-  function exportObservationsCSV() {
-    if (!observations.length) return;
-    const keys = Object.keys(observations[0]);
-    const header = keys.join(",");
-    const lines = observations.map(o => keys.map(k => `"${String(o[k]).replace(/"/g, '""')}"`).join(","));
-    const blob = new Blob([[header, ...lines].join("\n")], { type: "text/csv;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `bitwave_observations_${Date.now()}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
-  }
-
-  if (logObsBtn) logObsBtn.addEventListener("click", logCurrentObservation);
-  if (exportObsBtn) exportObsBtn.addEventListener("click", exportObservationsCSV);
-
-  function loadCSV(text) {
-    const rows = parseDelimited(text).filter((r) => r.some((c) => normCell(c) !== ""));
-    if (rows.length < 1) return;
-
-    const hasHeader = !isDataRow(rows[0]);
-    const cols = hasHeader
-      ? rows[0].map((c, i) => String(c).trim() || `col${i + 1}`)
-      : rows[0].map((_, i) => `col${i + 1}`);
-    const body = hasHeader ? rows.slice(1) : rows;
-    if (!body.length) return;
-
-    DEMO.cols = cols;
-    DEMO.rows = body;
-    DEMO.i = 0;
-
-    /* Default to the WIDEST token column, not the first: id/label columns
-       are often present and the payload is what you want to see. */
-    const widths = cols.map((_, ci) => columnWidth(DEMO.rows, ci));
-    let best = -1, bestW = -1;
-    for (let ci = 0; ci < cols.length; ci++) {
-      if (widths[ci] > bestW) { bestW = widths[ci]; best = ci; }
-    }
-    const primary = bestW > 0 ? best : 0;
-
-    /* Collect payload-grade columns so Views B & C pre-route extra columns
-       automatically for instant multi-column / side-by-side comparison. */
-    const minPayload = Math.max(8, Math.floor(bestW / 2));
-    let payload = [];
-    for (let ci = 0; ci < cols.length; ci++) {
-      if (widths[ci] >= minPayload) payload.push(ci);
-    }
-    if (!payload.length) {
-      for (let ci = 0; ci < cols.length; ci++) if (widths[ci] > 0) payload.push(ci);
-    }
-    if (!payload.length) payload = [primary];
-
-    const rest = payload.filter((c) => c !== primary);
-    const ordered = [primary, ...rest];
-
-    const slA = S.slots.A, slB = S.slots.B, slC = S.slots.C;
-    slA.colA = primary;
-    slA.colB = (S.view3d || slA.showB) && ordered.length >= 2 ? ordered[1] : -1;
-
-    if (ordered.length >= 4) {
-      const off = slA.colB >= 0 ? 2 : 1;
-      slB.colA = ordered[off] ?? ordered[0];
-      slB.colB = ordered[off + 1] ?? ordered[1];
-      slB.showB = true;
-      slC.colA = ordered[off + 2] ?? ordered[0];
-      slC.colB = ordered[off + 3] ?? ordered[ordered.length - 1];
-      slC.showB = true;
-    } else if (ordered.length === 3) {
-      slB.colA = slA.colB >= 0 ? ordered[0] : ordered[1];
-      slB.colB = ordered[2];
-      slB.showB = true;
-      slC.colA = ordered[1];
-      slC.colB = ordered[2];
-      slC.showB = true;
-    } else if (ordered.length === 2) {
-      slB.colA = ordered[0];
-      slB.colB = ordered[1];
-      slB.showB = true;
-      if (slB.binop === slA.binop) slB.binop = "and";
-      slC.colA = ordered[1];
-      slC.colB = ordered[0];
-      slC.showB = true;
-    } else {
-      slB.colA = primary; slB.colB = -1;
-      slC.colA = primary; slC.colB = -1;
-    }
-
-    fitToMappedColumns();
-    refreshColumnSelects();
-    applyExample(0, true);
-  }
-
-  csvBtn.addEventListener("click", () => csvFile.click());
-
-  csvFile.addEventListener("change", () => {
-    const f = csvFile.files && csvFile.files[0];
-    if (!f) return;
-    const rd = new FileReader();
-    rd.onload = () => loadCSV(String(rd.result || ""));
-    rd.readAsText(f);
-    csvFile.value = "";
-  });
-
-  prevEx.addEventListener("click", () => applyExample(DEMO.i - 1));
-  nextEx.addEventListener("click", () => applyExample(DEMO.i + 1));
-
-  colASel.addEventListener("change", () => {
-    curSlot().colA = Number(colASel.value);
-    fitToMappedColumns();
-    refreshColumnSelects();
-    applyExample(DEMO.i, true);
-  });
-
-  colBSel.addEventListener("change", () => {
-    const sl = curSlot();
-    sl.colB = Number(colBSel.value);
-    if (sl.colB >= 0 && !sl.showB) enableB();
-    fitToMappedColumns();
-    refreshColumnSelects();
-    applyExample(DEMO.i);
+  const csv = createCsvImport({
+    store,
+    resizeRegister,
+    lfoStop: (...args) => controls.lfoStop(...args),
+    enableB,
+    frameNav,
+    syncViewUi,
+    renderStrip,
+    updateReadouts,
   });
 
   /* Keyboard shortcuts: Alt+1/2/3 switch views, Alt+S toggles split,
      and Arrow keys step CSV examples when focus isn't in a control. */
-  document.addEventListener("keydown", (e) => {
-    if (e.key === "Escape" && !framesPanel.hidden) {
-      closeFrames(true);
-      e.preventDefault();
-      return;
-    }
-    if (e.key === "Escape" && S.copyArmed) {
-      S.copyArmed = false;
-      syncViewUi();
-      e.preventDefault();
-      return;
-    }
-    if (e.altKey && !e.ctrlKey && !e.metaKey) {
-      if (e.key === "1" || e.code === "Digit1") { selectSlot("A"); if (!framesPanel.hidden) renderFramesPanel(); e.preventDefault(); return; }
-      if (e.key === "2" || e.code === "Digit2") { selectSlot("B"); if (!framesPanel.hidden) renderFramesPanel(); e.preventDefault(); return; }
-      if (e.key === "3" || e.code === "Digit3") { selectSlot("C"); if (!framesPanel.hidden) renderFramesPanel(); e.preventDefault(); return; }
-      if (e.key === "s" || e.key === "S" || e.code === "KeyS") { setSplitMode(!(S.view3d && S.split3d)); e.preventDefault(); return; }
-    }
-    if (!DEMO.rows.length) return;
-    if (/^(INPUT|SELECT|TEXTAREA)$/.test((e.target && e.target.tagName) || "")) return;
-    if (e.key === "ArrowRight") { applyExample(DEMO.i + 1); e.preventDefault(); }
-    else if (e.key === "ArrowLeft") { applyExample(DEMO.i - 1); e.preventDefault(); }
-  });
-
-  /* Drop a file anywhere. */
-  document.addEventListener("dragover", (e) => e.preventDefault());
-  document.addEventListener("drop", (e) => {
-    e.preventDefault();
-    const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
-    if (!f) return;
-    const rd = new FileReader();
-    rd.onload = () => loadCSV(String(rd.result || ""));
-    rd.readAsText(f);
+  attachKeyboard({
+    applyExample: csv.applyExample,
+    loadCSV: csv.loadCSV,
+    frameNav,
+    syncViewUi,
+    selectSlot,
+    setSplitMode,
+    S,
+    DEMO,
   });
 
   /* ══════════════════════════════════════════════════════════
@@ -1473,7 +655,7 @@ import { toHexOf, updateReadouts } from "./render/readouts.js";
       let guard = 0;
       while (S.lfoAcc >= interval && guard++ < 6) {
         S.lfoAcc -= interval;
-        lfoTick();
+        controls.lfoTick();
       }
     }
 
@@ -1512,9 +694,9 @@ import { toHexOf, updateReadouts } from "./render/readouts.js";
     }
     evaluate(true);
 
-    buildStageBar();
-    syncSizeLabel();
-    syncEditUi();
+    stageBar.build();
+    controls.syncSizeLabel();
+    controls.syncEditUi();
     syncViewUi();
     renderStrip();
     updateReadouts();

@@ -10,7 +10,9 @@
 
 **Actions/routing update 2026-11-06 (D21):** `src/state/actions.ts` owns the commands and delegates unary ops/presets to `src/core/ops.ts`; `src/state/routing.ts` maps the app slots onto a core `LaneMap` (shared registers) and `evaluate()` runs the core `evaluateAll()` in the transaction. All register writers are wrapped in `store.patch`, and `tests/actions.test.ts` proves a core route reaches the app tree and unroutes byte-identically. Remaining for F2: the render/ui split and the view-state writers.
 
-**Render update 2026-11-06 (D22):** the render layer is now `src/render/canvas.js` (2-D curve, 3-D field, legend, `fitCanvas`/`--pad`), `src/render/strip.js` and `src/render/readouts.js`; spline and CSV maths come from `src/core`, and the dataset singleton is `src/state/dataset.ts`. View-state writers are transaction-wrapped. The UI layer (stage bar, navigator, controls, keyboard) remains in `src/main.js` and is the last F2 split.
+**Render update 2026-11-06 (D22):** the render layer is now `src/render/canvas.js` (2-D curve, 3-D field, legend, `fitCanvas`/`--pad`), `src/render/strip.js` and `src/render/readouts.js`; spline and CSV maths come from `src/core`, and the dataset singleton is `src/state/dataset.ts`. View-state writers are transaction-wrapped.
+
+**UI update 2026-11-06 (D23):** `src/ui/` now holds the frame navigator, stage bar, CSV import/stepper, keyboard map and the controls + LFO, and `src/io/observations.js` holds the logger. `main.js` is down to 843 lines: composition, pointer input, lane/view controllers, loop/boot and the agent surface. Remaining F2 work is extracting those two controllers; F3 (the source table) can start now because the spine is complete.
 
 Governing constraints: `DESIGN.md` is the visual source of truth, no new hue is introduced below, and §11 (lines 419–437) must pass after every phase.
 
