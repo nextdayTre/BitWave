@@ -17,13 +17,13 @@ import type {
   MixOp,
   OperandKey,
   Route,
-  SlotKey,
-  SlotMap,
+  LaneKey,
+  LaneMap,
   SourcePort,
 } from "./types.ts";
-import { SLOT_KEYS } from "./types.ts";
+import { LANE_KEYS } from "./types.ts";
 import { fromHex, toHex } from "./registers.ts";
-import { makeBootSlots } from "./slots.ts";
+import { makeBootLanes } from "./lanes.ts";
 import { evaluateAll, markDelays, createRouting, type RoutingState } from "./routing.ts";
 import type { Dataset } from "./csv.ts";
 
@@ -47,7 +47,7 @@ export interface ProjectRoute {
   mix: MixOp;
 }
 
-export interface ProjectSlot {
+export interface ProjectLane {
   a: string;
   b: string;
   showB: boolean;
@@ -60,10 +60,10 @@ export interface ProjectSlot {
 }
 
 export interface ProjectViewState {
-  slot: SlotKey;
+  lane: LaneKey;
   view3d: boolean;
   split3d: boolean;
-  splitPair: [SlotKey, SlotKey];
+  splitPair: [LaneKey, LaneKey];
   activePane: 0 | 1;
 }
 
@@ -73,9 +73,9 @@ export interface ProjectDoc {
   savedAt: string;
   N: number;
   view: ProjectViewState;
-  slots: Record<SlotKey, ProjectSlot>;
+  lanes: Record<LaneKey, ProjectLane>;
   routes: ProjectRoute[];
-  /** Destination port key ("A:a") -> pre-patch bits as hex. */
+  /** Destination port key ("1:a") -> pre-patch bits as hex. */
   parked: Record<string, string>;
   dataset?: Dataset;
 }
@@ -83,47 +83,47 @@ export interface ProjectDoc {
 const BINOPS: readonly BinOp[] = ["and", "or", "xor", "add", "sub"];
 const MIXES: readonly MixOp[] = ["set", "add", "xor"];
 
-export const portString = (slot: SlotKey, frame: FrameKey): string => `${slot}.${frame}`;
+export const portString = (lane: LaneKey, frame: FrameKey): string => `${lane}.${frame}`;
 
-export function parsePort(text: string, allowZ: boolean): { slot: SlotKey; frame: FrameKey } {
-  const m = /^([ABC])\.([abz])$/.exec(text);
+export function parsePort(text: string, allowZ: boolean): { lane: LaneKey; frame: FrameKey } {
+  const m = /^([123])\.([abz])$/.exec(text);
   if (!m) throw new ProjectError("malformed", `bad port reference: ${JSON.stringify(text)}`);
-  const slot = m[1] as SlotKey;
+  const lane = m[1] as LaneKey;
   const frame = m[2] as FrameKey;
   if (!allowZ && frame === "z") {
     throw new ProjectError("malformed", `Z cannot be a destination: ${text}`);
   }
-  return { slot, frame };
+  return { lane, frame };
 }
 
 export function serializeProject(
-  slots: SlotMap,
+  lanes: LaneMap,
   routing: RoutingState,
   N: number,
   view: ProjectViewState,
   dataset: Dataset | null = null,
   now: string = new Date().toISOString(),
 ): ProjectDoc {
-  const slotDocs = {} as Record<SlotKey, ProjectSlot>;
-  for (const key of SLOT_KEYS) {
-    const slot = slots[key];
-    slotDocs[key] = {
-      a: toHex(slot.A.bits, N),
-      b: toHex(slot.B.bits, N),
-      showB: slot.showB,
-      binop: slot.binop,
-      edit: slot.edit,
-      seededB: slot.seededB,
-      lfoB: slot.lfoB,
-      colA: slot.colA,
-      colB: slot.colB,
+  const laneDocs = {} as Record<LaneKey, ProjectLane>;
+  for (const key of LANE_KEYS) {
+    const lane = lanes[key];
+    laneDocs[key] = {
+      a: toHex(lane.A.bits, N),
+      b: toHex(lane.B.bits, N),
+      showB: lane.showB,
+      binop: lane.binop,
+      edit: lane.edit,
+      seededB: lane.seededB,
+      lfoB: lane.lfoB,
+      colA: lane.colA,
+      colB: lane.colB,
     };
   }
 
   const parked: Record<string, string> = {};
   for (const [key, bits] of routing.parked) {
-    const [slot, frame] = key.split(":");
-    parked[portString(slot as SlotKey, frame as FrameKey)] = toHex(bits, N);
+    const [lane, frame] = key.split(":");
+    parked[portString(lane as LaneKey, frame as FrameKey)] = toHex(bits, N);
   }
 
   const doc: ProjectDoc = {
@@ -132,10 +132,10 @@ export function serializeProject(
     savedAt: now,
     N,
     view,
-    slots: slotDocs,
+    lanes: laneDocs,
     routes: routing.routes.map((r) => ({
-      from: portString(r.from.slot, r.from.frame),
-      to: portString(r.to.slot, r.to.frame),
+      from: portString(r.from.lane, r.from.frame),
+      to: portString(r.to.lane, r.to.frame),
       mix: r.mix,
     })),
     parked,
@@ -170,7 +170,7 @@ function requireIndex(value: unknown, where: string): number {
  * returned engine state is immediately consistent. Throws ProjectError.
  */
 export function deserializeProject(doc: unknown): {
-  slots: SlotMap;
+  lanes: LaneMap;
   routing: RoutingState;
   N: number;
   view: ProjectViewState;
@@ -192,22 +192,22 @@ export function deserializeProject(doc: unknown): {
   const N = requireIndex(d.N, "N");
   if (!(N >= 8 && N <= 256 && N % 8 === 0)) throw new ProjectError("malformed", `unsupported width: ${N}`);
 
-  if (typeof d.slots !== "object" || d.slots === null) throw new ProjectError("malformed", "missing slots");
-  const slots = makeBootSlots(N); // defaults for fields a document may omit
-  for (const key of SLOT_KEYS) {
-    const s = (d.slots as Record<string, Partial<ProjectSlot>>)[key];
-    if (!s) throw new ProjectError("malformed", `missing slot ${key}`);
-    const slot = slots[key];
-    slot.A.bits = requireHex(s.a, N, `slots.${key}.a`);
-    slot.B.bits = requireHex(s.b, N, `slots.${key}.b`);
-    slot.showB = requireBool(s.showB, `slots.${key}.showB`);
-    if (!BINOPS.includes(s.binop as BinOp)) throw new ProjectError("malformed", `slots.${key}.binop`);
-    slot.binop = s.binop as BinOp;
-    slot.edit = s.edit === "b" ? "b" : "a";
-    slot.seededB = s.seededB === true;
-    slot.lfoB = typeof s.lfoB === "string" ? s.lfoB : "0";
-    slot.colA = requireIndex(s.colA, `slots.${key}.colA`);
-    slot.colB = requireIndex(s.colB, `slots.${key}.colB`);
+  if (typeof d.lanes !== "object" || d.lanes === null) throw new ProjectError("malformed", "missing lanes");
+  const lanes = makeBootLanes(N); // defaults for fields a document may omit
+  for (const key of LANE_KEYS) {
+    const s = (d.lanes as Record<string, Partial<ProjectLane>>)[key];
+    if (!s) throw new ProjectError("malformed", `missing lane ${key}`);
+    const lane = lanes[key];
+    lane.A.bits = requireHex(s.a, N, `lanes.${key}.a`);
+    lane.B.bits = requireHex(s.b, N, `lanes.${key}.b`);
+    lane.showB = requireBool(s.showB, `lanes.${key}.showB`);
+    if (!BINOPS.includes(s.binop as BinOp)) throw new ProjectError("malformed", `lanes.${key}.binop`);
+    lane.binop = s.binop as BinOp;
+    lane.edit = s.edit === "b" ? "b" : "a";
+    lane.seededB = s.seededB === true;
+    lane.lfoB = typeof s.lfoB === "string" ? s.lfoB : "0";
+    lane.colA = requireIndex(s.colA, `lanes.${key}.colA`);
+    lane.colB = requireIndex(s.colB, `lanes.${key}.colB`);
   }
 
   const routing = createRouting();
@@ -221,40 +221,40 @@ export function deserializeProject(doc: unknown): {
     const to = parsePort(r.to, false);
     const mix: MixOp = MIXES.includes(r.mix as MixOp) ? (r.mix as MixOp) : "set";
     const route: Route = {
-      id: `${from.slot}.${from.frame}>${to.slot}.${to.frame}`,
-      from: { slot: from.slot, frame: from.frame } as SourcePort,
-      to: { slot: to.slot, frame: to.frame } as DestinationPort,
+      id: `${from.lane}.${from.frame}>${to.lane}.${to.frame}`,
+      from: { lane: from.lane, frame: from.frame } as SourcePort,
+      to: { lane: to.lane, frame: to.frame } as DestinationPort,
       delay: false,
       mix,
     };
-    if (routing.routes.some((x) => x.to.slot === route.to.slot && x.to.frame === route.to.frame)) {
-      throw new ProjectError("malformed", `two cables drive ${r.to}`);
+    if (routing.routes.some((x) => x.to.lane === route.to.lane && x.to.frame === route.to.frame)) {
+      throw new ProjectError("malformed", `two routes drive ${r.to}`);
     }
     routing.routes.push(route);
   }
 
   for (const [key, value] of Object.entries(d.parked ?? {})) {
     const port = parsePort(key, false);
-    if (!routing.routes.some((r) => r.to.slot === port.slot && r.to.frame === port.frame)) {
+    if (!routing.routes.some((r) => r.to.lane === port.lane && r.to.frame === port.frame)) {
       throw new ProjectError("malformed", `parked base for an unpatched input: ${key}`);
     }
-    routing.parked.set(`${port.slot}:${port.frame}`, requireHex(value, N, `parked.${key}`));
+    routing.parked.set(`${port.lane}:${port.frame}`, requireHex(value, N, `parked.${key}`));
   }
 
   const view: ProjectViewState = {
-    slot: d.view && SLOT_KEYS.includes(d.view.slot) ? d.view.slot : "A",
+    lane: d.view && LANE_KEYS.includes(d.view.lane) ? d.view.lane : "1",
     view3d: d.view?.view3d === true,
     split3d: d.view?.split3d === true,
     splitPair: d.view?.splitPair && Array.isArray(d.view.splitPair) && d.view.splitPair.length === 2
       ? [d.view.splitPair[0], d.view.splitPair[1]]
-      : ["A", "B"],
+      : ["1", "2"],
     activePane: d.view?.activePane === 1 ? 1 : 0,
   };
 
   markDelays(routing);
-  evaluateAll(routing, slots, N);
+  evaluateAll(routing, lanes, N);
   const dataset = d.dataset && Array.isArray(d.dataset.cols) && Array.isArray(d.dataset.rows) ? d.dataset : null;
-  return { slots, routing, N, view, dataset };
+  return { lanes, routing, N, view, dataset };
 }
 
 /** Convenience: JSON text -> engine state. */

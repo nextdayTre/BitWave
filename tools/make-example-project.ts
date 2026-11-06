@@ -13,20 +13,20 @@ import {
   addRoute,
   createRouting,
   evaluateAll,
-  makeBootSlots,
+  makeBootLanes,
   serializeProject,
   stringifyProject,
 } from "../src/core/index.ts";
 
 const N = 64;
-const slots = makeBootSlots(N);
+const lanes = makeBootLanes(N);
 const routing = createRouting();
 
 // A worked patch from docs/analysis/routing.md §3.6: view 3's derived frame
 // drives view 1's A, and view 1's resulting Z drives view 2's A.
-addRoute(routing, slots, { slot: "C", frame: "z" }, { slot: "A", frame: "a" });
-addRoute(routing, slots, { slot: "A", frame: "z" }, { slot: "B", frame: "a" });
-evaluateAll(routing, slots, N);
+addRoute(routing, lanes, { lane: "3", frame: "z" }, { lane: "1", frame: "a" });
+addRoute(routing, lanes, { lane: "1", frame: "z" }, { lane: "2", frame: "a" });
+evaluateAll(routing, lanes, N);
 
 const dataset = {
   cols: ["id", "sine", "square"],
@@ -38,10 +38,10 @@ const dataset = {
 };
 
 const doc = serializeProject(
-  slots,
+  lanes,
   routing,
   N,
-  { slot: "A", view3d: false, split3d: false, splitPair: ["A", "B"], activePane: 0 },
+  { lane: "1", view3d: false, split3d: false, splitPair: ["1", "2"], activePane: 0 },
   dataset,
   "2026-11-05T00:00:00.000Z",
 );

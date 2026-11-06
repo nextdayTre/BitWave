@@ -60,7 +60,7 @@
   <rect class="chip" x="238" y="284" width="180" height="32" rx="4"/>
   <text class="m" x="250" y="304" font-size="11">stage bar</text>
   <rect class="chip" x="428" y="284" width="180" height="32" rx="4"/>
-  <text class="m" x="440" y="304" font-size="11">patch dock</text>
+  <text class="m" x="440" y="304" font-size="11">routing matrix</text>
   <rect class="chip" x="48" y="324" width="560" height="30" rx="4"/>
   <text class="md" x="60" y="343" font-size="10.5">pointer &#183; keyboard &#183; nibble spinbuttons &#183; hex entry &#183; file drop &#183; Escape / shortcuts</text>
 

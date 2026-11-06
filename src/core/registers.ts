@@ -4,7 +4,7 @@
  * Faithful port of the model in index.html: bits[0] is the LSB, display column
  * c maps to bit N-1-c (MSB on the left), and nibble j from the left covers
  * bits N-1-4j .. N-4-4j. `N` is always an explicit parameter here — the app
- * shares one width across all views, but the core never reads a global.
+ * shares one width across all lanes, but the core never reads a global.
  */
 
 import type { Register } from "./types.ts";
@@ -112,7 +112,7 @@ export function fromHex(text: string, N: number): Uint8Array {
   return bits;
 }
 
-/** Copies truth into the eased/target nibble views. */
+/** Copies truth into the eased/target nibble target/anim arrays. */
 export function syncTarget(reg: Register, N: number): void {
   const n = nibCount(N);
   if (reg.target.length !== n) {
@@ -122,11 +122,11 @@ export function syncTarget(reg: Register, N: number): void {
   for (let j = 0; j < n; j++) reg.target[j] = nibAt(reg.bits, N, j);
 }
 
-export function syncAllTargets(slots: Record<string, { A: Register; B: Register; Z: Register }>, N: number): void {
-  for (const slot of Object.values(slots)) {
-    syncTarget(slot.A, N);
-    syncTarget(slot.B, N);
-    syncTarget(slot.Z, N);
+export function syncAllTargets(lanes: Record<string, { A: Register; B: Register; Z: Register }>, N: number): void {
+  for (const lane of Object.values(lanes)) {
+    syncTarget(lane.A, N);
+    syncTarget(lane.B, N);
+    syncTarget(lane.Z, N);
   }
 }
 

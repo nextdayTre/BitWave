@@ -1,7 +1,7 @@
 /**
  * Derived registers and the algebra readouts.
  *
- * Z is always A <op> B for a view. Bitwise ops work bit for bit; ADD/SUB carry
+ * Z is always A <op> B for a lane. Bitwise ops work bit for bit; ADD/SUB carry
  * and borrow across the whole word through BigInt, which is precisely why
  * neither equals XOR. Nothing here is editable — Z is a function (DESIGN §10.8).
  */

@@ -1,0 +1,110 @@
+/**
+ * Lanes, canonical boot state, and centre-pinned resize.
+ *
+ * A lane is one three-frame device: operand A, derived Z, operand B. Three
+ * lanes share one width N (DESIGN §6, §10.10). This module also owns the exact
+ * boot state the instrument has always shown, so the golden vectors and later
+ * tests compare against the same source of truth.
+ *
+ * Rename note (2026-11-06): lanes were A/B/C; they are now 1/2/3 so that letters
+ * refer only to frames/operands.
+ */
+
+import type { BinOp, Lane, LaneKey, LaneMap } from "./types.ts";
+import { LANE_KEYS } from "./types.ts";
+import {
+  DEFAULT_N,
+  bitsToNibbles,
+  nibblesToBits,
+  nibCount,
+  remapNibbles,
+  syncTarget,
+} from "./registers.ts";
+import { tableValues } from "./ops.ts";
+import { computeZ } from "./derive.ts";
+
+export function makeLane(key: LaneKey, N: number, binop: BinOp = "xor"): Lane {
+  const empty = () => ({
+    bits: new Uint8Array(N),
+    anim: new Array<number>(nibCount(N)).fill(0),
+    target: new Array<number>(nibCount(N)).fill(0),
+  });
+  return {
+    key,
+    A: empty(),
+    B: empty(),
+    Z: empty(),
+    showB: false,
+    binop,
+    edit: "a",
+    seededB: false,
+    lfoB: "0",
+    colA: -1,
+    colB: -1,
+  };
+}
+
+function seed(lane: Lane, N: number, a: number[], b: number[]): void {
+  lane.A.bits = nibblesToBits(a, N);
+  lane.B.bits = nibblesToBits(b, N);
+  syncTarget(lane.A, N);
+  syncTarget(lane.B, N);
+  lane.Z.bits = computeZ(lane.A.bits, lane.B.bits, N, lane.binop);
+  syncTarget(lane.Z, N);
+}
+
+/**
+ * Boot values, matching index.html: Lane 1 sine + square, Lane 2 cosine +
+ * triangle, Lane 3 saw-up + sine (AND). Pinned by the golden vectors.
+ */
+export function makeBootLanes(N: number = DEFAULT_N): LaneMap {
+  const one = makeLane("1", N, "xor");
+  seed(one, N, tableValues("sine", N), tableValues("square", N));
+
+  const two = makeLane("2", N, "xor");
+  seed(two, N, tableValues("cosine", N), tableValues("triangle", N));
+  two.seededB = true;
+
+  const three = makeLane("3", N, "and");
+  seed(three, N, tableValues("sawUp", N), tableValues("sine", N));
+  three.seededB = true;
+
+  return { "1": one, "2": two, "3": three };
+}
+
+/**
+ * Centre-pinned resize of every register in every lane, mirroring
+ * `resizeRegister` in index.html: remap A/B nibbles, install new bit arrays,
+ * then derive Z for the new width. Callers must remap parked route bases with
+ * `remapParked` (routing.ts) around this call.
+ */
+export function resizeLanes(lanes: LaneMap, oldN: number, newN: number): void {
+  if (oldN === newN) return;
+  const mapped: Record<LaneKey, { a: number[]; b: number[] }> = {
+    "1": { a: [], b: [] },
+    "2": { a: [], b: [] },
+    "3": { a: [], b: [] },
+  };
+
+  for (const key of LANE_KEYS) {
+    const lane = lanes[key];
+    mapped[key].a = remapNibbles(bitsToNibbles(lane.A.bits, oldN), oldN, newN);
+    mapped[key].b = remapNibbles(bitsToNibbles(lane.B.bits, oldN), oldN, newN);
+  }
+
+  for (const key of LANE_KEYS) {
+    const lane = lanes[key];
+    for (const [reg, values] of [
+      [lane.A, mapped[key].a],
+      [lane.B, mapped[key].b],
+    ] as const) {
+      reg.bits = nibblesToBits(values, newN);
+      reg.target = values.slice();
+      reg.anim = values.slice();
+    }
+    lane.Z.bits = computeZ(lane.A.bits, lane.B.bits, newN, lane.binop);
+    lane.Z.target = new Array<number>(nibCount(newN)).fill(0);
+    lane.Z.anim = new Array<number>(nibCount(newN)).fill(0);
+    syncTarget(lane.Z, newN);
+  }
+}

@@ -4,17 +4,17 @@
   "savedAt": "2026-11-05T00:00:00.000Z",
   "N": 64,
   "view": {
-    "slot": "A",
+    "lane": "1",
     "view3d": false,
     "split3d": false,
     "splitPair": [
-      "A",
-      "B"
+      "1",
+      "2"
     ],
     "activePane": 0
   },
-  "slots": {
-    "A": {
+  "lanes": {
+    "1": {
       "a": "0002444281210125",
       "b": "FFFFFFFF00000000",
       "showB": false,
@@ -25,7 +25,7 @@
       "colA": -1,
       "colB": -1
     },
-    "B": {
+    "2": {
       "a": "FFFDBBBD81210125",
       "b": "02468ACEECA86420",
       "showB": false,
@@ -36,7 +36,7 @@
       "colA": -1,
       "colB": -1
     },
-    "C": {
+    "3": {
       "a": "0123456789ABCDEF",
       "b": "8ADEFEDA85210125",
       "showB": false,
@@ -50,19 +50,19 @@
   },
   "routes": [
     {
-      "from": "C.z",
-      "to": "A.a",
+      "from": "3.z",
+      "to": "1.a",
       "mix": "set"
     },
     {
-      "from": "A.z",
-      "to": "B.a",
+      "from": "1.z",
+      "to": "2.a",
       "mix": "set"
     }
   ],
   "parked": {
-    "A.a": "8ADEFEDA85210125",
-    "B.a": "FEDA852101257ADE"
+    "1.a": "8ADEFEDA85210125",
+    "2.a": "FEDA852101257ADE"
   },
   "dataset": {
     "cols": [

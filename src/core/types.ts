@@ -6,18 +6,24 @@
  * type. The engine must run in the browser, in a desktop shell and in plain
  * Node tests. Enforced by tsconfig.core.json (`lib: ["ES2022"]`, `types: []`)
  * and by the review rule in PLAN.md §6.2.
+ *
+ * TERMINOLOGY (author decision, 2026-11-06)
+ *   lane 1 / 2 / 3   the three parallel instruments (formerly slots A/B/C)
+ *   frame A / Z / B  within a lane: operand A, derived Z, operand B
+ * The old collision — lanes A/B/C vs operand frames A/B — is gone: lanes are
+ * numbers, letters belong only to frames and operands.
  */
 
-export type SlotKey = "A" | "B" | "C";
+export type LaneKey = "1" | "2" | "3";
 
-/** Display order of the views. Internal/persisted keys stay A/B/C. */
-export const SLOT_KEYS: readonly SlotKey[] = ["A", "B", "C"];
+/** Display order of the lanes. */
+export const LANE_KEYS: readonly LaneKey[] = ["1", "2", "3"];
 
 export type OperandKey = "a" | "b";
 export type FrameKey = OperandKey | "z";
 export type BinOp = "and" | "or" | "xor" | "add" | "sub";
 
-/** How several cables into one input combine (v1.1; v1 enforces one cable). */
+/** How several routes into one input combine (v1.1; v1 enforces one route). */
 export type MixOp = "set" | "add" | "xor";
 
 export interface Register {
@@ -29,8 +35,8 @@ export interface Register {
   target: number[];
 }
 
-export interface Slot {
-  key: SlotKey;
+export interface Lane {
+  key: LaneKey;
   A: Register;
   B: Register;
   Z: Register;
@@ -45,15 +51,15 @@ export interface Slot {
   colB: number;
 }
 
-export type SlotMap = Record<SlotKey, Slot>;
+export type LaneMap = Record<LaneKey, Lane>;
 
 export interface SourcePort {
-  slot: SlotKey;
+  lane: LaneKey;
   frame: FrameKey;
 }
 
 export interface DestinationPort {
-  slot: SlotKey;
+  lane: LaneKey;
   frame: OperandKey;
 }
 

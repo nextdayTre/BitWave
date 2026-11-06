@@ -1,3 +1,4 @@
+> **Updated 2026-11-06 (author decision):** lanes are now **1/2/3** (letters belong only to frames A/Z/B). **Contrast/dimming is hands-off** — keep the §2.5 measurements as reference, but do not action the token changes: colour/intensity is a future mapping axis. Q8 is closed.
 # BitWave — UX, accessibility and reach audit
 
 `index.html` (2 832 lines) and `DESIGN.md` (495) read in full; line numbers are read-tool numbers. "Accessible" covers (a) WCAG 2.2 / product accessibility and (b) reach — getting to the tool, keeping work, sharing state, working offline. Contrast is computed with the WCAG 2.x sRGB formula; sizes derive from the CSS (13px mono, `ch` ≈ 0.6em). Browser instrumentation was blocked in this session, so reflow figures are computed estimates. Severity: **Critical** blocks a task for a whole user group; **Serious** for common AT; **Moderate** degrades; **Minor** polish.

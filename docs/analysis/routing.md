@@ -1,3 +1,4 @@
+> **Updated 2026-11-06 (author decision):** the routing UI is now a compact **SOURCE → DESTINATION matrix table** (PLAN.md §3.4) — no cable graphics, no jacks, no dragging. The core semantics in §1–§3 and the verification vectors in §3.6–§3.7 still stand; read "cable" as "route" and lane names A/B/C as **1/2/3** (author decision; letters belong only to frames A/Z/B).
 # Patch Bay: routing one frame into another
 
 **Status:** design analysis + implementation plan. **Source read:** `index.html` (2832 lines; line refs are read-tool). **Constraints:** `DESIGN.md` §2–§3 (two hues), §8, §10, §11.

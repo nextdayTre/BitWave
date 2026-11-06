@@ -1,54 +1,58 @@
 # BitWave — implementation status
 
-**Updated:** 2026-11-05 (implementation session) · **Phase:** F0 baseline (partial), F1 core **done**, F3 spike **done**.
-**Source of truth:** [`PLAN.md`](PLAN.md) for the plan, [`DECISIONS.md`](DECISIONS.md) for the choices taken, [`DESIGN.md`](DESIGN.md) for the visual contract. `index.html` is still untouched and remains the shipping instrument.
+**Updated:** 2026-11-06 · **Phase:** F0 baseline (partial), F1 core **done**, F3 routing-matrix spike **done**.
+**Source of truth:** [`PLAN.md`](PLAN.md) for the plan, [`DECISIONS.md`](DECISIONS.md) for choices taken, [`DESIGN.md`](DESIGN.md) for the visual contract. `index.html` is still untouched and remains the shipping instrument.
+
+## Author decisions (2026-11-06)
+
+1. **Lanes are 1 / 2 / 3** — UI, docs and code. Letters belong only to frames/operands (A, Z, B). The A/B/C-vs-A/B naming collision is gone. Done in the core; the app UI follows at F2/F4.
+2. **Routing is a SOURCE → DESTINATION matrix table** (Serum-2 style), not a cable diagram. No cables, jacks, drag or 3-D overlays. The old cable spike and patch-model diagram are retired.
+3. **Dimming is hands-off.** No contrast/token changes; colour and intensity are a future mapping axis. Q8 is closed. Accessibility work must not alter the palette.
 
 ## Where we are
 
 | Phase | Status | Notes |
 |---|---|---|
-| **F0 Baseline** | **Partial** | Git repo + baseline commit; zero-dependency test harness; model-level golden vectors. Vite/`tsc`/Playwright/CI not installed — headless Chromium is blocked by this sandbox, so the full artifact/geometry golden trace is a user-machine task. |
-| **F1 Core + routing engine** | **Done** | 11 DOM-free modules: types, registers/nibble maths, ops/presets, derive (Z/truth/carry), spline, slots/boot/resize, **routing engine**, CSV parse/typing, geometry, `.bitwave` project format. 38 tests green. |
-| **F2 State spine + renderers** | Next | Wire the core through a store + renderer adapters; `index.html` still uses the old focused-slot `commit()`. |
-| **F3 Patch dock UI** | **Spike done** | [`spike/patch-dock.html`](spike/patch-dock.html) — standalone interaction prototype, 805 lines, static-checked. Needs a visual pass on your machine (browser blocked here). |
-| **F4–F6** | Not started | A11y/IA, persistence UI, distribution. |
+| **F0 Baseline** | **Partial** | Git, zero-dependency harness, model-level golden vectors. Vite/`tsc`/Playwright/CI not installed; headless Chromium is blocked by this sandbox, so browser-level verification is a user-machine task. |
+| **F1 Core + routing engine** | **Done** | 11 DOM-free modules; lanes 1/2/3 renamed throughout; 38 tests green. |
+| **F2 State spine + renderers** | Next | Wire the core through a store + renderer adapters. `index.html` still uses the old focused-lane `commit()`. |
+| **F3 Routing matrix UI** | **Spike done** | [`spike/routing-matrix.html`](spike/routing-matrix.html) — 517 lines, static-checked, no cable chrome. Needs a visual pass on your machine. |
+| **F4–F6** | Not started | A11y/IA (no palette changes), persistence UI, distribution. |
 
 ## Verified this session
 
-- `npm test` → **38 tests, 38 pass, 0 fail, ~90 ms** across four files.
-- DESIGN §11 invariants: `ROL 4`, `NOT`, `BSWAP` (involutive, no-op at 8 bits), A·B XOR/AND/OR vectors, truth counts `23/11/9/21`, popcounts `20/21`, right-align + truncation, positional weight, centre-pinned resize, spline range/endpoints/smoothstep.
-- Routing §3.7 vectors: boot values, `C.Z→A.A`, one-pass chain, unpatch byte-identity, one-cable-per-input replacement, invalid wiring, two-state feedback oscillator, deterministic cross-view cycle, `clearRoutes`, resize + parked remap, focus-free idempotent evaluation.
-- CSV: quoted/CRLF/tab parsing, header detection, per-column bin/hex typing, widest-column default, right-alignment and overflow truncation.
-- Geometry: §5 insets, gap clamp, 0-px column contract (`x(j)` centre + symmetry), compact threshold, nearest nibble, inverse vertical mapping, ∞ point.
-- `.bitwave` project: serialize → JSON → deserialize round-trip, no Z persisted, routes + parked bases preserved, unpatch after load restores byte-identically, 256-bit round-trip, malformed/future schema rejection codes.
-- `src/core` is DOM-free (grep-verified; no browser globals).
-- Spike static checks: inline script passes `node --check`; every referenced id exists; no external assets/fetch/imports; palette contains only DESIGN tokens; amber token defined but unused; `--inf` reserved.
+- `npm test` → **38 tests, 38 pass, 0 fail, ~90 ms** after the lane rename.
+- DESIGN §11 invariants, routing §3.7 vectors, CSV typing, geometry contract, `.bitwave` round-trip (see previous status detail; all still covered).
+- Core terminology: `grep` finds no `slots`/`Slot`/A/B/C lane keys in `src/core` except the historical rename note.
+- `.bitwave` example regenerated with `"lanes"` and `"1"/"2"/"3"` keys; engine round-trips it.
+- Matrix spike: inline script passes `node --check`; 7 ids, no duplicates; 15 hex colours all from the DESIGN palette; `var(--inf)` unused; no external refs; no canvas/SVG/cable/jack markup; 9 sources / 6 destinations (Z never a destination); 32 px targets; table scrolls at 360 px; `aria-live` status; disabled taken destinations.
+- Architecture diagram label updated from patch dock to routing matrix; cable diagram and cable spike removed from the repo.
 
 ## Key artifacts
 
 | Artifact | Purpose |
 |---|---|
-| [`src/core/`](src/core/index.ts) | DOM-free engine (11 modules, ~1,350 lines) |
+| [`src/core/`](src/core/index.ts) | DOM-free engine (11 modules, ~1,350 lines), lanes 1/2/3 |
 | [`tests/`](tests/design-invariants.test.ts) | 4 test files, ~630 lines, 38 vectors + properties |
-| [`examples/demo.bitwave.json`](examples/demo.bitwave.json) | Real `.bitwave` document generated from the engine (2 routed views + 3-row dataset) |
-| [`tools/make-example-project.ts`](tools/make-example-project.ts) | Regenerates the example (`node tools/make-example-project.ts`) |
-| [`spike/patch-dock.html`](spike/patch-dock.html) | Standalone patch-dock interaction prototype |
-| [`package.json`](package.json) / [`tsconfig.core.json`](tsconfig.core.json) | `npm test`; future strict DOM-free typecheck |
-| [`DECISIONS.md`](DECISIONS.md) | D1–D9 assumptions and reversibility notes |
+| [`examples/demo.bitwave.json`](examples/demo.bitwave.json) | Versioned project document (lanes 1/2/3; routes + parked bases; dataset) |
+| [`spike/routing-matrix.html`](spike/routing-matrix.html) | The new reference prototype: source/destination table |
+| [`tools/make-example-project.ts`](tools/make-example-project.ts) | Regenerates the example |
+| [`DECISIONS.md`](DECISIONS.md) | D1–D12, including the three author decisions above |
 
 ## Known gaps and blockers
 
-1. **Browser automation is blocked in this sandbox.** Headless Chromium cannot launch (named-pipe/Mojo access denied), so Playwright, the interaction golden trace, screenshots, zoom/reflow and the §11 geometry assertion (control-point x vs hex-cell centre < 1.5 px) must run on your machine / normal terminal.
-2. **Toolchain not installed.** Vite/TypeScript/Vitest/Playwright are deliberately deferred; the core runs via Node 24 native TS. The module contracts do not change when the toolchain arrives.
-3. **The app is not wired yet.** `index.html` still derives Z only for the focused view; F2 must route all changes through `evaluateAll`.
-4. **Goldens are model-level**, not captured from a live browser session (blocker 1). They pin the arithmetic and routing exactly.
+1. **Browser automation is blocked in this sandbox** (headless Chromium cannot launch), so the matrix table, cable removal, 360/720 px layout, focus rings and live-region announcements are statically checked but not visually verified.
+2. **Toolchain not installed** — Vite/TypeScript/Vitest/Playwright deferred; core runs via Node 24 native TS.
+3. **The app is not wired yet** — F2 must route all changes through `evaluateAll`.
+4. **Goldens are model-level**, not captured from a live browser session.
 
 ## Errata found
 
-- **DESIGN.md §11 `NOT` vector is wrong.** It lists `NOT FEDCBA9876543210 → 123456789ABCDEF0`; the actual bitwise complement is `0123456789ABCDEF` (confirmed by `invert`, by index.html's own implementation, and by hand). The test asserts the true value and documents the discrepancy. Recommend correcting DESIGN.md §11 before using it as a release gate.
+- **DESIGN.md §11 `NOT` vector is wrong.** It lists `NOT FEDCBA9876543210 → 123456789ABCDEF0`; the actual complement is `0123456789ABCDEF` (confirmed by `invert` and by index.html's own implementation). The test asserts the true value. Correct DESIGN.md §11 before using it as a release gate.
 
 ## Next actions
 
-1. **F2 spine:** `src/state/store.ts` + `actions.ts`; renderer adapters (canvas `FrameInput`, strip reconcile, readouts, stage bar). First milestone: boot the new engine behind a feature flag and reproduce today's 2-D view, keeping `index.html` shippable.
-2. **Spike visual pass:** open `spike/patch-dock.html` and check cable geometry at 360/720/1440 px, focus flow, driven-state readability and the `z⁻¹` affordance; then fold the confirmed interaction into the real dock.
-3. **F4 prep:** amend DESIGN.md §3/§8/§10 per PLAN.md §8 before the contrast/role changes (author decision Q8 still open).
+1. **F2 spine:** `src/state/store.ts` + `actions.ts`; renderer adapters. Boot the new engine behind a flag and reproduce today's 2-D view, keeping `index.html` shippable.
+2. **Matrix visual pass:** open `spike/routing-matrix.html` at 360 / 720 / 1440 px; check row density, focus flow, disabled-option clarity and the `1:1`/`z⁻¹` chips.
+3. **F3 in the app:** matrix band with SOURCE/DESTINATION rows, replacement rule, `z⁻¹` state, live status. No cables.
+4. **F4:** roles/keyboard/targets/reduced motion/reflow; **do not touch the palette** (Q8 closed). Amend DESIGN §8/§9 for lanes and the matrix instead.
