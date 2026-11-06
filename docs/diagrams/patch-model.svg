@@ -1,0 +1,124 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="620" viewBox="0 0 1000 620" role="img" aria-labelledby="t d">
+  <title id="t">BitWave patch model</title>
+  <desc id="d">Three views, each with three frames (operand A, derived Z, operand B). A cable carries any frame output to any operand input of another view. The example routes view 3 frame Z to view 1 operand A and view 1 frame Z to view 2 operand A, plus a delayed self-feedback from view 2 frame Z to view 2 operand B. Z is never a destination.</desc>
+  <defs>
+    <style>
+      .bg { fill:#08090c; }
+      .card { fill:#0d1015; stroke:#1b212b; stroke-width:1; }
+      .row { fill:#12161d; stroke:#1b212b; stroke-width:1; }
+      .t { fill:#e8edf5; font-family:system-ui,'Segoe UI',Roboto,sans-serif; }
+      .s { fill:#67728a; font-family:system-ui,'Segoe UI',Roboto,sans-serif; }
+      .m { fill:#e8edf5; font-family:ui-monospace,Consolas,monospace; }
+      .md { fill:#67728a; font-family:ui-monospace,Consolas,monospace; }
+      .a { fill:#34d399; font-family:ui-monospace,Consolas,monospace; }
+      .h { fill:#67728a; font-family:system-ui,'Segoe UI',Roboto,sans-serif; font-size:10px; letter-spacing:1.6px; }
+      .cable { fill:none; stroke:#34d399; stroke-width:1.4; stroke-opacity:0.8; marker-end:url(#arw); }
+      .jack { fill:#0d1015; stroke:#67728a; stroke-width:1.2; }
+      .jackin { fill:#0d1015; stroke:#34d399; stroke-width:1.4; }
+      .jackout { fill:#0d1015; stroke:#3f4859; stroke-width:1.2; }
+      .callout { fill:none; stroke:#1b212b; stroke-width:1; }
+    </style>
+    <marker id="arw" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
+      <path d="M0 0 L8 4 L0 8 z" fill="#34d399"/>
+    </marker>
+  </defs>
+
+  <rect class="bg" x="0" y="0" width="1000" height="620"/>
+  <text class="t" x="48" y="46" font-size="20" font-weight="600">The patch model</text>
+  <text class="s" x="48" y="68" font-size="11.5">frame outputs (right jack) &#8594; operand inputs (left jack) &#183; one cable per input in v1 &#183; Z is never a destination</text>
+
+  <!-- CARD 1 -->
+  <rect class="card" x="70" y="120" width="240" height="280" rx="6"/>
+  <text class="h" x="86" y="148">VIEW 1</text>
+  <text class="md" x="86" y="168" font-size="10">A &#8853; B &#8594; Z</text>
+  <rect class="row" x="86" y="186" width="208" height="42" rx="4"/>
+  <text class="m" x="98" y="204" font-size="11">A</text>
+  <text class="s" x="98" y="219" font-size="9">operand</text>
+  <circle class="jackin" cx="76" cy="207" r="4"/>
+  <circle class="jackout" cx="304" cy="207" r="4"/>
+  <rect class="row" x="86" y="238" width="208" height="42" rx="4"/>
+  <text class="m" x="98" y="256" font-size="11">Z</text>
+  <text class="s" x="98" y="271" font-size="9">derived &#183; frame 128</text>
+  <circle class="jackin" cx="76" cy="259" r="4" visibility="hidden"/>
+  <circle class="jackout" cx="304" cy="259" r="4"/>
+  <rect class="row" x="86" y="290" width="208" height="42" rx="4"/>
+  <text class="m" x="98" y="308" font-size="11">B</text>
+  <text class="s" x="98" y="323" font-size="9">operand &#183; frame 256</text>
+  <circle class="jackin" cx="76" cy="311" r="4"/>
+  <circle class="jackout" cx="304" cy="311" r="4"/>
+  <text class="s" x="70" y="424" font-size="9">inputs left &#183; outputs right</text>
+
+  <!-- CARD 2 -->
+  <rect class="card" x="380" y="120" width="240" height="280" rx="6"/>
+  <text class="h" x="396" y="148">VIEW 2</text>
+  <text class="md" x="396" y="168" font-size="10">A &#8743; B &#8594; Z</text>
+  <rect class="row" x="396" y="186" width="208" height="42" rx="4"/>
+  <text class="m" x="408" y="204" font-size="11">A</text>
+  <text class="s" x="408" y="219" font-size="9">operand</text>
+  <circle class="jackin" cx="386" cy="207" r="4"/>
+  <circle class="jackout" cx="614" cy="207" r="4"/>
+  <rect class="row" x="396" y="238" width="208" height="42" rx="4"/>
+  <text class="m" x="408" y="256" font-size="11">Z</text>
+  <text class="s" x="408" y="271" font-size="9">derived &#183; frame 128</text>
+  <circle class="jackout" cx="614" cy="259" r="4"/>
+  <rect class="row" x="396" y="290" width="208" height="42" rx="4"/>
+  <text class="m" x="408" y="308" font-size="11">B</text>
+  <text class="s" x="408" y="323" font-size="9">operand &#183; frame 256</text>
+  <circle class="jackin" cx="386" cy="311" r="4"/>
+  <circle class="jackout" cx="614" cy="311" r="4"/>
+  <text class="s" x="380" y="424" font-size="9">inputs left &#183; outputs right</text>
+
+  <!-- CARD 3 -->
+  <rect class="card" x="690" y="120" width="240" height="280" rx="6"/>
+  <text class="h" x="706" y="148">VIEW 3</text>
+  <text class="md" x="706" y="168" font-size="10">A &#8743; B &#8594; Z</text>
+  <rect class="row" x="706" y="186" width="208" height="42" rx="4"/>
+  <text class="m" x="718" y="204" font-size="11">A</text>
+  <text class="s" x="718" y="219" font-size="9">operand</text>
+  <circle class="jackin" cx="696" cy="207" r="4"/>
+  <circle class="jackout" cx="924" cy="207" r="4"/>
+  <rect class="row" x="706" y="238" width="208" height="42" rx="4"/>
+  <text class="m" x="718" y="256" font-size="11">Z</text>
+  <text class="s" x="718" y="271" font-size="9">derived &#183; frame 128</text>
+  <circle class="jackout" cx="924" cy="259" r="4"/>
+  <rect class="row" x="706" y="290" width="208" height="42" rx="4"/>
+  <text class="m" x="718" y="308" font-size="11">B</text>
+  <text class="s" x="718" y="323" font-size="9">operand &#183; frame 256</text>
+  <circle class="jackin" cx="696" cy="311" r="4"/>
+  <circle class="jackout" cx="924" cy="311" r="4"/>
+  <text class="s" x="690" y="424" font-size="9">inputs left &#183; outputs right</text>
+
+  <!-- CABLE 3.Z -> 1.A (drawn over the top) -->
+  <path class="cable" d="M924 259 C 970 104, 24 104, 70 207"/>
+  <text class="a" x="500" y="86" font-size="10.5" text-anchor="middle">3&#183;Z &#8594; 1&#183;A</text>
+
+  <!-- CABLE 1.Z -> 2.A -->
+  <path class="cable" d="M304 259 C 336 259, 342 207, 380 207"/>
+  <text class="a" x="342" y="192" font-size="9.5" text-anchor="middle">1&#183;Z &#8594; 2&#183;A</text>
+
+  <!-- CABLE 2.Z -> 2.B (self feedback, under the cards) -->
+  <path class="cable" d="M614 259 C 680 380, 320 380, 386 311"/>
+  <text class="a" x="500" y="404" font-size="10.5" text-anchor="middle">2&#183;Z &#8594; 2&#183;B  &#183;  z&#8315;&#185;</text>
+
+  <!-- CALLOUTS -->
+  <rect class="callout" x="48" y="456" width="288" height="92" rx="5"/>
+  <text class="h" x="62" y="478">DRIVEN = NORMALLED</text>
+  <text class="s" x="62" y="498" font-size="10">A patched input is driven. Its pre-patch value is</text>
+  <text class="s" x="62" y="514" font-size="10">parked and restored byte-identically on unplug.</text>
+  <text class="s" x="62" y="530" font-size="10">Local edits, CSV and LFO skip it while patched.</text>
+
+  <rect class="callout" x="356" y="456" width="288" height="92" rx="5"/>
+  <text class="h" x="370" y="478">ONE EVALUATION</text>
+  <text class="s" x="370" y="498" font-size="10">All base writes finish, then applyRoutes(), then</text>
+  <text class="s" x="370" y="514" font-size="10">recompute Z for every view, then render.</text>
+  <text class="s" x="370" y="530" font-size="10">Transactions only — never once per animation frame.</text>
+
+  <rect class="callout" x="664" y="456" width="288" height="92" rx="5"/>
+  <text class="h" x="678" y="478">FEEDBACK NEEDS A DELAY</text>
+  <text class="s" x="678" y="498" font-size="10">A zero-delay cycle has no fixed point. Back-edges</text>
+  <text class="s" x="678" y="514" font-size="10">are labelled z&#8315;&#185; and carry the previous result —</text>
+  <text class="s" x="678" y="530" font-size="10">the unit delay every digital feedback patch needs.</text>
+
+  <text class="s" x="48" y="582" font-size="9.5">Cables are accent because they carry data. Chrome stays achromatic, and amber remains reserved for the &#8734; marker, MRB underlines and the zero-crossing.</text>
+  <text class="s" x="48" y="598" font-size="9.5">Fan-out is unlimited (an audio mult). Fan-in is one cable per input in v1; summing at one inlet is the v1.1 upgrade.</text>
+</svg>

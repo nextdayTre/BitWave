@@ -1,0 +1,116 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1040" height="700" viewBox="0 0 1040 700" role="img" aria-labelledby="t d">
+  <title id="t">BitWave target architecture</title>
+  <desc id="d">Layered one-way dependency diagram: outputs and shells depend on render/input/storage adapters, which depend on a single state spine, which depends on a DOM-free tested core. The single-file HTML artifact is a build output, not the source.</desc>
+  <defs>
+    <style>
+      .bg { fill:#08090c; }
+      .panel { fill:#0d1015; stroke:#1b212b; stroke-width:1; }
+      .chip { fill:#12161d; stroke:#1b212b; stroke-width:1; }
+      .defer { fill:#0d1015; stroke:#3f4859; stroke-width:1; stroke-dasharray:4 4; }
+      .t { fill:#e8edf5; font-family:system-ui,'Segoe UI',Roboto,sans-serif; }
+      .s { fill:#67728a; font-family:system-ui,'Segoe UI',Roboto,sans-serif; }
+      .m { fill:#e8edf5; font-family:ui-monospace,Consolas,monospace; }
+      .md { fill:#67728a; font-family:ui-monospace,Consolas,monospace; }
+      .a { fill:#34d399; font-family:ui-monospace,Consolas,monospace; }
+      .h { fill:#67728a; font-family:system-ui,'Segoe UI',Roboto,sans-serif; font-size:10px; letter-spacing:1.6px; }
+      .arrow { fill:none; stroke:#67728a; stroke-width:1.2; marker-end:url(#arw); }
+      .alabel { fill:#67728a; font-family:ui-monospace,Consolas,monospace; font-size:9.5px; }
+    </style>
+    <marker id="arw" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L8 4 L0 8 z" fill="#67728a"/>
+    </marker>
+  </defs>
+
+  <rect class="bg" x="0" y="0" width="1040" height="700"/>
+  <text class="t" x="48" y="46" font-size="20" font-weight="600">BitWave — target architecture</text>
+  <text class="s" x="48" y="68" font-size="11.5">one-way dependencies &#183; DOM-free core &#183; the single-file HTML is a build output, not the source</text>
+  <text class="md" x="992" y="46" font-size="9.5" text-anchor="end">proposal &#183; 2026-11-05</text>
+
+  <!-- OUTPUTS -->
+  <text class="h" x="48" y="100">OUTPUTS &amp; SHELLS</text>
+  <rect class="panel" x="48" y="112" width="290" height="62" rx="5"/>
+  <text class="t" x="62" y="138" font-size="12.5">Hosted web app</text>
+  <text class="s" x="62" y="158" font-size="10.5">static site &#183; shareable URL &#183; optional PWA</text>
+
+  <rect class="panel" x="375" y="112" width="290" height="62" rx="5"/>
+  <text class="t" x="389" y="138" font-size="12.5">dist/bitwave.html</text>
+  <text class="s" x="389" y="158" font-size="10.5">one inlined file &#183; file:// / USB &#183; &#167;11-tested</text>
+
+  <rect class="defer" x="702" y="112" width="290" height="62" rx="5"/>
+  <text class="md" x="716" y="138" font-size="12.5">Tauri 2 desktop</text>
+  <text class="s" x="716" y="158" font-size="10.5">deferred &#183; native open/save &#183; same core</text>
+
+  <path class="arrow" d="M520 175 L520 216"/>
+  <text class="alabel" x="530" y="200">depends on</text>
+  <path class="arrow" d="M700 175 L700 190 L860 190 L860 216" opacity="0"/>
+  <path class="arrow" d="M860 175 L860 216"/>
+  <text class="alabel" x="870" y="200">deferred</text>
+
+  <!-- ADAPTERS -->
+  <text class="h" x="48" y="232">ADAPTERS</text>
+  <text class="md" x="150" y="232" font-size="9.5">render + input</text>
+  <rect class="chip" x="48" y="244" width="180" height="32" rx="4"/>
+  <text class="m" x="60" y="264" font-size="11">canvas 2D</text>
+  <rect class="chip" x="238" y="244" width="180" height="32" rx="4"/>
+  <text class="m" x="250" y="264" font-size="11">3-D field</text>
+  <rect class="chip" x="428" y="244" width="180" height="32" rx="4"/>
+  <text class="m" x="440" y="264" font-size="11">bit strip</text>
+  <rect class="chip" x="48" y="284" width="180" height="32" rx="4"/>
+  <text class="m" x="60" y="304" font-size="11">readouts / meta</text>
+  <rect class="chip" x="238" y="284" width="180" height="32" rx="4"/>
+  <text class="m" x="250" y="304" font-size="11">stage bar</text>
+  <rect class="chip" x="428" y="284" width="180" height="32" rx="4"/>
+  <text class="m" x="440" y="304" font-size="11">patch dock</text>
+  <rect class="chip" x="48" y="324" width="560" height="30" rx="4"/>
+  <text class="md" x="60" y="343" font-size="10.5">pointer &#183; keyboard &#183; nibble spinbuttons &#183; hex entry &#183; file drop &#183; Escape / shortcuts</text>
+
+  <text class="md" x="660" y="232" font-size="9.5">persistence + reach</text>
+  <rect class="chip" x="660" y="244" width="332" height="30" rx="4"/>
+  <text class="m" x="672" y="263" font-size="11">CSV / TSV dataset</text>
+  <rect class="chip" x="660" y="282" width="332" height="30" rx="4"/>
+  <text class="m" x="672" y="301" font-size="11">.bitwave project (versioned JSON)</text>
+  <rect class="chip" x="660" y="320" width="332" height="30" rx="4"/>
+  <text class="m" x="672" y="339" font-size="11">share URL fragment &#183; autosave</text>
+  <rect class="chip" x="660" y="358" width="332" height="30" rx="4"/>
+  <text class="m" x="672" y="377" font-size="11">observation log export</text>
+
+  <path class="arrow" d="M520 390 L520 446"/>
+  <text class="alabel" x="530" y="420">dispatch + subscribe</text>
+
+  <!-- STATE SPINE -->
+  <text class="h" x="48" y="462">STATE SPINE — one transition funnel</text>
+  <rect class="panel" x="48" y="474" width="944" height="56" rx="5"/>
+  <rect class="chip" x="62" y="486" width="168" height="32" rx="4"/>
+  <text class="m" x="74" y="506" font-size="11">dispatch(action)</text>
+  <path class="arrow" d="M232 502 L252 502"/>
+  <rect class="chip" x="256" y="486" width="168" height="32" rx="4"/>
+  <text class="m" x="268" y="506" font-size="11">base writes</text>
+  <path class="arrow" d="M426 502 L446 502"/>
+  <rect class="chip" x="450" y="486" width="168" height="32" rx="4"/>
+  <text class="m" x="462" y="506" font-size="11">evaluateAll()</text>
+  <path class="arrow" d="M620 502 L640 502"/>
+  <rect class="chip" x="644" y="486" width="180" height="32" rx="4"/>
+  <text class="m" x="656" y="506" font-size="11">frozen view-model</text>
+  <path class="arrow" d="M826 502 L846 502"/>
+  <rect class="chip" x="850" y="486" width="128" height="32" rx="4"/>
+  <text class="m" x="862" y="506" font-size="11">renderers</text>
+
+  <path class="arrow" d="M520 532 L520 570"/>
+  <text class="alabel" x="530" y="552">pure calls</text>
+
+  <!-- CORE -->
+  <text class="h" x="48" y="588">CORE — DOM-free, pure, unit-tested (DESIGN &#167;11 lives here)</text>
+  <rect class="panel" x="48" y="600" width="944" height="82" rx="5"/>
+  <rect class="chip" x="62" y="612" width="176" height="28" rx="4"/><text class="m" x="74" y="630" font-size="10.5">registers &amp; numbers</text>
+  <rect class="chip" x="246" y="612" width="176" height="28" rx="4"/><text class="m" x="258" y="630" font-size="10.5">unary ops</text>
+  <rect class="chip" x="430" y="612" width="176" height="28" rx="4"/><text class="m" x="442" y="630" font-size="10.5">derive (Z / truth / carry)</text>
+  <rect class="chip" x="614" y="612" width="176" height="28" rx="4"/><text class="m" x="626" y="630" font-size="10.5">spline</text>
+  <rect class="chip" x="798" y="612" width="180" height="28" rx="4"/><text class="m" x="810" y="630" font-size="10.5">geometry x(j)</text>
+  <rect class="chip" x="62" y="646" width="176" height="28" rx="4"/><text class="m" x="74" y="664" font-size="10.5">routing graph</text>
+  <rect class="chip" x="246" y="646" width="176" height="28" rx="4"/><text class="m" x="258" y="664" font-size="10.5">evaluateAll / delays</text>
+  <rect class="chip" x="430" y="646" width="176" height="28" rx="4"/><text class="m" x="442" y="664" font-size="10.5">LFO engine</text>
+  <rect class="chip" x="614" y="646" width="176" height="28" rx="4"/><text class="m" x="626" y="664" font-size="10.5">CSV parser</text>
+  <rect class="chip" x="798" y="646" width="180" height="28" rx="4"/><text class="m" x="810" y="664" font-size="10.5">project schema</text>
+
+  <text class="s" x="48" y="696" font-size="9.5">Source is multi-file TypeScript. Only the build inlines it. The core never imports the DOM, so the same engine runs in the browser, the desktop shell and plain Node tests.</text>
+</svg>
