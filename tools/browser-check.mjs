@@ -532,6 +532,168 @@ try {
     return 'A hidden · aria-pressed=false · label now "Show frame A"'
   });
 
+  const frameGlyphs = async () => JSON.parse(await evaluate(`JSON.stringify(
+    [...document.querySelectorAll('#framesBody .frame-row .frame-glyph')].map((el) => el.textContent.trim())
+  )`));
+  const clickSlot = async (key) => {
+    await click(`#slotSeg [data-slot="${key}"]`);
+    await sleep(120);
+  };
+
+  /* 3b. global frame names: A/B C/D E/F + Z1/Z2/Z3 ---------------------- */
+  await runCheck('naming · lanes map to A/B, C/D, E/F and Z1/Z2/Z3', async () => {
+    await loadApp();
+    const labels = {};
+    labels['1'] = await evaluate(`document.getElementById('strip').dataset.edit`);
+    await clickSlot('B');
+    labels['2'] = await evaluate(`document.getElementById('strip').dataset.edit`);
+    await clickSlot('C');
+    labels['3'] = await evaluate(`document.getElementById('strip').dataset.edit`);
+    assert(
+      JSON.stringify(labels) === JSON.stringify({ 1: 'A', 2: 'C', 3: 'E' }),
+      `strip labels per lane: ${JSON.stringify(labels)}`
+    );
+
+    await clickSlot('A');
+    await click('#framesBtn');
+    await waitFor(`!document.getElementById('framesPanel').hidden`, 'frame navigator');
+    const lane1 = await frameGlyphs();
+    await click('#framesBody .lane-btn[data-lane="B"]');
+    await sleep(120);
+    const lane2 = await frameGlyphs();
+    await click('#framesBody .lane-btn[data-lane="C"]');
+    await sleep(120);
+    const lane3 = await frameGlyphs();
+    assert(
+      JSON.stringify(lane1) === JSON.stringify(['A', 'Z1', 'B']),
+      `lane 1 frames: ${JSON.stringify(lane1)}`
+    );
+    assert(
+      JSON.stringify(lane2) === JSON.stringify(['C', 'Z2', 'D']),
+      `lane 2 frames: ${JSON.stringify(lane2)}`
+    );
+    assert(
+      JSON.stringify(lane3) === JSON.stringify(['E', 'Z3', 'F']),
+      `lane 3 frames: ${JSON.stringify(lane3)}`
+    );
+    return 'lane 1 A/Z1/B · lane 2 C/Z2/D · lane 3 E/Z3/F';
+  });
+
+  await runCheck('visibility · eye toggles are per lane', async () => {
+    await click('#framesBody .lane-btn[data-lane="A"]');
+    await sleep(120);
+    await click('#framesBody .frame-row[data-frame="a"] .eye-btn');
+    const lane1Hidden = await evaluate(
+      `document.querySelector('#framesBody .frame-row[data-frame="a"] .eye-btn').getAttribute('aria-pressed')`
+    );
+    await click('#framesBody .lane-btn[data-lane="B"]');
+    await sleep(120);
+    const lane2Visible = await evaluate(
+      `document.querySelector('#framesBody .frame-row[data-frame="a"] .eye-btn').getAttribute('aria-pressed')`
+    );
+    assert(lane1Hidden === 'false', `lane 1 A after hide: ${lane1Hidden}`);
+    assert(lane2Visible === 'true', `lane 2 C should be unaffected: ${lane2Visible}`);
+    return 'hiding A leaves C visible (per-lane visibility)';
+  });
+
+  /* 3c. focus: a frame click is a lens, not a view switch ---------------- */
+  await runCheck('focus · a frame click in 3-D stays in 3-D and retargets the strip', async () => {
+    await loadApp();
+    await click('#depthBtn');
+    assert(
+      (await evaluate(`document.getElementById('depthBtn').getAttribute('aria-pressed')`)) === 'true',
+      '3-D did not turn on'
+    );
+    const entered = JSON.parse(await evaluate(`JSON.stringify({
+      strip: document.getElementById('strip').dataset.edit,
+      readonly: document.getElementById('strip').classList.contains('is-readonly')
+    })`));
+    assert(entered.strip === 'A', `3-D stole focus on entry: strip shows ${entered.strip}`);
+    assert(entered.readonly === false, '3-D should leave A editable');
+    await click('#framesBtn');
+    await waitFor(`!document.getElementById('framesPanel').hidden`, 'frame navigator');
+
+    await click('#framesBody .frame-row[data-frame="a"] .frame-btn');
+    await sleep(150);
+    let state = JSON.parse(await evaluate(`JSON.stringify({
+      view3d: document.getElementById('depthBtn').getAttribute('aria-pressed'),
+      panelOpen: !document.getElementById('framesPanel').hidden,
+      strip: document.getElementById('strip').dataset.edit,
+      readonly: document.getElementById('strip').classList.contains('is-readonly'),
+      stage: document.getElementById('stageBar').textContent
+    })`));
+    assert(state.view3d === 'true', 'focusing A left the 3-D view');
+    assert(state.panelOpen === true, 'the frame navigator closed on focus');
+    assert(state.strip === 'A', `strip after focusing A: ${state.strip}`);
+    assert(state.readonly === false, 'A should be editable');
+    assert(/→ Z1/.test(state.stage), `stage bar: ${JSON.stringify(state.stage)}`);
+
+    const before = JSON.parse(await evaluate(`JSON.stringify({
+      a: document.getElementById('hexA').textContent,
+      z: document.getElementById('hexZ').textContent
+    })`));
+    await click('#framesBody .frame-row[data-frame="z"] .frame-btn');
+    await sleep(150);
+    state = JSON.parse(await evaluate(`JSON.stringify({
+      view3d: document.getElementById('depthBtn').getAttribute('aria-pressed'),
+      strip: document.getElementById('strip').dataset.edit,
+      readonly: document.getElementById('strip').classList.contains('is-readonly'),
+      ariaReadonly: document.getElementById('strip').getAttribute('aria-readonly'),
+      bits: document.querySelectorAll('#nibs .bit').length,
+      hint: document.getElementById('hint').textContent
+    })`));
+    assert(state.view3d === 'true', 'focusing Z1 left the 3-D view');
+    assert(state.strip === 'Z1', `strip after focusing Z1: ${state.strip}`);
+    assert(state.readonly === true && state.ariaReadonly === 'true', 'Z strip is not read-only');
+    assert(state.bits === 64, `strip should show all 64 bits of Z1, found ${state.bits}`);
+    assert(/read-only/.test(state.hint), `hint did not explain read-only: ${JSON.stringify(state.hint)}`);
+
+    await click('#nibs .bit');
+    const after = JSON.parse(await evaluate(`JSON.stringify({
+      a: document.getElementById('hexA').textContent,
+      z: document.getElementById('hexZ').textContent
+    })`));
+    assert(
+      after.a === before.a && after.z === before.z,
+      `a bit click edited through a derived frame: ${JSON.stringify(before)} → ${JSON.stringify(after)}`
+    );
+
+    await click('#framesBody .frame-row[data-frame="b"] .frame-btn');
+    await sleep(150);
+    const b = JSON.parse(await evaluate(`JSON.stringify({
+      strip: document.getElementById('strip').dataset.edit,
+      readonly: document.getElementById('strip').classList.contains('is-readonly')
+    })`));
+    assert(b.strip === 'B' && b.readonly === false, `focusing B: ${JSON.stringify(b)}`);
+    return 'A → B editable · Z1 read-only · 3-D stayed on · panel stayed open';
+  });
+
+  await runCheck('focus · names follow the lane in the stage bar and readouts', async () => {
+    await click('#framesBody .lane-btn[data-lane="B"]');
+    await sleep(150);
+    const lane2 = JSON.parse(await evaluate(`JSON.stringify({
+      strip: document.getElementById('strip').dataset.edit,
+      stage: document.getElementById('stageBar').textContent,
+      a: document.getElementById('hexA').previousElementSibling.textContent,
+      b: document.getElementById('hexB').previousElementSibling.textContent,
+      z: document.getElementById('hexZ').previousElementSibling.textContent,
+      truth: document.querySelector('#truth .truth-h').textContent
+    })`));
+    assert(lane2.strip === 'C', `lane 2 strip: ${lane2.strip}`);
+    assert(/LANE 2 · C.*D.*→ Z2/.test(lane2.stage), `lane 2 stage: ${JSON.stringify(lane2.stage)}`);
+    assert(lane2.a === 'C' && lane2.b === 'D' && lane2.z === 'Z2', `lane 2 readout labels: ${JSON.stringify(lane2)}`);
+    assert(/C.*D.*→ Z2/.test(lane2.truth), `lane 2 truth header: ${JSON.stringify(lane2.truth)}`);
+
+    await clickSlot('C');
+    const lane3 = JSON.parse(await evaluate(`JSON.stringify({
+      strip: document.getElementById('strip').dataset.edit,
+      stage: document.getElementById('stageBar').textContent
+    })`));
+    assert(lane3.strip === 'E', `lane 3 strip: ${lane3.strip}`);
+    assert(/LANE 3 · E.*F.*→ Z3/.test(lane3.stage), `lane 3 stage: ${JSON.stringify(lane3.stage)}`);
+    return 'lane 2 C/D/Z2 · lane 3 E/F/Z3 in strip, stage bar, readouts and truth';
+  });
+
   /* 4. 3-D field -------------------------------------------------------- */
   await runCheck('3d · depth field shows A/B/Z with Z = A xor B', async () => {
     await loadApp();
@@ -681,6 +843,23 @@ try {
       });
       await shoot('06-breakpoint-720.png', {
         prepare: async () => loadApp({ width: 720, height: 900 }),
+        settle: 600,
+      });
+      await shoot('07-3d-focus-z1.png', {
+        prepare: async () => {
+          await loadApp();
+          await click('#depthBtn');
+          await click('#framesBtn');
+          await click('#framesBody .frame-row[data-frame="z"] .frame-btn');
+        },
+        settle: 800,
+      });
+      await shoot('08-2d-focus-z1.png', {
+        prepare: async () => {
+          await loadApp();
+          await click('#framesBtn');
+          await click('#framesBody .frame-row[data-frame="z"] .frame-btn');
+        },
         settle: 600,
       });
 

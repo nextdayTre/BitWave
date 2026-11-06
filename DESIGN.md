@@ -17,8 +17,10 @@ rewrites the bits and reshapes the wave. Bitwise operations are DSP operations �
 `ROL` is a phase shift, `XOR` is a wavefolder, `NOT` is polarity inversion, `BSWAP` is an
 endianness swap.
 
-Two operands (A, B) feed a derived result (Z), so binary logic is *watched* rather than
-computed on paper.
+Two operands feed a derived result in each of three lanes — lane 1 frames A/B → Z1,
+lane 2 C/D → Z2, lane 3 E/F → Z3 — so binary logic is *watched* rather than computed
+on paper. Frame names are global: the six operand frames A–F are the only routing
+destinations, and the nine frame outputs A–F + Z1–Z3 are the routing sources.
 
 **Non-goals.** Not a game. Not a dashboard. Not a marketing surface. There is no
 onboarding, no trophy, no confetti. The reward is watching the number and the shape be
@@ -151,20 +153,38 @@ the bits desync.
 
 These are mathematical invariants, not styling. Breaking one breaks the concept.
 
+### Frames and their names
+Three lanes, each a three-frame device. Frame names are **global**, not per-lane
+(author, 2026-11-06):
+
+| Lane | Operands | Derived |
+|---|---|---|
+| 1 | A, B | Z1 |
+| 2 | C, D | Z2 |
+| 3 | E, F | Z3 |
+
+The six operand frames A–F are the only routing destinations; the nine frame
+outputs A–F + Z1–Z3 are routing sources. Every surface that names a frame — strip
+label, legend, frame navigator, stage bar, truth header, 3-D plate label — uses the
+focused lane's global name, never a per-lane `A`/`B`/`Z`.
+
 ### Registers
+The focused lane's three frames (lane 1 shown; lane 2 is C/D/Z2, lane 3 E/F/Z3):
+
 | | | |
 |---|---|---|
 | **A** | operand | editable |
 | **B** | operand | editable, only exists in A·B mode |
-| **Z** | `A op B` | **derived, never editable** |
+| **Z1** | `A op B` | **derived, never editable** |
 
-There is exactly one **edit target** (`S.edit`): the register that drags, presets, and
-unary ops act on. The bit strip always shows the edit target and labels itself via
-`data-edit`. With two operands live, grabbing picks whichever **curve is nearer the
-pointer** — the instrument must never make you hunt for a knob.
+There is exactly one **edit target** (`S.edit`): the operand that drags, presets, and
+unary ops act on. The bit strip shows the **focused frame** (`S.focus`): an operand is
+editable and labelled; a derived frame is shown **read-only**. With two operands live,
+grabbing picks whichever **curve is nearer the pointer** and focuses that operand — the
+instrument must never make you hunt for a knob.
 
-`Z` is recomputed on every change and eased like a real register, so the result *moves*
-into place rather than snapping.
+`Z1`/`Z2`/`Z3` are recomputed on every change and eased like a real register, so the
+result *moves* into place rather than snapping.
 
 ### The truth table is data, not a reference card
 The `n` column counts how many bit positions in A and B actually hold each input pair.
@@ -298,8 +318,9 @@ The easing constant is deliberately high (`0.24`) — fast enough to feel like t
 - **Truth table** (`.truth`) — mono 10.5px, 4 columns `a b → n`. The `n` column is
   separated by a 1px rule: it is data *about* the register, not part of the algebra, and
   must not read as a fifth logic cell.
-- **Strip label** (`strip::before`, `data-edit`) — a 9px `A`/`B` in the left gutter naming
-  which register the strip is showing. Without it, A·B mode has no way to tell.
+- **Strip label** (`strip::before`, `data-edit`) — a 9px frame name (`A`, `D`, `Z2`, …)
+  in the left gutter naming the frame the strip is showing. Derived frames are
+  read-only, and the label says which one. Without it, A·B mode has no way to tell.
 - **Value rows** (`.dec`, `.wt`) — `.dec` is the nibble's own value `0–15` (its share of
   the vertical axis); `.wt` is the position's place value `2^k`. `.wt` is deliberately
   quieter than `.dec`: **weight is structure, value is data** (§3). In compact mode `.wt`
@@ -310,8 +331,9 @@ The easing constant is deliberately high (`0.24`) — fast enough to feel like t
 - **Off bits are `--dimmer` on purpose.** Against near-black they visually recede, so at
   256-bit density the strip reads as *set bits* rather than as digits — which is why the
   `dec` row exists. Do not "fix" the dim zeros; they *are* the hierarchy.
-- **3-D field** (`drawField3d`) — three planes in axonometric projection: **A at frame 1
-  (far), Z at frame 128 (middle), B at frame 256 (near)**, joined by four volume edges.
+- **3-D field** (`drawField3d`) — three planes in axonometric projection: **the first
+  operand at frame 1 (far), the derived frame at 128 (middle), the second operand at
+  256 (near)**, joined by four volume edges.
   **Outline only — never rectangle fills.** Translucent fills composite additively where
   planes overlap, so the intersections light up and the box reads as stacked panels rather
   than one volume. Appearance is a **monotonic function of depth**: alpha `0.30 → 0.85`
@@ -319,13 +341,15 @@ The easing constant is deliberately high (`0.24`) — fast enough to feel like t
   **dash**, never by brightness. The box width is aspect-clamped (`min(paneW, ph × 2.45)`)
   so ultra-wide displays do not flatten the axonometric angle, while preserving the exact
   `0.58 / 0.48 / 0.14 / 0.155` plane-to-offset proportions. Plate labels reflect the live
-  operator (`128 · Z · A ⊕ B`) and any routed CSV column names. The depth axis shows the
+  operator and the focused lane's frame names (`128 · Z1 · A ⊕ B`, or `C ⊕ D → Z2` in
+  lane 2) plus any routed CSV column names. The depth axis shows the
   *relationship between the inputs and the result*; it deliberately does **not** imply 256
   morphing frames.
-- **Multi-view slots & parallel 3-D split** (`slotSeg`, `splitBtn`, `copySlotBtn`,
-  `.stage-bar`) — three independent display slots (`A`, `B`, `C`) sharing register width
-  `S.N`, each holding its own `(A, B, Z)` registers, binary/arithmetic operator, B-phase,
-  and CSV `(colA, colB)` routing. `copy →` clones the focused slot into another slot.
+- **Multi-view lanes & parallel 3-D split** (`slotSeg`, `splitBtn`, `copySlotBtn`,
+  `.stage-bar`) — three independent lanes (`1`, `2`, `3`; internal keys `A`/`B`/`C`)
+  sharing register width `S.N`, each holding its own operand pair and derived frame
+  (`A/B/Z1`, `C/D/Z2`, `E/F/Z3`), binary/arithmetic operator, B-phase,
+  and CSV `(colA, colB)` routing. `copy →` clones the focused lane into another lane.
   `split` divides the 3-D stage into two side-by-side axonometric visualizers separated by
   a `1px` `--line` rule while keeping the single bottom strip, truth table, and controls
   bound to the focused slot (`S.slot`). Drawn exclusively from `--panel-hi`, `--line`,
@@ -369,12 +393,13 @@ something that looked fine until it was measured.
    reverses at render time only. Ops (`ROL`/`SHL`) depend on hardware order.
 7. **Any new colour becomes a `:root` token,** and any canvas use of it must read the
    token via `getComputedStyle` (canvas cannot resolve CSS vars itself).
-8. **`Z` must never become editable.** No drag target, no preset target, no unary-op
-   target. The moment you can edit the result it stops being a result and the A·B model
-   collapses.
+8. **A derived frame must never become editable.** No drag target, no preset target, no
+   unary-op target, no bit click, no wheel — for Z1, Z2 and Z3 alike. Focusing one shows
+   it read-only in the strip. The moment you can edit the result it stops being a result
+   and the A·B model collapses.
 9. **`recomputeZ()` must follow every mutation of A, B, or `binop`** — including mid-drag,
-   where it runs on every `pointermove`. A stale Z shows the wrong answer with no error
-   and no visual tell.
+   where it runs on every `pointermove`. A stale Z1/Z2/Z3 shows the wrong answer with no
+   error and no visual tell.
 10. **`nibAt()` reads `S.N`.** Every register's nibbles must be read *before* `S.N` changes
     in `resizeRegister()`, or resize silently corrupts the value mapping.
 11. **Flipping `S.compact` must re-render the strip**, not just toggle the class. The
@@ -383,15 +408,15 @@ something that looked fine until it was measured.
 12. **The 3-D field is read-only.** It returns early before the handles, hover readout and
     ∞ marker. Projected planes make hit-testing ambiguous, so editing belongs in 2-D —
     the field is a lens, not an editor.
-13. **3-D brings B into existence.** A and B are the two ends of the wavetable, so the
-    field is meaningless without both operands; entering it enables B if it is off.
+13. **3-D brings the second operand into existence.** The two operands are the ends of the
+    wavetable, so the field is meaningless without both; entering it enables B/D/F if off.
 14. **The planes must be smaller than the offsets between them** (`iw 0.58pw`,
     `ih 0.48ph`, `dx 0.14pw`, `dy 0.155ph`). At `0.78 / 0.72` three similar waveforms
     collapse into one illegible blob — measured, not guessed.
 15. **Never highlight the middle plane.** Depth is read from a monotonic far→near ramp;
     a glow or hue change on frame 128 inverts the ordering and flattens the box back into
-    2.5-D. This was shipped once and rejected on sight. If Z needs to stand out, its
-    central position and its frame label already do that.
+    2.5-D. This was shipped once and rejected on sight. If the derived frame needs to stand
+    out, its central position and its frame label already do that.
 16. **CSV values are right-aligned into the register**, zero-padded on the left, so a
     cell's *numeric* value is preserved (`0xDEAD` in 64 bits = `0x000000000000DEAD`).
     Overflow truncates the high bits.
@@ -413,6 +438,20 @@ something that looked fine until it was measured.
     3-D stops easing `B` and `Z` while the 3-D volume continues rendering them.
 23. **Split 3-D subdivides only the canvas plot, never `G.x0..G.x1` or `--pad`.** The bit
     strip must remain full-width and 0px column-aligned across view toggles.
+24. **A frame click is a lens, never a view switch.** Focusing a frame in the navigator
+    must not leave the current view (2-D or 3-D), must not close the navigator, and must
+    not change the depth field; it retargets the strip, readouts, truth header, stage bar
+    and navigator active row only.
+25. **A focused derived frame is read-only.** Focusing Z1/Z2/Z3 shows its 64/128/256 bits
+    in the strip with no handles, no bit click, no wheel and no canvas drag; operands stay
+    the only edit targets. A write path that ignores focus is a bug.
+26. **Frame names are global.** Six operand frames `A`–`F` (lane 1 A/B, lane 2 C/D, lane 3
+    E/F) and three derived `Z1`/`Z2`/`Z3`. Every naming surface uses the focused lane's
+    name; a bare `Z` or a per-lane `A/B/Z` triple is stale terminology. Visibility eyes
+    are **per lane**, so hiding A does not hide C.
+27. **Focus is per lane and survives lane switches and 3-D entry.** `enableBOnSlot()` may
+    seed the second operand but must not steal focus; the frame you chose stays the frame
+    the strip shows.
 
 ---
 
@@ -432,6 +471,11 @@ The visual contract is measurable, so measure it rather than eyeballing:
   XOR → `7521012585210125`, AND → `8ADEFEDA00000000`, OR → `FFFFFFFF85210125`.
 - Truth counts for that pair = `23, 11, 9, 21`; `popcount(Z xor) = 20`, `popcount(Z and) = 21`.
 - Editing B must not touch A (`NOT` on B leaves A byte-identical) and must re-derive Z.
+- Frame focus: from the navigator, clicking A/B/Z1 in a 3-D view must leave the view and
+  the panel in place, retarget the strip label, and keep Z1's strip read-only (a bit click
+  must not change any operand).
+- Frame names: lane 1 reads A/Z1/B, lane 2 C/Z2/D, lane 3 E/Z3/F in the navigator, strip
+  label, stage bar, truth header and A/B/Z readouts; hiding A in lane 1 leaves C visible.
 
 A headless-Chrome CDP pass drives these in seconds: `npm run check:browser`
 ([`tools/browser-check.mjs`](tools/browser-check.mjs), zero dependencies) asserts
@@ -457,10 +501,15 @@ them.
   axonometric box. The result sits *between* the operands, which is the whole point.
 - **CSV example stepper** — load a CSV/TSV, pick the A and B columns, and step rows like
   slides. Register size auto-fits the chosen column; binary and hex columns both parse.
-- **Multi-view A/B/C slots + parallel 3-D split** — three independent register/op/CSV
-  routing slots (`A`, `B`, `C`) with `copy →` cloning and side-by-side 3-D split mode,
-  enabling 4+ CSV columns (or distinct operators like `XOR` vs `SUB`) to be compared in
-  parallel across manual steps and LFO cycles.
+- **Multi-view lanes + parallel 3-D split** — three independent register/op/CSV lanes
+  (`1`, `2`, `3`) with `copy →` cloning and side-by-side 3-D split mode, enabling 4+ CSV
+  columns (or distinct operators like `XOR` vs `SUB`) to be compared in parallel across
+  manual steps and LFO cycles.
+- **Global frame names + focus lens** — lane 1 is A/B/Z1, lane 2 C/D/Z2, lane 3 E/F/Z3;
+  the six operand frames A–F are the matrix's fixed rows and A–F + Z1–Z3 its sources.
+  Clicking a frame in the navigator focuses it in place: the view does not change, the
+  panel stays open, operands stay editable and derived frames are shown read-only. The
+  strip, legend, stage bar, truth header and readouts all follow the focused lane's names.
 
 ### Next
 

@@ -1,35 +1,37 @@
 # BitWave — implementation status
 
-**Updated:** 2026-11-06 · **Phase:** F0 browser harness **done**, F1 core **done**, F3 source-table housing spike **done**.
+**Updated:** 2026-11-06 · **Phase:** F0 browser harness **done**, F1 core **done**, F3 source-table housing spike **done**; frame names and the focus lens **shipped in v2**.
 **Source of truth:** [`PLAN.md`](PLAN.md) for the plan, [`DECISIONS.md`](DECISIONS.md) for choices taken, [`DESIGN.md`](DESIGN.md) for the visual contract. `index.html` is still untouched and remains the shipping instrument.
 
 ## Author decisions (2026-11-06)
 
-1. **Lanes are 1 / 2 / 3** — UI, docs and code. Letters belong only to frames/operands (A, Z, B). The A/B/C-vs-A/B naming collision is gone. Done in the core; the app UI follows at F2/F4.
+1. **Lanes are 1 / 2 / 3** — UI, docs and code. Letters belong only to frames/operands. The A/B/C-vs-A/B naming collision is gone.
 2. **Routing is the existing CSV column dropdown, not a new subsystem.** The six operand inputs already have source dropdowns (`colA`/`colB` in the `data` group). The matrix is only the structural housing — one fixed row per input — and the only new source group is frame outputs. No separate import path, no routing mode.
 3. **No cable graphics, ever.** The cable spike and patch-model diagram are retired.
 4. **Dimming is hands-off.** No contrast/token changes; colour and intensity are a future mapping axis. Q8 is closed.
+5. **Frame names are global** (D15): lane 1 = A/B/Z1, lane 2 = C/D/Z2, lane 3 = E/F/Z3. The six operand frames A–F are the matrix destinations; A–F + Z1–Z3 are the nine frame sources. `.bitwave` frame keys stay per-lane `a`/`b`/`z`.
+6. **A frame click is a focus lens** (D16): it never leaves the current view or closes the navigator; operands stay editable, derived frames are read-only, and the 3-D view no longer keeps B as the static frame.
 
 ## Author notes for F3 (2026-11-06)
 
-**Matrix labels follow the CSV import.** When a dataset is imported, the frame
-assignment taken from a CSV column is what the matrix frame label should show;
-without an import the matrix falls back to the fixed `Lane 1/2/3 · Frame A/B/Z`
-labels. The existing CSV column dropdown is the intended mechanism, not a second
-import path. Cross-lane routing (`1·Z → 2·A`) remains a wanted feature.
+**Matrix labels follow the CSV import.** Default (no import): the fixed global frame
+labels above — six operand rows A–F. With a dataset imported, the frame assignment taken
+from a CSV column is what the matrix frame label should show; that information is already
+in the existing column dropdown, so it is not a second import path.
 
 Recorded verbatim:
 
 > If CSV Import = True, then [Frame Assignment FROM CSV Column] = [Frame Label in Matrix]
 
-The exact label shape (which column shows the imported name) is pinned down
-before F3 ships.
+The prototype currently reads `Lane 1 · A | data · sine | data`. Open detail for F3:
+should the frame label carry the column (`Lane 1 · A · sine`), or is naming the SOURCE
+cell enough? Confirm before the matrix lands in the app.
 
 ## Where we are
 
 | Phase | Status | Notes |
 |---|---|---|
-| **F0 Baseline** | **Unblocked** | Git, zero-dep unit suite (38) and a checked-in browser harness (17 checks) now verify the shipped artifact over `file://`; Vite/`tsc`/Vitest/Playwright stay deferred by D5. |
+| **F0 Baseline** | **Unblocked** | Git, zero-dep unit suite (38) and a checked-in browser harness (20 checks, 21 with `--shots`) verify the shipped artifact over `file://`; Vite/`tsc`/Vitest/Playwright stay deferred by D5. |
 | **F1 Core + routing engine** | **Done** | 11 DOM-free modules; lanes 1/2/3; 38 tests green. |
 | **F2 State spine + renderers** | Next | Wire the core through a store + renderer adapters; join the CSV column bindings and frame routes into one binding model. |
 | **F3 Source-table housing** | **Spike done** | Six fixed input rows, one source each; SOURCE = data column or frame output; STATE = `data`/`1:1`/`z⁻¹`. No add/remove, no new mode, no new state. |
@@ -38,13 +40,19 @@ before F3 ships.
 ## Verified this session
 
 - `npm test` → **38 tests, 38 pass, 0 fail, ~120 ms**.
-- `npm run check:browser` → **16/16 checks pass** (17/17 with `--shots`) on `bitwave-v2.html`:
+- `npm run check:browser` → **20/20 checks pass** (21/21 with `--shots`) on `bitwave-v2.html`:
   zero console errors; no overflow or clipped controls at 360/420/720/1440;
   `canvas.width` = viewport; `--pad` 40/16 and compact mode per DESIGN §5/§9;
   strip gap/nibble width follow the §5 formula (1440: gap 12.00, nibble 73.75);
-  frame navigator + eye toggles; 3-D `Z = A xor B`, truth counts `23/11/9/21`,
-  `popcount(Z) = 20`; CSV import binds the widest column and the §11
-  ROL/NOT/BSWAP vectors hold; default state renders byte-identically.
+  frame navigator + per-lane eye toggles; 3-D `Z = A xor B`, truth counts `23/11/9/21`,
+  `popcount(Z) = 20`; CSV import binds the widest column and the §11 ROL/NOT/BSWAP
+  vectors hold; frame names A/B C/D E/F + Z1/Z2/Z3 and the focus lens hold in 2-D and
+  3-D; default state renders byte-identically.
+- **Shipped this session:** global frame names (D15) and the frame focus lens (D16/D17)
+  in `bitwave-v2.html` and the housing spike: lane 1 A/Z1/B, lane 2 C/Z2/D, lane 3 E/Z3/F
+  in the navigator, strip label, legend, stage bar, truth header, readouts and 3-D plate
+  labels. Clicking a frame no longer leaves 3-D or closes the navigator; Z1/Z2/Z3 focus
+  read-only; `enableBOnSlot()` no longer steals focus; the eyes are per lane.
 - Housing visual pass: spike at 360/720/1440 px; six rows × 14 options; rebinding
   updates only the STATE chip + status and keeps focus; no horizontal overflow.
 - **Drift found and fixed:** `--pad` was written with a second, hard-coded 680 px
@@ -66,9 +74,9 @@ before F3 ships.
 | [`tests/`](tests/design-invariants.test.ts) | 4 test files, ~630 lines, 38 vectors + properties |
 | [`examples/demo.bitwave.json`](examples/demo.bitwave.json) | Versioned project document (lanes 1/2/3; routes + parked bases; dataset) |
 | [`spike/routing-matrix.html`](spike/routing-matrix.html) | Six-row source-table housing prototype (360 lines) |
-| [`tools/browser-check.mjs`](tools/browser-check.mjs) | Zero-dependency CDP harness: 17 checks on the shipped file over `file://` |
+| [`tools/browser-check.mjs`](tools/browser-check.mjs) | Zero-dependency CDP harness: 20 checks (21 with `--shots`) on the shipped file over `file://` |
 | [`tools/make-example-project.ts`](tools/make-example-project.ts) | Regenerates the example |
-| [`DECISIONS.md`](DECISIONS.md) | D1–D14, including the author decisions above |
+| [`DECISIONS.md`](DECISIONS.md) | D1–D17, including the author decisions above |
 
 ## Known gaps and blockers
 
@@ -103,6 +111,7 @@ before F3 ships.
    the first agent/test seam.
 2. **F3 in the app:** replace the per-lane `colA`/`colB` selects with the six-row
    source table; keep import/typing/alignment identical; add frame sources and
-   `z⁻¹` state. Labels follow the author note above — confirm the label shape first.
+   `z⁻¹` state. Rows are the six operand frames A–F (D15); confirm the CSV label
+   shape from the author note before wiring the imported column name.
 3. **F4:** roles/keyboard/targets/reduced motion/reflow, including the measured
    zoom clipping; **do not touch the palette** (Q8 closed).

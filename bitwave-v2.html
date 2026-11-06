@@ -3,12 +3,15 @@
   bitwave-v2.html — full-feature iteration of index.html.
 
   Same engine, same visual system, same feature set. User-facing changes only:
-    · lanes are numbered 1 / 2 / 3 (letters now mean operands/frames only)
-    · a Pro-Q4-style frame navigator browses lanes and their A/Z/B frames
-      with static mini-curves; selecting a frame focuses/edits it, and an
-      eye toggle shows/hides that frame in the 2D view
-    · the old "logic B" toggle and 2D/3D segment are gone: the navigator
-      enables/selects B, and one "3D" toggle switches the depth field
+    · lanes are numbered 1 / 2 / 3 (letters now mean frames/operands only)
+    · frame names are global: lane 1 A/B/Z1, lane 2 C/D/Z2, lane 3 E/F/Z3
+    · a Pro-Q4-style frame navigator browses lanes and their frames with static
+      mini-curves; clicking a frame focuses it in place (2-D or 3-D), and an eye
+      toggle shows/hides that lane's frame in the 2D view
+    · focus is a lens, not navigation: derived frames focus read-only, the view
+      never switches and the navigator never closes on a frame click
+    · the old "logic B" toggle and 2D/3D segment are gone: the navigator shows
+      the frames, and one "3D" toggle switches the depth field
     · lane controls and display controls are separate groups
     · copy mode says what it does and Escape cancels it
     · segmented controls expose aria-pressed; ambiguous preset names are labelled
@@ -565,6 +568,11 @@
   .strip.compact .dec { font-size: 0.6em; line-height: 1.35; }
   .strip.compact .wt { font-size: 0.66em; }
 
+  /* Z is a lens, not an editor: focusing a derived frame shows its bits
+     without offering an edit (DESIGN §10.8). */
+  .strip.is-readonly .bit:hover { background: transparent; }
+  .strip.is-readonly .nib.hot { background: transparent; }
+
   /* ── meta readout ─────────────────────────────────────── */
   .meta {
     display: flex;
@@ -805,7 +813,7 @@
     </div>
     <div class="fp-body" id="framesBody"></div>
     <div class="fp-foot">
-      <span>A solid · Z glow · B dashed</span>
+      <span id="framesLegend">A solid · Z1 glow · B dashed</span>
       <button class="op" id="unpairB" type="button" hidden title="Remove operand B from this lane">unpair B</button>
     </div>
   </aside>
@@ -826,7 +834,7 @@
   <div class="abOnly kv"><span>A</span><code id="hexA">—</code></div>
   <div class="abOnly kv"><span>B</span><code id="hexB">—</code></div>
   <div class="abOnly kv"><span>Z</span><code id="hexZ">—</code></div>
-  <div class="abOnly kv"><span>pop z</span><code id="pop">—</code></div>
+  <div class="abOnly kv"><span>pop Z1</span><code id="pop">—</code></div>
 </section>
 
 <section class="controls">
@@ -949,6 +957,17 @@
      settings and shortcuts. Letters therefore mean operands/frames only. */
   const LANE_LABEL = { A: "1", B: "2", C: "3" };
   const laneLabel = (key) => LANE_LABEL[key] || key;
+
+  /* Global frame names (author, 2026-11-06): operands are A/B, C/D, E/F and
+     the derived frame is Z1/Z2/Z3. Frames are unique across lanes, so the
+     source matrix lists six operand rows (A–F) and nine frame outputs. */
+  const FRAME_NAMES = {
+    A: { a: "A", b: "B", z: "Z1" },
+    B: { a: "C", b: "D", z: "Z2" },
+    C: { a: "E", b: "F", z: "Z3" },
+  };
+  const frameName = (laneKey, frame) =>
+    (FRAME_NAMES[laneKey] || FRAME_NAMES.A)[frame] || frame.toUpperCase();
   const OPSYM = { and: "∧", or: "∨", xor: "⊕", add: "+", sub: "\u2212" };
   const DEMO = { cols: [], rows: [], i: 0 };
 
@@ -969,6 +988,8 @@
     showB: false,
     binop,
     edit: "a",           // "a" | "b" — which operand drags/presets act on
+    focus: "a",          // "a" | "b" | "z" — which frame the strip/readouts show
+    frameVis: { a: true, b: true, z: true },  // 2-D per-lane frame visibility
     seededB: false,
     lfoB: "0",
     colA: -1,
@@ -989,8 +1010,6 @@
     copyArmed: false,
     compact: false,
     view3d: false,
-    /* 2-D frame visibility (eye toggles in the frame navigator). */
-    frameVis: { a: true, b: true, z: true },
     lfo: { on: false, mode: "rotcw", rate: 4, t: 0, base: null },
     lfoAcc: 0,
     drag: -1,
@@ -1022,6 +1041,16 @@
   const regOf = (k, sl = curSlot()) => (k === "b" ? sl.B : k === "z" ? sl.Z : sl.A);
   const editKey = (sl = curSlot()) => (sl.showB && sl.edit === "b" ? "b" : "a");
   const editReg = (sl = curSlot()) => regOf(editKey(sl), sl);
+
+  /* Focus is what the strip and readouts show; edit is what a write targets.
+     Z can be focused but never edited (DESIGN §10.8), so its strip is read-only. */
+  const focusKey = (sl = curSlot()) => {
+    if (sl.focus === "z") return "z";
+    return sl.showB && sl.focus === "b" ? "b" : "a";
+  };
+  const focusReg = (sl = curSlot()) => regOf(focusKey(sl), sl);
+  const focusEditable = (sl = curSlot()) => focusKey(sl) !== "z";
+  const frameLabel = (sl = curSlot(), frame = focusKey(sl)) => frameName(sl.key, frame);
 
   function nibAt(bits, j) {
     const b = S.N - 1 - 4 * j;
@@ -1302,9 +1331,9 @@
 
   function drawLegend(x1, ly) {
     const items = [
-      { key: "a", t: "A", w: 1.8, dash: null, a: 0.82 },
-      { key: "b", t: "B", w: 1.8, dash: [6, 4], a: 0.82 },
-      { key: "z", t: "Z", w: 2.5, dash: null, a: 1 },
+      { key: "a", t: frameName(S.slot, "a"), w: 1.8, dash: null, a: 0.82 },
+      { key: "b", t: frameName(S.slot, "b"), w: 1.8, dash: [6, 4], a: 0.82 },
+      { key: "z", t: frameName(S.slot, "z"), w: 2.5, dash: null, a: 1 },
     ];
     ctx.font = `10px ${MONO}`;
     ctx.textBaseline = "middle";
@@ -1322,7 +1351,7 @@
     let lx = x1 - total;
     const hits = [];
     for (const it of items) {
-      const vis = S.frameVis[it.key];
+      const vis = curSlot().frameVis[it.key];
       drawEyeGlyph(lx + 7, ly, vis);
       ctx.save();
       ctx.setLineDash(it.dash || []);
@@ -1441,9 +1470,12 @@
     const colBName = showCol && sl.colB >= 0 && DEMO.cols[sl.colB] ? ` \u00B7 ${shortCol(DEMO.cols[sl.colB])}` : "";
     const sym = OPSYM[sl.binop] || "\u2295";
 
-    plate(sl.A, 1, { label: `1 \u00B7 A${colAName}` });
-    plate(sl.Z, 0, { label: `128 \u00B7 Z \u00B7 A ${sym} B` });
-    plate(sl.B, -1, { label: `256 \u00B7 B${colBName}`, dash: [6, 4] });
+    const fa = frameName(sl.key, "a");
+    const fb = frameName(sl.key, "b");
+    const fz = frameName(sl.key, "z");
+    plate(sl.A, 1, { label: `1 \u00B7 ${fa}${colAName}` });
+    plate(sl.Z, 0, { label: `128 \u00B7 ${fz} \u00B7 ${fa} ${sym} ${fb}` });
+    plate(sl.B, -1, { label: `256 \u00B7 ${fb}${colBName}`, dash: [6, 4] });
   }
 
   /* Ruler, zero-crossing level and the ∞ axis. Drawn after the depth stack
@@ -1533,7 +1565,7 @@
     ctx.lineJoin = "round";
     ctx.lineCap = "round";
 
-    const ek = editKey();
+    const ek = focusKey();
     let handleSp = null;
 
     if (S.view3d) {
@@ -1587,39 +1619,41 @@
       /* nothing further — the field is complete */
     } else if (!S.showB) {
       const spA = spFor(S.A);
-      G.spA = S.frameVis.a ? spA : null;
+      G.spA = curSlot().frameVis.a ? spA : null;
       G.spB = null;
-      if (S.frameVis.a) paintCurve(spA, { width: 2.2, grad: true, glow: true });
-      handleSp = S.frameVis.a ? spA : null;
+      if (curSlot().frameVis.a) paintCurve(spA, { width: 2.2, grad: true, glow: true });
+      handleSp = ek !== "z" && curSlot().frameVis.a ? spA : null;
     } else {
       const spA = spFor(S.A);
       const spB = spFor(S.B);
       const spZ = spFor(S.Z);
-      G.spA = S.frameVis.a ? spA : null;
-      G.spB = S.frameVis.b ? spB : null;
+      G.spA = curSlot().frameVis.a ? spA : null;
+      G.spB = curSlot().frameVis.b ? spB : null;
 
       /* The operand you can edit outweighs its mode-mate, so the
          instrument always shows you where your hands are. */
-      if (S.frameVis.a) {
+      if (curSlot().frameVis.a) {
         paintCurve(spA, {
           width: ek === "a" ? 1.8 : 1.3,
           dash: null,
           color: `rgba(52,211,153,${ek === "a" ? 0.82 : 0.3})`,
         });
       }
-      if (S.frameVis.b) {
+      if (curSlot().frameVis.b) {
         paintCurve(spB, {
           width: ek === "b" ? 1.8 : 1.3,
           dash: [6, 4],
           color: `rgba(52,211,153,${ek === "b" ? 0.82 : 0.3})`,
         });
       }
-      if (S.frameVis.z) paintCurve(spZ, { width: 2.5, grad: true, glow: true });
+      if (curSlot().frameVis.z) paintCurve(spZ, { width: 2.5, grad: true, glow: true });
 
       drawLegend(x1, y0 + 8);
-      handleSp = ek === "b"
-        ? (S.frameVis.b ? spB : null)
-        : (S.frameVis.a ? spA : null);
+      handleSp = ek === "z"
+        ? null
+        : ek === "b"
+          ? (curSlot().frameVis.b ? spB : null)
+          : (curSlot().frameVis.a ? spA : null);
     }
 
     /* handles — only on the operand you can actually edit */
@@ -1709,9 +1743,10 @@
 
   /* The strip always shows the register you are editing. */
   function renderStrip() {
-    const r = editReg();
+    const r = focusReg();
     const n = nibCount();
     const compact = S.compact;
+    const readonly = !focusEditable();
 
     const midA = S.N / 2 - 1;
     const midB = S.N / 2;
@@ -1743,7 +1778,9 @@
       html += `</div>`;
     }
     nibsEl.innerHTML = html;
-    stripEl.dataset.edit = editKey().toUpperCase();
+    stripEl.dataset.edit = frameLabel();
+    stripEl.classList.toggle("is-readonly", readonly);
+    stripEl.setAttribute("aria-readonly", readonly ? "true" : "false");
     syncHoverClasses();
   }
 
@@ -1766,8 +1803,9 @@
 
   function syncHoverClasses() {
     const kids = nibsEl.children;
+    const hotKey = focusKey();
     for (let j = 0; j < kids.length; j++) {
-      kids[j].classList.toggle("hot", j === S.hoverJ && S.hoverReg === editKey());
+      kids[j].classList.toggle("hot", j === S.hoverJ && S.hoverReg === hotKey);
     }
   }
 
@@ -1797,6 +1835,9 @@
      positions in A and B actually hold each input pair, so the four
      counts always sum to the register width. */
   function renderTruth() {
+    const fa = frameName(S.slot, "a");
+    const fb = frameName(S.slot, "b");
+    const fz = frameName(S.slot, "z");
     /* Arithmetic has no four-row truth table: the result depends on the
        whole word through the carry/borrow, not on the bit pair. */
     if (isArith()) {
@@ -1807,7 +1848,7 @@
         : a < b;
       const label = S.binop === "add" ? "carry out" : "borrow out";
       truthEl.innerHTML =
-        `<div class="truth-h">A ${OPSYM[S.binop]} B → Z</div>` +
+        `<div class="truth-h">${fa} ${OPSYM[S.binop]} ${fb} → ${fz}</div>` +
         `<div class="truth-grid ar">` +
         `<span class="th">${label}</span>` +
         `<span class="ct${over ? " yes" : ""}">${over ? "yes" : "no"}</span>` +
@@ -1820,7 +1861,7 @@
       counts[(S.A.bits[i] << 1) | S.B.bits[i]]++;
     }
 
-    let html = `<div class="truth-h">A ${OPSYM[S.binop]} B → Z</div>`;
+    let html = `<div class="truth-h">${fa} ${OPSYM[S.binop]} ${fb} → ${fz}</div>`;
     html += `<div class="truth-grid">`;
     html += `<span class="th">a</span><span class="th">b</span><span class="th">→</span><span class="th">n</span>`;
     for (const [a, b] of PAIRS) {
@@ -1836,7 +1877,7 @@
   function updateReadouts(withDecimal = true) {
     /* The truth table is exactly the right companion to the 3-D field. */
     metaEl.classList.toggle("ab", S.showB);
-    stripEl.dataset.edit = editKey().toUpperCase();
+    stripEl.dataset.edit = frameLabel();
 
     if (slotBadgeEl) {
       slotBadgeEl.hidden = !S.view3d && S.slot === "A";
@@ -1844,6 +1885,10 @@
     }
 
     if (S.showB) {
+      hexAEl.previousElementSibling.textContent = frameName(S.slot, "a");
+      hexBEl.previousElementSibling.textContent = frameName(S.slot, "b");
+      hexZEl.previousElementSibling.textContent = frameName(S.slot, "z");
+      popEl.previousElementSibling.textContent = `pop ${frameName(S.slot, "z")}`;
       hexAEl.textContent = toHexOf(S.A);
       hexBEl.textContent = toHexOf(S.B);
       hexZEl.textContent = toHexOf(S.Z);
@@ -1860,8 +1905,8 @@
       }
     }
 
-    /* Endpoint trend of the register being edited. */
-    const r = editReg();
+    /* Endpoint trend of the frame being shown. */
+    const r = focusReg();
     const n = nibCount();
     const diff = r.target[n - 1] - r.target[0];
     trendEl.classList.toggle("flat", diff === 0);
@@ -1897,8 +1942,8 @@
      the pointer — the instrument should never make you hunt for a knob. */
   function nearestReg(px, py) {
     if (!S.showB || S.view3d) return editKey();
-    const ya = S.frameVis.a && G.spA ? evalSpline(G.spA, px) : Infinity;
-    const yb = S.frameVis.b && G.spB ? evalSpline(G.spB, px) : Infinity;
+    const ya = curSlot().frameVis.a && G.spA ? evalSpline(G.spA, px) : Infinity;
+    const yb = curSlot().frameVis.b && G.spB ? evalSpline(G.spB, px) : Infinity;
     if (!Number.isFinite(ya) && !Number.isFinite(yb)) return editKey();
     return Math.abs(py - ya) <= Math.abs(py - yb) ? "a" : "b";
   }
@@ -1919,6 +1964,7 @@
 
   function setFromPointer(e) {
     if (S.view3d) return;            // the field view is read-only
+    if (!focusEditable()) return;    // a focused derived frame is read-only
     const r = canvas.getBoundingClientRect();
     const px = e.clientX - r.left;
     const py = e.clientY - r.top;
@@ -1931,8 +1977,9 @@
       S.hoverReg = nearestReg(px, py);
       S.hoverJ = j;
       S.edit = S.hoverReg;
+      S.focus = S.hoverReg;
       syncEditUi();
-      if (S.edit === "b") renderStrip();
+      renderStrip();
       canvas.classList.add("grabbing");
       document.getElementById("hint").classList.add("off");
     }
@@ -1957,10 +2004,11 @@
         }
         return;
       }
+      if (!focusEditable()) return;  // derived frame focused — read-only
       const r = canvas.getBoundingClientRect();
       const hit = legendHitAt(e.clientX - r.left, e.clientY - r.top);
       if (hit) {
-        setFrameVis(hit, !S.frameVis[hit]);
+        setFrameVis(S.slot, hit, !curSlot().frameVis[hit]);
         e.preventDefault();
         return;
       }
@@ -1975,6 +2023,10 @@
     const px = e.clientX - r.left;
     const py = e.clientY - r.top;
     canvas.classList.toggle("legend-hover", Boolean(legendHitAt(px, py)));
+    if (!focusEditable()) {
+      if (S.hoverReg !== null) { S.hoverReg = null; S.hoverJ = -1; syncHoverClasses(); }
+      return;
+    }
     if (S.drag >= 0) { setFromPointer(e); return; }
 
     const j = nearestNibble(px);
@@ -2009,6 +2061,7 @@
   nibsEl.addEventListener("click", (e) => {
     const bit = e.target.closest(".bit");
     if (!bit) return;
+    if (!focusEditable()) return;   // Z is derived — never editable
     lfoStop();
     const reg = editReg();
     const b = Number(bit.dataset.b);
@@ -2025,6 +2078,7 @@
   nibsEl.addEventListener("wheel", (e) => {
     if (S.drag >= 0 || e.deltaY === 0) return;
     if (e.ctrlKey || e.metaKey) return; // leave browser zoom alone
+    if (!focusEditable()) return;       // Z is derived — never editable
     const hexEl = e.target.closest(".hex");
     if (!hexEl) return;
     const nib = hexEl.closest(".nib");
@@ -2047,11 +2101,13 @@
   }, { passive: false });
 
   nibsEl.addEventListener("pointerover", (e) => {
+    if (!focusEditable()) return;
     const nib = e.target.closest(".nib");
     const j = nib ? Number(nib.dataset.j) : -1;
-    if (j !== S.hoverJ || S.hoverReg !== editKey()) {
+    const hotKey = focusKey();
+    if (j !== S.hoverJ || S.hoverReg !== hotKey) {
       S.hoverJ = j;
-      S.hoverReg = j >= 0 ? editKey() : null;
+      S.hoverReg = j >= 0 ? hotKey : null;
       syncHoverClasses();
     }
   });
@@ -2326,7 +2382,12 @@
       b.classList.toggle("on", b.dataset.binop === S.binop);
       b.setAttribute("aria-pressed", String(b.dataset.binop === S.binop));
     });
-    stripEl.dataset.edit = editKey().toUpperCase();
+    stripEl.dataset.edit = frameLabel();
+    if (hintEl) {
+      hintEl.textContent = focusEditable()
+        ? "drag a nibble · click a bit · scroll a hex"
+        : `${frameLabel()} is derived — read-only`;
+    }
     lfoBSel.value = curSlot().lfoB;
     lfoBSel.hidden = S.lfo.mode === "csvStep" || (!S.view3d && !S.showB);
   }
@@ -2340,6 +2401,7 @@
     lfoStop();
     sl.showB = false;
     sl.edit = "a";
+    sl.focus = "a";
     S.hoverReg = null;
     S.hoverJ = -1;
     syncEditUi();
@@ -2371,6 +2433,7 @@
   const framesBtn = document.getElementById("framesBtn");
   const framesPanel = document.getElementById("framesPanel");
   const framesBody = document.getElementById("framesBody");
+  const framesLegend = document.getElementById("framesLegend");
   const framesClose = document.getElementById("framesClose");
   const unpairBBtn = document.getElementById("unpairB");
   const hintEl = document.getElementById("hint");
@@ -2445,11 +2508,11 @@
 
   function slotExprText(sl, withViewPrefix) {
     const hasCsv = DEMO.rows.length > 0;
-    const lhs = hasCsv && sl.colA >= 0 && DEMO.cols[sl.colA] ? shortCol(DEMO.cols[sl.colA], 14) : "A";
-    const rhs = hasCsv && sl.colB >= 0 && DEMO.cols[sl.colB] ? shortCol(DEMO.cols[sl.colB], 14) : "B";
+    const lhs = hasCsv && sl.colA >= 0 && DEMO.cols[sl.colA] ? shortCol(DEMO.cols[sl.colA], 14) : frameName(sl.key, "a");
+    const rhs = hasCsv && sl.colB >= 0 && DEMO.cols[sl.colB] ? shortCol(DEMO.cols[sl.colB], 14) : frameName(sl.key, "b");
     const sym = OPSYM[sl.binop] || "\u2295";
     const prefix = withViewPrefix ? `LANE ${laneLabel(sl.key)} \u00B7 ` : "";
-    return `${prefix}${lhs} ${sym} ${rhs} \u2192 Z`;
+    return `${prefix}${lhs} ${sym} ${rhs} \u2192 ${frameName(sl.key, "z")}`;
   }
 
   function syncStageBar() {
@@ -2494,7 +2557,6 @@
   function enableBOnSlot(sl = curSlot()) {
     if (sl.showB) return;
     sl.showB = true;
-    sl.edit = "b";
     if (!sl.seededB) {
       sl.seededB = true;
       const n = nibCount();
@@ -2524,6 +2586,8 @@
     dst.seededB = src.seededB;
     dst.binop = src.binop;
     dst.edit = src.edit;
+    dst.focus = src.focus;
+    dst.frameVis = { ...src.frameVis };
     dst.lfoB = src.lfoB;
     dst.colA = src.colA;
     dst.colB = src.colB;
@@ -2610,7 +2674,7 @@
     depthBtn.classList.toggle("on", S.view3d);
     depthBtn.title = S.view3d
       ? "Return to the 2D register view"
-      : "Show the depth field: A at frame 1, Z at 128, B at 256";
+      : "Show the depth field: operands at frame 1 and 256, the result at 128";
     slotSeg.querySelectorAll("[data-slot]").forEach((b) => {
       const active = b.dataset.slot === S.slot;
       b.classList.toggle("on", active);
@@ -2690,17 +2754,19 @@
   const frameReg = (sl, frame) => (frame === "a" ? sl.A : frame === "b" ? sl.B : sl.Z);
   const frameSub = (frame) => (frame === "z" ? "derived" : "operand");
 
-  function frameVisLabel(frame) {
-    return `${S.frameVis[frame] ? "Hide" : "Show"} frame ${frame.toUpperCase()} in the 2D view`;
+  function frameVisLabel(laneKey, frame) {
+    const visible = S.slots[laneKey].frameVis[frame];
+    return `${visible ? "Hide" : "Show"} frame ${frameName(laneKey, frame)} in the 2D view`;
   }
 
-  function makeEyeButton(frame) {
+  function makeEyeButton(laneKey, frame) {
+    const sl = S.slots[laneKey];
     const btn = document.createElement("button");
     btn.type = "button";
-    btn.className = "eye-btn" + (S.frameVis[frame] ? "" : " is-hidden");
-    btn.setAttribute("aria-pressed", String(S.frameVis[frame]));
-    btn.setAttribute("aria-label", frameVisLabel(frame));
-    btn.title = frameVisLabel(frame);
+    btn.className = "eye-btn" + (sl.frameVis[frame] ? "" : " is-hidden");
+    btn.setAttribute("aria-pressed", String(sl.frameVis[frame]));
+    btn.setAttribute("aria-label", frameVisLabel(laneKey, frame));
+    btn.title = frameVisLabel(laneKey, frame);
     if (S.view3d) {
       btn.disabled = true;
       btn.setAttribute("aria-label", "2D visibility only");
@@ -2724,13 +2790,13 @@
 
     btn.addEventListener("click", (ev) => {
       ev.stopPropagation();
-      setFrameVis(frame, !S.frameVis[frame]);
+      setFrameVis(laneKey, frame, !S.slots[laneKey].frameVis[frame]);
     });
     return btn;
   }
 
-  function setFrameVis(frame, visible) {
-    S.frameVis[frame] = visible;
+  function setFrameVis(laneKey, frame, visible) {
+    S.slots[laneKey].frameVis[frame] = visible;
     if (framesPanel.hidden) return;
     const row = framesBody.querySelector(`.frame-row[data-frame="${frame}"]`);
     if (!row) return;
@@ -2739,25 +2805,27 @@
     if (eye) {
       eye.classList.toggle("is-hidden", !visible);
       eye.setAttribute("aria-pressed", String(visible));
-      eye.setAttribute("aria-label", frameVisLabel(frame));
-      eye.title = frameVisLabel(frame);
+      eye.setAttribute("aria-label", frameVisLabel(laneKey, frame));
+      eye.title = frameVisLabel(laneKey, frame);
     }
   }
 
   function buildFrameRow(laneKey, frame) {
     const sl = S.slots[laneKey];
     const reg = frameReg(sl, frame);
-    const active = laneKey === S.slot && frame !== "z" && editKey(sl) === frame;
+    const name = frameName(laneKey, frame);
+    const active = laneKey === S.slot && focusKey(sl) === frame;
 
     const row = document.createElement("div");
-    row.className = "frame-row" + (active ? " is-active" : "") + (S.frameVis[frame] ? "" : " is-hidden");
+    row.className = "frame-row" + (active ? " is-active" : "") + (sl.frameVis[frame] ? "" : " is-hidden");
     row.dataset.frame = frame;
 
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className = "frame-btn";
-    btn.setAttribute("aria-label", `Lane ${laneLabel(laneKey)} frame ${frame.toUpperCase()}, ${frameSub(frame)}`);
-    btn.title = `Lane ${laneLabel(laneKey)} · ${frame.toUpperCase()} (${frameSub(frame)})`;
+    const focused = active ? ", focused" : "";
+    btn.setAttribute("aria-label", `Lane ${laneLabel(laneKey)} frame ${name}, ${frameSub(frame)}${focused}`);
+    btn.title = `Lane ${laneLabel(laneKey)} · ${name} (${frameSub(frame)})`;
 
     const label = document.createElement("span");
     label.className = "frame-label";
@@ -2765,7 +2833,7 @@
     swatch.className = "frame-swatch";
     const glyph = document.createElement("span");
     glyph.className = "frame-glyph";
-    glyph.textContent = frame.toUpperCase();
+    glyph.textContent = name;
     const sub = document.createElement("span");
     sub.className = "frame-sub";
     sub.textContent = frameSub(frame);
@@ -2781,7 +2849,7 @@
     btn.appendChild(hex);
 
     btn.addEventListener("click", () => selectFrame(laneKey, frame));
-    row.append(btn, makeEyeButton(frame));
+    row.append(btn, makeEyeButton(laneKey, frame));
     return row;
   }
 
@@ -2816,7 +2884,14 @@
       if (laneKey !== S.slot) continue;
       for (const frame of FRAME_ORDER) framesBody.appendChild(buildFrameRow(laneKey, frame));
     }
-    unpairBBtn.hidden = !curSlot().showB || S.view3d;
+    const sl = curSlot();
+    const fa = frameName(sl.key, "a");
+    const fb = frameName(sl.key, "b");
+    const fz = frameName(sl.key, "z");
+    if (framesLegend) framesLegend.textContent = `${fa} solid · ${fz} glow · ${fb} dashed`;
+    unpairBBtn.textContent = `unpair ${fb}`;
+    unpairBBtn.title = `Remove operand ${fb} from this lane`;
+    unpairBBtn.hidden = !sl.showB || S.view3d;
     if (focusLane) {
       const head = framesBody.querySelector(`.lane-btn[data-lane="${focusLane}"]`);
       if (head) head.focus();
@@ -2843,31 +2918,28 @@
     if (returnFocus) framesBtn.focus();
   }
 
+  /* Focus, not navigation: clicking a frame shows it in the strip and
+     readouts without leaving the current view (2-D or 3-D). Operands stay
+     editable; Z is a read-only lens (DESIGN §10.8). */
   function selectFrame(laneKey, frame) {
     S.copyArmed = false;
-    if (!S.frameVis[frame]) S.frameVis[frame] = true;
-    if (S.view3d) {
-      S.view3d = false;
-      S.split3d = false;
-    }
+    S.slots[laneKey].frameVis[frame] = true;
     if (S.slot !== laneKey) selectSlot(laneKey);
-    if (frame === "a") {
-      S.edit = "a";
-    } else if (frame === "b") {
-      if (!S.showB) enableB();
-      S.edit = "b";
-    } else {
-      const previous = S.edit;
-      if (!S.showB) enableB();
-      S.edit = previous;
-    }
+    const sl = curSlot();
+    if (frame !== "a" && !sl.showB) enableBOnSlot(sl);
+    sl.focus = frame;
+    if (frame !== "z") sl.edit = frame;
     S.hoverReg = null;
     S.hoverJ = -1;
     syncEditUi();
     syncViewUi();
     renderStrip();
     updateReadouts();
-    closeFrames(true);
+    if (!framesPanel.hidden) {
+      renderFramesPanel();
+      const focusedBtn = framesBody.querySelector(`.frame-row[data-frame="${frame}"] .frame-btn`);
+      if (focusedBtn) focusedBtn.focus();
+    }
   }
 
   framesBtn.addEventListener("click", () => {
@@ -3121,7 +3193,7 @@
 
     const obs = {
       timestamp: new Date().toISOString(),
-      view: S.slot,
+      view: laneLabel(S.slot),
       index: DEMO.i + 1,
       name: exName,
       width_bits: S.N,

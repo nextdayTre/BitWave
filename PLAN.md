@@ -9,6 +9,8 @@
 > 2. **No cable graphics.** Routing is a compact **SOURCE → DESTINATION matrix table** (Serum-2 style) with drop-down rows — no cables, no jacks, no drag, no overlay in the 3-D field. Simplicity over spectacle.
 > 3. **Dimming is hands-off.** No `--dim`/`--dimmer`/contrast token changes. Colour and intensity are a future mapping axis, and the instrument is not a toy. Q8 is closed; accessibility work must not alter the palette.
 > 4. **Routing is the existing CSV column import, housed as a matrix.** The six operand inputs already bind to sources through dropdowns (`colA`/`colB` in the `data` group, populated by the imported file); loading, importing, per-column typing and right-alignment stay exactly as they are. The matrix is only the structural housing for those six bindings — one fixed row per input — and the one new capability is that a binding may also point at a frame output. No separate routing mode, no second import path, no dynamic add/remove rows.
+> 5. **Frame names are global.** Lane 1 = A/B/Z1, lane 2 = C/D/Z2, lane 3 = E/F/Z3. The six operand frames A–F are the matrix destinations; A–F + Z1–Z3 are the nine sources. Persisted `.bitwave` frame keys stay per-lane `a`/`b`/`z`.
+> 6. **A frame click is a focus lens.** Clicking a frame in the navigator never leaves the current 2-D/3-D view and never closes the navigator; operands stay editable, derived frames focus read-only, and 3-D no longer keeps B as the static frame.
 
 ---
 
@@ -109,7 +111,7 @@ Each lane is already a three-frame device: operand **A**, derived **Z = A op B**
 
 - **Primary source — a CSV column.** The imported dataset supplies the options; loading/importing is unchanged. Per-column typing (`bin`/`hex`), right-alignment, overflow truncation and the widest-column default stay exactly as they are (DESIGN §10.16, §10.17, §10.21). `applyExample()` writes the cell into the bound input on every CSV step — this is the working mechanism, not something to replace.
 - **Optional source — a frame output.** `A`/`B`/`Z` × lanes 1–3 (nine outputs), evaluated by the clocked route pass. This is the **only new capability**; it occupies the same row and obeys the same one-source-per-input rule.
-- **Destinations (6 inputs):** `A` and `B` of each lane, fixed. **`Z` is never a destination** — it is a function of its lane's operands, resize zeroes it (`899–902`), and an external write to it would survive one transaction then vanish (DESIGN §10.8; the stale-Z failure class).
+- **Destinations (6 inputs):** the six operand frames — `A`/`B` (lane 1), `C`/`D` (lane 2), `E`/`F` (lane 3) — fixed. **A derived frame is never a destination** — `Z1`/`Z2`/`Z3` are functions of their lane's operands, resize zeroes them (`899–902`), and an external write to one would survive one transaction then vanish (DESIGN §10.8; the stale-Z failure class).
 - **Fan-out:** unlimited (one frame output can feed several inputs — an audio mult).
 - **Fan-in:** **one source per input in v1.** A second frame route replaces the first, as Blender's single-link sockets do. Last-write-wins and priority-replace depend on invisible ordering; the audio-natural alternative — summing at one inlet (`set | add mod 2^N | xor`) — is the v1.1 upgrade and is the bit-level analogue of additive mixing.
 
@@ -144,25 +146,25 @@ Each lane is already a three-frame device: operand **A**, derived **Z = A op B**
 | Copy lane | copy *base* registers; routes belong to the rack, untouched | `evaluateAll()` |
 | Lane focus | none | UI render only |
 
-**Worked example (independently recomputed, matches the routing deep-dive to the hex digit).** Boot values from the table formulas: `1·A = 8ADEFEDA85210125`, `1·B = FFFFFFFF00000000`; `3·A = 0123456789ABCDEF`, `3·B = 8ADEFEDA85210125`, so `3·Z = 0002444281210125` (popcount 13).
+**Worked example (independently recomputed, matches the routing deep-dive to the hex digit).** Boot values from the table formulas: `A = 8ADEFEDA85210125`, `B = FFFFFFFF00000000`; `E = 0123456789ABCDEF`, `F = 8ADEFEDA85210125`, so `Z3 = 0002444281210125` (popcount 13).
 
-| Step | Action | 1·A | 1·Z | 2·A |
+| Step | Action | A | Z1 | C |
 |---|---|---|---|---|
 | 0 | boot | `8ADEFEDA85210125` | `7521012585210125` | `FEDA852101257ADE` |
-| 1 | route `3·Z → 1·A` | `0002444281210125` | `FFFDBBBD81210125` | unchanged |
-| 2 | route `1·Z → 2·A` | `0002444281210125` | `FFFDBBBD81210125` | `FFFDBBBD81210125` |
+| 1 | route `Z3 → A` | `0002444281210125` | `FFFDBBBD81210125` | unchanged |
+| 2 | route `Z1 → C` | `0002444281210125` | `FFFDBBBD81210125` | `FFFDBBBD81210125` |
 
-After step 1, lane 1's truth counts are `24 / 27 / 8 / 5` (sum 64, invariant holds) and `popcount(1·Z) = 35 = 27 + 8` — the routing deep-dive has the full check and the two-state feedback proof.
+After step 1, lane 1's truth counts are `24 / 27 / 8 / 5` (sum 64, invariant holds) and `popcount(Z1) = 35 = 27 + 8` — the routing deep-dive has the full check and the two-state feedback proof.
 
 ### 3.4 UI inside the design system
 
-**The matrix is the housing, not a new mode.** It belongs where the CSV column dropdowns already live — the `data` group — and adds no toggle, no sixth band, no separate view. One compact table with **six fixed rows**, one per operand input: `SOURCE` select · `DESTINATION` (static label) · `STATE` chip. SOURCE options are grouped:
+**The matrix is the housing, not a new mode.** It belongs where the CSV column dropdowns already live — the `data` group — and adds no toggle, no sixth band, no separate view. One compact table with **six fixed rows**, one per operand frame (A–F): `SOURCE` select · `DESTINATION` (static frame label) · `STATE` chip. SOURCE options are grouped:
 
 - `data · <column>` from the imported file — the existing `colA`/`colB` behaviour, default when a file is loaded and unchanged in typing/alignment;
-- `frame · Lane N · A/Z/B` — the new in-tool routing source;
+- `frame · A` … `frame · Z3` — the nine global frame outputs (D15); the same select, no second subsystem;
 - `—` — unbound.
 
-STATE reads `data` (column applied on step), `1:1` (live frame), `z⁻¹` (same-lane Z feedback), or `—`. A loaded CSV fills the six rows exactly as today's pickers would; the table simply makes the whole binding board visible at once. There is no add/remove and no replacement logic — the inputs are fixed, one source each. Loading a file is still the same easy action it is today. The six rows stay visible even with no file so frame sources work; data options appear/disable with the dataset.
+STATE reads `data` (column applied on step), `1:1` (live frame), `z⁻¹` (same-lane feedback: Z1→A, Z2→C, Z3→E), or `—`. A loaded CSV fills the six rows exactly as today's pickers would; the table simply makes the whole binding board visible at once. There is no add/remove and no replacement logic — the inputs are fixed, one source each. Loading a file is still the same easy action it is today. The six rows stay visible even with no file so frame sources work; data options appear/disable with the dataset.
 
 **No new state, no duplicate truth.** Each row is a view over the two facts that already exist for that input: the CSV column index (`colA`/`colB`) and any incoming frame route. Choosing a data column writes the column index and clears the frame route; choosing a frame writes the route and clears the column index; `—` clears both. The table stores nothing of its own, so import, typing, alignment and the observation logger cannot drift.
 
@@ -170,7 +172,7 @@ STATE reads `data` (column applied on step), `1:1` (live frame), `z⁻¹` (same-
 
 **Visual grammar (no third hue, no new token):** `--accent` carries live frame bindings and the `z⁻¹` chip; `data` bindings stay muted chrome; the `--inf` warmth stays reserved for ∞, the zero-crossing and MRB underlines. Invalid choices are absent from the select, not red. Typography follows DESIGN §4: mono for source/destination labels, sans for column headers and prose.
 
-**720 px:** the table compresses — DESTINATION abbreviates to `1·A`, the STATE chip wraps under it, and the table scrolls horizontally inside its own wrapper while the page itself never overflows. `--pad` is already 16 px there.
+**720 px:** the table compresses — DESTINATION abbreviates to the bare frame label (`A`…`F`), the STATE chip wraps under it, and the table scrolls horizontally inside its own wrapper while the page itself never overflows. `--pad` is already 16 px there.
 
 ### 3.5 If you do it in today's file (and why I would not)
 
@@ -180,16 +182,16 @@ The catch is the second pass. Routing's natural home is the core's evaluation mo
 
 ### 3.6 Verification additions (before merge)
 
-1. Boot → `3·Z = 0002444281210125` (pop 13).
-2. Add `3·Z→1·A`: `1·A = 0002444281210125`, `1·Z = FFFDBBBD81210125`, pop 35, truth `24/27/8/5`.
-3. Add `1·Z→2·A`: `2·A = FFFDBBBD81210125`, `2·Z = FDBB31736D896505`.
+1. Boot → `Z3 = 0002444281210125` (pop 13).
+2. Add `Z3→A`: `A = 0002444281210125`, `Z1 = FFFDBBBD81210125`, pop 35, truth `24/27/8/5`.
+3. Add `Z1→C`: `C = FFFDBBBD81210125`, `Z2 = FDBB31736D896505`.
 4. Remove both: lanes 1 and 2 byte-identical to boot; unroute after resize equals resize without a route.
-5. Cross-lane chain 1→2→3: resolves in one evaluation, no stale Z.
-6. `1·Z→1·A` twice is the identity (the two-state oscillator).
+5. Cross-lane chain 1→2→3: resolves in one evaluation, no stale derived frame.
+6. `Z1→A` twice is the identity (the two-state oscillator).
 7. Route + LFO: patched inputs are never overwritten; stop restores the pre-LFO snapshot.
 8. Route + CSV: a driven destination ignores its column but keeps the mapping; unplug restores it.
 9. Keyboard-only: add, inspect, remove a route; status announced; focus never lost.
-10. Source table: exactly six rows (fixed destinations); the destination column never contains Z; every row has one source; the `data` / `1:1` / `z⁻¹` / `—` chip matches the binding.
+10. Source table: exactly six rows (fixed destinations A–F); the destination column never contains a derived frame (`Z1`/`Z2`/`Z3`); every row has one source; the `data` / `1:1` / `z⁻¹` / `—` chip matches the binding.
 11. Zero console errors; no overflow at 360/420 px; pixel histogram contains no third hue; no cable/jack/canvas routing chrome exists.
 12. CSV regression: load a file → the six rows populate exactly as today's per-lane pickers did; per-column typing, right-alignment and truncation are unchanged; stepping writes each bound input.
 
@@ -198,6 +200,7 @@ The catch is the second pass. Routing's natural home is the core's evaluation mo
 - **Fan-in** (v1.1): per-input mix `set | add mod 2^N | xor`, exposed as a `MIX` column in the source table. `add mod 2^N` is the additive-synthesis analogue — two wavetables summed at one inlet is a genuinely new teaching state, not just plumbing.
 - **Sources:** data columns are the primary/default source and stay exactly as they are; frame outputs are the new optional group in the same select.
 - **Lane naming:** settled (author, 2026-11-06) — **lanes 1/2/3** in UI, docs and code; letters only for frames/operands.
+- **Frame naming:** settled (author, 2026-11-06) — lane 1 A/B/Z1, lane 2 C/D/Z2, lane 3 E/F/Z3; six operand destinations A–F and nine frame sources (D15).
 - **Route presets / "patch memory"** and copy-patch: later; the rack owns routes, lanes don't.
 
 ---

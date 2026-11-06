@@ -10,9 +10,10 @@
   WHAT IT IS
   - Single-file, dependency-free prototype of the fixed six-row housing for
     BitWave's existing per-input source dropdowns (the CSV column selectors).
-  - Six rows, one per operand input: Lane 1/2/3 · A/B. DESTINATION is static
-    text; SOURCE is the existing dropdown, offering imported data columns and
-    live frame outputs. STATE is derived from the binding.
+  - Six rows, one per operand input: lane 1 A/B, lane 2 C/D, lane 3 E/F.
+    DESTINATION is static text; SOURCE is the existing dropdown, offering
+    imported data columns and live frame outputs (A–F, Z1–Z3). STATE is
+    derived from the binding.
   - This is the structural housing, not a new routing system: one input reads
     one source, exactly as the current column dropdowns already behave.
 
@@ -192,18 +193,20 @@
 
   /* ----------------------------------------------------------------- model */
 
-  var LANES = [1, 2, 3];
-  var FRAMES = ['A', 'Z', 'B'];
+  /* Frame names are global (author, 2026-11-06): operands A/B, C/D, E/F and
+     derived Z1/Z2/Z3. The six operand inputs are therefore A–F; the nine
+     frame outputs are A–F + Z1–Z3. Lanes keep their 1/2/3 identity. */
   var DATA_COLS = ['id', 'sine', 'square', 'payload'];
+  var FRAME_OUTPUTS = ['A', 'B', 'C', 'D', 'E', 'F', 'Z1', 'Z2', 'Z3'];
 
   // Six fixed inputs, one source each. Defaults show data, frame and unbound.
   var INPUTS = [
     { lane: 1, frame: 'A', value: 'data:sine' },
     { lane: 1, frame: 'B', value: 'data:square' },
-    { lane: 2, frame: 'A', value: 'frame:3Z' },
-    { lane: 2, frame: 'B', value: 'frame:1Z' },
-    { lane: 3, frame: 'A', value: 'data:payload' },
-    { lane: 3, frame: 'B', value: '' }
+    { lane: 2, frame: 'C', value: 'frame:Z3' },
+    { lane: 2, frame: 'D', value: 'frame:Z1' },
+    { lane: 3, frame: 'E', value: 'data:payload' },
+    { lane: 3, frame: 'F', value: '' }
   ];
 
   /* ------------------------------------------------------------------- dom */
@@ -223,17 +226,17 @@
     if (!value) return '—';
     var parts = value.split(':');
     if (parts[0] === 'data') return 'data · ' + parts[1];
-    var port = parts[1];
-    return 'frame · Lane ' + port.charAt(0) + ' · ' + port.charAt(1);
+    return 'frame · ' + parts[1];
   }
 
   // data: applied on the CSV step. frame: live output, 1:1 unless the same
-  // lane's Z feeds its own A/B, which is the one-evaluation-delay case.
+  // lane's derived frame feeds its own operand, which is the one-evaluation
+  // delay case (Z1 → lane 1, Z2 → lane 2, Z3 → lane 3).
   function stateFor(input, value) {
     if (!value) return { label: '—', kind: 'unbound' };
     if (value.indexOf('data:') === 0) return { label: 'data', kind: 'data' };
     var port = value.slice(6);
-    if (port.charAt(1) === 'Z' && Number(port.charAt(0)) === input.lane) {
+    if (port === 'Z' + input.lane) {
       return { label: 'z⁻¹', kind: 'delay', title: 'one-evaluation delay — feedback' };
     }
     return { label: '1:1', kind: 'feed' };
@@ -280,11 +283,8 @@
 
     var frameGroup = document.createElement('optgroup');
     frameGroup.label = 'frame';
-    LANES.forEach(function (lane) {
-      FRAMES.forEach(function (frame) {
-        frameGroup.appendChild(option('frame:' + lane + frame,
-          'frame · Lane ' + lane + ' · ' + frame));
-      });
+    FRAME_OUTPUTS.forEach(function (frame) {
+      frameGroup.appendChild(option('frame:' + frame, 'frame · ' + frame));
     });
     select.appendChild(frameGroup);
 

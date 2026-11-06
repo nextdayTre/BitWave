@@ -13,8 +13,9 @@ Both builds are single, self-contained HTML files. No build step, no server, no
 network, no dependencies: **open the file directly in a browser.**
 
 - **`bitwave-v2.html`** — current working build. Lanes 1/2/3, the Pro-Q4-style
-  frame navigator, per-frame visibility eyes, wheel-to-adjust hex, copy-to-lane,
-  CSV stepper, observation CSV export, LFO, split 3-D.
+  frame navigator, per-frame visibility eyes, the frame focus lens (A/B/Z1, C/D/Z2,
+  E/F/Z3), wheel-to-adjust hex, copy-to-lane, CSV stepper, observation CSV export,
+  LFO, split 3-D.
 - **`index.html`** — untouched original reference build.
 - `index.html.bak` — an older snapshot, kept only as history.
 
@@ -22,15 +23,15 @@ network, no dependencies: **open the file directly in a browser.**
 
 ```bash
 npm test               # DOM-free core: 38 tests, zero dependencies
-npm run check:browser  # 16 artifact checks in headless Chromium (17 with capture)
+npm run check:browser  # 20 artifact checks in headless Chromium (21 with capture)
 npm run capture        # state screenshots → .tmp-captures/
 ```
 
 `check:browser` auto-detects Chromium (Playwright's browser cache, a Chrome/Edge
 install, or `BITWAVE_CHROME=…`). It opens the artifact over `file://` — the way a
 user opens it — and asserts console cleanliness, layout at 360/420/720/1440, the
-DESIGN §5 strip geometry, the frame navigator, the 3-D truth table, CSV import and
-the §11 operation vectors.
+DESIGN §5 strip geometry, the frame navigator and focus lens, the 3-D truth table,
+CSV import, and the §11 operation vectors.
 
 ## Design and intent
 

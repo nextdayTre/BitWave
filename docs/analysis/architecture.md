@@ -2,6 +2,8 @@
 
 **Date:** 2026-11-05 · **Scope:** `index.html` (2,832 lines as read by the read tool, 92,991 bytes), `DESIGN.md` (495 lines), and a proposed multi-file source tree. Line numbers are the current `index.html`. Toolchain present: Node 24.14.1, npm 11.11.0, git 2.55.0 (**repo not initialised**), rustc 1.95.0.
 
+**Naming update 2026-11-06:** lanes are 1/2/3 and frame names are global — lane 1 A/B/Z1, lane 2 C/D/Z2, lane 3 E/F/Z3 (D15). This analysis keeps the original slot keys `A`/`B`/`C` for line references; its semantics are unchanged.
+
 Governing constraints: `DESIGN.md` is the visual source of truth, no new hue is introduced below, and §11 (lines 419–437) must pass after every phase.
 
 ---
