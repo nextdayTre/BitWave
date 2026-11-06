@@ -23,7 +23,7 @@ network, no dependencies: **open the file directly in a browser.**
 
 ```bash
 npm test               # DOM-free core: 38 tests, zero dependencies
-npm run check:browser  # 20 artifact checks in headless Chromium (21 with capture)
+npm run check:browser  # 24 artifact checks in headless Chromium (25 with capture)
 npm run capture        # state screenshots → .tmp-captures/
 ```
 
@@ -31,7 +31,20 @@ npm run capture        # state screenshots → .tmp-captures/
 install, or `BITWAVE_CHROME=…`). It opens the artifact over `file://` — the way a
 user opens it — and asserts console cleanliness, layout at 360/420/720/1440, the
 DESIGN §5 strip geometry, the frame navigator and focus lens, the 3-D truth table,
-CSV import, and the §11 operation vectors.
+CSV import, the §11 operation vectors, and the agent surface.
+
+## Agent surface
+
+`bitwave-v2.html` exposes a read-only, versioned state/geometry surface after boot:
+
+```js
+BitWave.state()      // frozen snapshot: lanes, frames A–F/Z1–Z3, values, focus, view, dataset
+BitWave.geometry()   // plot rect, nibble geometry, control-point xs[], DOM nibble rects
+BitWave.frames()     // the frame-name table per lane
+```
+
+No setters: the instrument's controls stay the only write path. The full contract
+and example snapshot are in [`AGENTS.md`](AGENTS.md).
 
 ## Design and intent
 
@@ -56,10 +69,11 @@ as a single-file bundle under `backups/` (ignored by Git), so it can be restored
 or cloned without a remote:
 
 ```bash
-git clone backups/bitwave-v2-2026-11-06-focus.bundle bitwave-restore
+git clone backups/bitwave-v2-2026-11-06-agent.bundle bitwave-restore
 ```
 
-Tags: `v2-checkpoint-2026-11-06` (frame navigator, eyes, wheel-step) and
-`v2-focus-2026-11-06` (global frame names, focus lens, browser harness).
+Tags: `v2-checkpoint-2026-11-06` (frame navigator, eyes, wheel-step),
+`v2-focus-2026-11-06` (global frame names, focus lens, browser harness) and
+`v2-agent-seam-2026-11-06` (read-only `window.BitWave` state/geometry surface).
 
 For off-machine safety, add a remote and push the `main` branch and tags.

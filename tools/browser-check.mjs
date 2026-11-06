@@ -796,7 +796,80 @@ try {
     return '0 errors, 0 exceptions';
   });
 
-  /* 6. optional screenshots -------------------------------------------- */
+  /* 6. agent surface ---------------------------------------------------- */
+  await runCheck('agent · BitWave is a frozen, versioned read-only surface', async () => {
+    await loadApp();
+    const surface = JSON.parse(await evaluate(`JSON.stringify({
+      frozen: Object.isFrozen(window.BitWave),
+      schema: window.BitWave.schema,
+      artifact: window.BitWave.artifact,
+      functions: ['state', 'geometry', 'frames'].every((key) => typeof window.BitWave[key] === 'function'),
+      setters: ['set', 'write', 'patch', 'setRegister', 'load'].filter((key) => typeof window.BitWave[key] === 'function'),
+      stateFrozen: Object.isFrozen(window.BitWave.state()),
+      laneFrozen: Object.isFrozen(window.BitWave.state().lanes['1']),
+      framesFrozen: Object.isFrozen(window.BitWave.state().lanes['1'].frames)
+    })`));
+    assert(surface.frozen === true, 'window.BitWave is not frozen');
+    assert(surface.schema === 1, `schema: ${surface.schema}`);
+    assert(surface.artifact === 'bitwave-v2.html', `artifact: ${surface.artifact}`);
+    assert(surface.functions === true, 'state/geometry/frames are not all functions');
+    assert(surface.setters.length === 0, `unexpected write API: ${surface.setters}`);
+    assert(surface.stateFrozen && surface.laneFrozen && surface.framesFrozen, 'snapshot is not deep-frozen');
+    return 'frozen · schema 1 · state/geometry/frames · no setters';
+  });
+
+  await runCheck('agent · state() matches the visible instrument', async () => {
+    const snapshot = JSON.parse(await evaluate(`JSON.stringify(window.BitWave.state())`));
+    assert(snapshot.registers.width === 64 && snapshot.registers.nibbles === 16, 'register size');
+    assert(snapshot.lane === 1 && snapshot.frame === 'A', `focus: ${snapshot.lane}/${snapshot.frame}`);
+    assert(snapshot.view.mode === '2d', `view: ${snapshot.view.mode}`);
+    const lane1 = snapshot.lanes['1'];
+    assert(lane1.frames.A === '8ADEFEDA85210125', `A: ${lane1.frames.A}`);
+    assert(lane1.frames.B === 'FFFFFFFF00000000', `B: ${lane1.frames.B}`);
+    assert(lane1.frames.Z1 === '7521012585210125', `Z1: ${lane1.frames.Z1}`);
+    assert(lane1.binop === 'xor' && lane1.focus === 'A', `lane binop/focus: ${lane1.binop}/${lane1.focus}`);
+    assert(snapshot.dataset === null, 'dataset should be empty at boot');
+    return '64-bit · lane 1 A · A/B/Z1 values and names · no dataset';
+  });
+
+  await runCheck('agent · geometry() control points match the DOM strip (< 1.5px)', async () => {
+    await loadApp();
+    const geometry = JSON.parse(await evaluate(`JSON.stringify(window.BitWave.geometry())`));
+    assert(geometry.nibble.count === 16, `nibbles: ${geometry.nibble.count}`);
+    assert(geometry.controlPoints.length === 16, `control points: ${geometry.controlPoints.length}`);
+    assert(geometry.dom.nibs.length === 16, `DOM nibbles: ${geometry.dom.nibs.length}`);
+    assert(Math.abs(geometry.plot.x0 - geometry.pad) < 0.01, 'plot inset is not --pad');
+    assert(geometry.canvas.cssWidth === geometry.viewport.width, 'canvas does not span the viewport');
+    let worst = 0;
+    for (let j = 0; j < 16; j++) {
+      worst = Math.max(worst, Math.abs(geometry.controlPoints[j] - geometry.dom.nibs[j].center));
+    }
+    assert(worst < 1.5, `a control point is ${worst.toFixed(2)}px from its nibble centre`);
+    return `16/16 points · worst offset ${worst.toFixed(2)}px (< 1.5px)`;
+  });
+
+  await runCheck('agent · state() follows focus, view and dataset', async () => {
+    await click('#depthBtn');
+    await click('#framesBtn');
+    await click('#framesBody .frame-row[data-frame="z"] .frame-btn');
+    await sleep(150);
+    let snapshot = JSON.parse(await evaluate(`JSON.stringify(window.BitWave.state())`));
+    assert(snapshot.view.mode === '3d', `view: ${snapshot.view.mode}`);
+    assert(snapshot.frame === 'Z1', `focused frame: ${snapshot.frame}`);
+    assert(snapshot.lanes['1'].focus === 'Z1', `lane focus: ${snapshot.lanes['1'].focus}`);
+    assert(snapshot.editing.enabled === false, 'derived focus should report read-only');
+
+    await loadApp();
+    await importCsv();
+    snapshot = JSON.parse(await evaluate(`JSON.stringify(window.BitWave.state())`));
+    assert(snapshot.dataset !== null, 'dataset missing after CSV import');
+    assert(snapshot.dataset.rows === 1 && snapshot.dataset.index === 0, 'dataset row cursor');
+    assert(snapshot.lanes['1'].sources.A === 'payload', `lane 1 A source: ${JSON.stringify(snapshot.lanes['1'].sources)}`);
+    assert(snapshot.lanes['1'].frames.A === 'FEDCBA9876543210', `lane 1 A after import: ${snapshot.lanes['1'].frames.A}`);
+    return '3d/Z1 read-only · dataset payload → A';
+  });
+
+  /* 7. optional screenshots -------------------------------------------- */
   if (opts.shots) {
     await runCheck('capture · deterministic state screenshots', async () => {
       const directory = resolve(ROOT, opts.shots);

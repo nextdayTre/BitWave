@@ -452,6 +452,11 @@ something that looked fine until it was measured.
 27. **Focus is per lane and survives lane switches and 3-D entry.** `enableBOnSlot()` may
     seed the second operand but must not steal focus; the frame you chose stays the frame
     the strip shows.
+28. **The agent surface is read-only and versioned.** `window.BitWave` returns
+    deep-frozen snapshots (`state()`, `geometry()`, `frames()`) and exposes **no
+    setters**; it must never become a second write path or change the visuals.
+    Bump `BitWave.schema` when the shape changes. `geometry()` is the measured
+    seam for the §11 control-point alignment check.
 
 ---
 
@@ -459,7 +464,8 @@ something that looked fine until it was measured.
 
 The visual contract is measurable, so measure it rather than eyeballing:
 
-- Column alignment: control point `x(j)` vs. the hex cell's centre → **must be < 1.5px**.
+- Canvas control-point alignment: `BitWave.geometry().controlPoints[j]` vs.
+  `dom.nibs[j].center` → **must be < 1.5px** (asserted by `npm run check:browser`).
 - No horizontal overflow at 420px: `body.scrollWidth - body.clientWidth === 0`.
 - `canvas.width === viewport width` at the mobile breakpoint.
 - Zero `console.error` and zero uncaught exceptions during load + 2s of animation.

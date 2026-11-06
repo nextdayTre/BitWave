@@ -4,7 +4,7 @@ Implementation decisions taken to keep the plan moving. Each one is reversible
 while the codebase is small; the ones the plan marked for the author are noted.
 Format is deliberately short: decision, basis, how to reverse it.
 
-**Status:** 2026-11-06 · applies to the `src/core` extraction, the F0 baseline and the browser-verification harness.
+**Status:** 2026-11-06 · applies to the `src/core` extraction, the F0 baseline, the browser-verification harness and the `window.BitWave` agent/test seam.
 
 | # | Decision | Basis | Reverse by |
 |---|---|---|---|
@@ -25,6 +25,7 @@ Format is deliberately short: decision, basis, how to reverse it.
 | D15 | **Frame names are global.** Lane 1 = A/B/Z1, lane 2 = C/D/Z2, lane 3 = E/F/Z3. The six operand frames A–F are the six routing destinations; the nine frame outputs A–F + Z1–Z3 are the sources. Persisted `.bitwave` frame keys stay per-lane `a`/`b`/`z` (schema 1 unchanged) — the global names are a presentation mapping (`FRAME_NAMES`). | Author decision 2026-11-06 ("simplification on the default/non-CSV Frame/Lane naming conventions"). Removes the per-lane A/Z/B ambiguity and lets the matrix list six unique rows. | Change the `FRAME_NAMES` map, the spike's `FRAME_OUTPUTS` and the doc tables; no data migration. |
 | D16 | **A frame click is a focus lens, not a view switch.** `selectFrame()` no longer exits 3-D or closes the navigator; it sets the lane's `focus`, retargets strip/readouts/truth/stage, keeps operands editable and shows a derived frame read-only. `enableBOnSlot()` no longer steals focus. | Author request 2026-11-06 ("clicking a frame in the Lanes tab more like a Focus feature"); the 3-D view kept showing B statically and a frame click dropped to 2-D. | Restore the forced 2-D branch and `closeFrames(true)`; the browser check's focus assertions fail. |
 | D17 | **Visibility eyes are per lane.** `frameVis` moves from one global `{a,b,z}` to each slot, so hiding A in lane 1 does not hide C in lane 2. | With global names, "frame A" is lane-1-specific; a single global toggle would silently hide three different frames. | Return to one shared map; eye labels would need to be generic again. |
+| D18 | **The agent/test seam is a read-only `window.BitWave` (schema 1).** `state()`, `geometry()` and `frames()` return deep-frozen plain objects; there are no setters and the global is defined non-writable. `geometry()` returns computed control-point `xs[]` plus DOM nibble rects so tests assert the DESIGN §11 alignment without scraping pixels. | AGENTS.md asks for explicit local state/render surfaces over screenshot automation; the browser harness needed a non-circular way to prove the canvas and strip agree. | Remove the surface block in `bitwave-v2.html`; the harness agent checks and the geometry assertion fail. |
 
 ## Open decisions still with the author
 

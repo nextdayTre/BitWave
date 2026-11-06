@@ -1,8 +1,8 @@
 # BitWave — agent interoperability intent
 
-**Status: stated intent, 2026-11-06.** Not a spec and not a promise. It records a
-direction so future decisions do not accidentally paint AI agents out of the
-instrument.
+**Status: first surface shipped 2026-11-06.** The direction below is stated
+intent; the `window.BitWave` read-only contract is now implemented and
+version-stamped. Future surfaces stay additive and follow the same rules.
 
 ## Why
 
@@ -33,15 +33,49 @@ a screenshot and manually cropping the register.
 - CSV/TSV import with per-column typing and right-aligned register values.
 - Observation logger export (`bitwave_observations_*.csv`).
 - Single-file, offline HTML with no network dependency.
+- **`window.BitWave`** — a read-only, versioned state/geometry surface inside
+  `bitwave-v2.html` (contract below).
+
+## Contract: `window.BitWave` (schema 1)
+
+Present after boot. Every member returns a **deep-frozen plain object**; there
+are no setters, so writes stay with the instrument's own controls.
+
+| Member | Returns |
+|---|---|
+| `BitWave.schema` | `1` — bump this whenever the shape changes |
+| `BitWave.artifact` | `"bitwave-v2.html"` |
+| `BitWave.frames()` | lane → operand/derived frame names (`1: A/B → Z1`, `2: C/D → Z2`, `3: E/F → Z3`) |
+| `BitWave.state()` | register width, focused lane/frame, view mode, every lane's A/B/Z hex, operator, CSV source names, per-frame focus/visibility, LFO, dataset cursor |
+| `BitWave.geometry()` | canvas plot rect, `--pad`, nibble width/gap, computed control-point `xs[]`, and the matching DOM nibble rects |
+
+Example `state()`:
+
+```json
+{ "schema": 1, "artifact": "bitwave-v2.html",
+  "registers": { "width": 64, "bits": 64, "nibbles": 16 },
+  "lane": 1, "frame": "A", "view": { "mode": "2d", "splitPair": [1, 2], "activePane": 0 },
+  "lanes": { "1": {
+    "frames": { "A": "8ADEFEDA85210125", "B": "FFFFFFFF00000000", "Z1": "7521012585210125" },
+    "sources": { "A": null, "B": null }, "binop": "xor", "focus": "A", "edit": "A",
+    "showB": false, "lfo": "0", "visibility": { "A": true, "B": true, "Z1": true } } },
+  "lfo": { "on": false, "mode": "rotcw", "rate": 4 },
+  "dataset": null,
+  "editing": { "copyArmed": false, "enabled": true } }
+```
+
+`geometry()` exists so tests and agents compare `controlPoints[j]` with
+`dom.nibs[j].center` instead of trusting a shared constant or scraping pixels;
+`tools/browser-check.mjs` asserts the DESIGN §11 **< 1.5 px** contract from it.
 
 ## Possible next surfaces (not built, not committed)
 
 - A versioned JSON state snapshot/restore, plus a stable URL encoding of it.
 - Deterministic image export: `render(state, view, size) → SVG/PNG`, later a
   frame sequence/GIF from an explicit state or CSV step range.
-- A tiny local command surface (e.g. a documented `window.BitWave` object or a
-  headless mode) to read state, set registers/lanes, step examples and capture
-  frames.
+- A **command** surface (set registers/lanes, step examples, capture frames) —
+  the read-only surface above is the first half; commands stay explicit,
+  local and revocable.
 - Agent-readable docs for the above, kept in sync with the human docs.
 
 ## Non-goals

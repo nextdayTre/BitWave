@@ -1,6 +1,6 @@
 # BitWave — implementation status
 
-**Updated:** 2026-11-06 · **Phase:** F0 browser harness **done**, F1 core **done**, F3 source-table housing spike **done**; frame names and the focus lens **shipped in v2**.
+**Updated:** 2026-11-06 · **Phase:** F0 browser harness **done**, F1 core **done**, F3 source-table housing spike **done**; frame names, focus lens and the read-only `window.BitWave` seam **shipped in v2**.
 **Source of truth:** [`PLAN.md`](PLAN.md) for the plan, [`DECISIONS.md`](DECISIONS.md) for choices taken, [`DESIGN.md`](DESIGN.md) for the visual contract. `index.html` is still untouched and remains the shipping instrument.
 
 ## Author decisions (2026-11-06)
@@ -40,19 +40,24 @@ cell enough? Confirm before the matrix lands in the app.
 ## Verified this session
 
 - `npm test` → **38 tests, 38 pass, 0 fail, ~120 ms**.
-- `npm run check:browser` → **20/20 checks pass** (21/21 with `--shots`) on `bitwave-v2.html`:
+- `npm run check:browser` → **24/24 checks pass** (25/25 with `--shots`) on `bitwave-v2.html`:
   zero console errors; no overflow or clipped controls at 360/420/720/1440;
   `canvas.width` = viewport; `--pad` 40/16 and compact mode per DESIGN §5/§9;
   strip gap/nibble width follow the §5 formula (1440: gap 12.00, nibble 73.75);
   frame navigator + per-lane eye toggles; 3-D `Z = A xor B`, truth counts `23/11/9/21`,
   `popcount(Z) = 20`; CSV import binds the widest column and the §11 ROL/NOT/BSWAP
   vectors hold; frame names A/B C/D E/F + Z1/Z2/Z3 and the focus lens hold in 2-D and
-  3-D; default state renders byte-identically.
+  3-D; `window.BitWave` is frozen/versioned and its state/geometry match the instrument;
+  default state renders byte-identically.
 - **Shipped this session:** global frame names (D15) and the frame focus lens (D16/D17)
   in `bitwave-v2.html` and the housing spike: lane 1 A/Z1/B, lane 2 C/Z2/D, lane 3 E/Z3/F
   in the navigator, strip label, legend, stage bar, truth header, readouts and 3-D plate
   labels. Clicking a frame no longer leaves 3-D or closes the navigator; Z1/Z2/Z3 focus
   read-only; `enableBOnSlot()` no longer steals focus; the eyes are per lane.
+- **Shipped the agent/test seam (D18):** `window.BitWave` (schema 1, deep-frozen, no
+  setters) with `state()`, `geometry()` and `frames()`. The geometry assertion now
+  measures control points against DOM nibble centres (worst offset **0.00 px**, §11
+  limit 1.5 px), closing the former canvas-alignment gap.
 - Housing visual pass: spike at 360/720/1440 px; six rows × 14 options; rebinding
   updates only the STATE chip + status and keeps focus; no horizontal overflow.
 - **Drift found and fixed:** `--pad` was written with a second, hard-coded 680 px
@@ -74,9 +79,10 @@ cell enough? Confirm before the matrix lands in the app.
 | [`tests/`](tests/design-invariants.test.ts) | 4 test files, ~630 lines, 38 vectors + properties |
 | [`examples/demo.bitwave.json`](examples/demo.bitwave.json) | Versioned project document (lanes 1/2/3; routes + parked bases; dataset) |
 | [`spike/routing-matrix.html`](spike/routing-matrix.html) | Six-row source-table housing prototype (360 lines) |
-| [`tools/browser-check.mjs`](tools/browser-check.mjs) | Zero-dependency CDP harness: 20 checks (21 with `--shots`) on the shipped file over `file://` |
+| [`tools/browser-check.mjs`](tools/browser-check.mjs) | Zero-dependency CDP harness: 24 checks (25 with `--shots`) on the shipped file over `file://` |
 | [`tools/make-example-project.ts`](tools/make-example-project.ts) | Regenerates the example |
-| [`DECISIONS.md`](DECISIONS.md) | D1–D17, including the author decisions above |
+| `window.BitWave` in [`bitwave-v2.html`](bitwave-v2.html) | Read-only, schema-1 state/geometry surface; contract in [`AGENTS.md`](AGENTS.md) |
+| [`DECISIONS.md`](DECISIONS.md) | D1–D18, including the author decisions above |
 
 ## Known gaps and blockers
 
@@ -84,10 +90,10 @@ cell enough? Confirm before the matrix lands in the app.
    unreachable; the fixed `100dvh` + `overflow:hidden` body cannot scroll. F4
    must allow page scroll at zoom while keeping the instrument fixed at normal
    viewports. Measured, reproducible in `npm run check:browser`'s width matrix.
-2. **Canvas control-point alignment is not asserted end-to-end.** The harness
-   checks the strip formula, `--pad` and canvas width; the F2
-   `window.__bitwave.debug.geometry()` hook is what lets it compare `x(j)` with
-   the canvas control points instead of trusting the shared constant.
+2. **Canvas curve sampling is still not pixel-tested.** `BitWave.geometry()` now
+   proves the canvas control points and the DOM nibble centres agree (worst
+   offset 0.00 px, §11 limit 1.5 px), but the drawn spline's own pixels are not
+   sampled; the §11 check asserts geometry, not raster output.
 3. **Toolchain not installed** — Vite/TypeScript/Vitest/Playwright deferred (D5);
    core runs via Node 24 native TS and the browser harness uses built-in
    WebSocket/fetch.
@@ -105,10 +111,11 @@ cell enough? Confirm before the matrix lands in the app.
 
 ## Next actions
 
-1. **F2 spine:** `src/state/store.ts` + `actions.ts`; renderer adapters. Join the
-   existing CSV column bindings and frame routes into one per-input binding model
-   (no behaviour change for CSV). Add the `window.__bitwave.debug` read surface as
-   the first agent/test seam.
+1. **F2 spine:** the read-only `window.BitWave` seam is done (D18); next is the
+   write side — `src/state/store.ts` + `actions.ts`, with the app's mutations
+   routed through one transaction and `evaluateAll()` as the only evaluator.
+   Join the CSV column bindings and frame routes into one per-input binding model
+   (no behaviour change for CSV). Screenshot hashes are the regression proof.
 2. **F3 in the app:** replace the per-lane `colA`/`colB` selects with the six-row
    source table; keep import/typing/alignment identical; add frame sources and
    `z⁻¹` state. Rows are the six operand frames A–F (D15); confirm the CSV label

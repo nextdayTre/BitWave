@@ -173,7 +173,7 @@ This implements DESIGN §12's promised shareable state (479–480) with no visua
 | Artifact | Playwright over `file://` | the shipped single file passes §11 |
 | Contract | Vitest | tokens ↔ DESIGN §3, colour-literal ban, constants ↔ §5/§9, `src/core` DOM-free |
 
-Expose a test-only `window.__bitwave.debug.geometry()` returning `xs[]` and hex rects, not pixel scraping. CI: `npm ci` → `tsc -p tsconfig.core.json --noEmit` → `vitest run` → `build:single` → `playwright test` → upload artifact + failure screenshots.
+Expose a test-only `window.__bitwave.debug.geometry()` returning `xs[]` and hex rects, not pixel scraping. **Shipped 2026-11-06** as the read-only `window.BitWave.geometry()` (schema 1) returning `controlPoints[]` and DOM nibble rects; `tools/browser-check.mjs` asserts the < 1.5 px contract from it. CI: `npm ci` → `tsc -p tsconfig.core.json --noEmit` → `vitest run` → `build:single` → `playwright test` → upload artifact + failure screenshots.
 
 **Done means:** golden trace matches; §11 green on the dev server *and* `file:// dist/bitwave.html`; screenshot baselines unchanged or explained; token contract passes; no `console.error`.
 
