@@ -13,6 +13,8 @@
     · copy mode says what it does and Escape cancels it
     · segmented controls expose aria-pressed; ambiguous preset names are labelled
     · the hint mentions that bits are clickable too
+    · agent-interop intent is recorded in AGENTS.md: state/render surfaces,
+      not screenshot automation
 
   index.html is untouched and remains the reference.
 -->
@@ -170,6 +172,7 @@
   }
 
   #wave.grabbing { cursor: grabbing; }
+  #wave.legend-hover:not(.grabbing) { cursor: pointer; }
   #wave.readonly { cursor: default; }
   #wave.split-view { cursor: pointer; }
 
@@ -1218,7 +1221,7 @@
   }
 
   let VW = 0, VH = 0;
-  let G = { x0: 0, x1: 0, y0: 0, y1: 0, pw: 0, ph: 0, nibW: 0, nibGap: 0, spA: null, spB: null };
+  let G = { x0: 0, x1: 0, y0: 0, y1: 0, pw: 0, ph: 0, nibW: 0, nibGap: 0, spA: null, spB: null, legendHits: [] };
 
   function fitCanvas() {
     const r = canvas.getBoundingClientRect();
@@ -1267,37 +1270,71 @@
     ctx.setLineDash([]);
   }
 
-  /* Top-right legend: with three curves on screen the user needs to
-     know which stroke is which. */
-  function drawLegend(x1, ly, vis = S.frameVis) {
+  /* Top-right legend: each entry is also a show/hide control. The eye glyph
+     carries the state; a hidden frame stays listed (dimmed, crossed) so it can
+     always be brought back. */
+  function drawEyeGlyph(cx, cy, visible) {
+    ctx.save();
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = visible ? "rgba(103,114,138,0.9)" : "rgba(63,72,89,0.9)";
+    ctx.beginPath();
+    ctx.moveTo(cx - 6, cy);
+    ctx.quadraticCurveTo(cx, cy - 5, cx + 6, cy);
+    ctx.quadraticCurveTo(cx, cy + 5, cx - 6, cy);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(cx, cy, 1.7, 0, Math.PI * 2);
+    ctx.stroke();
+    if (!visible) {
+      ctx.beginPath();
+      ctx.moveTo(cx - 5, cy + 4);
+      ctx.lineTo(cx + 5, cy - 4);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  function drawLegend(x1, ly) {
     const items = [
       { key: "a", t: "A", w: 1.8, dash: null, a: 0.82 },
       { key: "b", t: "B", w: 1.8, dash: [6, 4], a: 0.82 },
       { key: "z", t: "Z", w: 2.5, dash: null, a: 1 },
-    ].filter((it) => vis[it.key]);
-    if (items.length === 0) return;
+    ];
     ctx.font = `10px ${MONO}`;
     ctx.textBaseline = "middle";
     ctx.textAlign = "left";
 
+    const eyeW = 14;
+    const lineW = 17;
+    const textGap = 4;
+    const itemGap = 14;
     let total = 0;
-    for (const it of items) total += 17 + ctx.measureText(it.t).width + 15;
+    for (const it of items) {
+      total += eyeW + lineW + textGap + ctx.measureText(it.t).width + itemGap;
+    }
 
     let lx = x1 - total;
+    const hits = [];
     for (const it of items) {
+      const vis = S.frameVis[it.key];
+      drawEyeGlyph(lx + 7, ly, vis);
       ctx.save();
       ctx.setLineDash(it.dash || []);
       ctx.lineWidth = it.w;
-      ctx.strokeStyle = `rgba(52,211,153,${it.a})`;
+      ctx.strokeStyle = `rgba(52,211,153,${vis ? it.a : 0.18})`;
       ctx.beginPath();
-      ctx.moveTo(lx, ly);
-      ctx.lineTo(lx + 17, ly);
+      ctx.moveTo(lx + eyeW, ly);
+      ctx.lineTo(lx + eyeW + lineW, ly);
       ctx.stroke();
       ctx.restore();
-      ctx.fillStyle = C_DIMMER;
-      ctx.fillText(it.t, lx + 21, ly);
-      lx += 17 + ctx.measureText(it.t).width + 15;
+      ctx.fillStyle = vis ? C_DIMMER : "rgba(63,72,89,0.55)";
+      ctx.fillText(it.t, lx + eyeW + lineW + textGap, ly);
+
+      const itemW = eyeW + lineW + textGap + ctx.measureText(it.t).width + itemGap;
+      hits.push({ x: lx - 4, y: ly - 10, w: itemW + 4, h: 20, key: it.key });
+      lx += itemW;
     }
+    G.legendHits = hits;
   }
 
   /* ══════════════════════════════════════════════════════════
@@ -1479,6 +1516,7 @@
     const cy = yOf(7.5);
 
     ctx.clearRect(0, 0, VW, VH);
+    G.legendHits = [];
 
     /* control points — these mirror the bit strip's nibble groups */
     const xs = new Array(n);
@@ -1859,6 +1897,15 @@
     return Math.abs(py - ya) <= Math.abs(py - yb) ? "a" : "b";
   }
 
+  /* The drawn legend entries double as hit targets. */
+  function legendHitAt(px, py) {
+    if (S.view3d || !S.showB) return null;
+    for (const h of G.legendHits) {
+      if (px >= h.x && px <= h.x + h.w && py >= h.y && py <= h.y + h.h) return h.key;
+    }
+    return null;
+  }
+
   function valueFromY(py) {
     const v = ((G.y1 - py) / G.ph) * 15;
     return Math.max(0, Math.min(15, Math.round(v)));
@@ -1896,27 +1943,36 @@
     updateReadouts(false);
   }
 
-  canvas.addEventListener("pointerdown", (e) => {
-    if (S.view3d) {
-      if (S.split3d) {
-        const r = canvas.getBoundingClientRect();
-        focusSplitPane(e.clientX - r.left < r.width / 2 ? 0 : 1);
+    canvas.addEventListener("pointerdown", (e) => {
+      if (S.view3d) {
+        if (S.split3d) {
+          const r = canvas.getBoundingClientRect();
+          focusSplitPane(e.clientX - r.left < r.width / 2 ? 0 : 1);
+        }
+        return;
       }
-      return;
-    }
-    // Throws if the pointer is not active (released early, or synthetic).
-    try { canvas.setPointerCapture(e.pointerId); } catch (_) { /* non-fatal */ }
-    setFromPointer(e);
-  });
+      const r = canvas.getBoundingClientRect();
+      const hit = legendHitAt(e.clientX - r.left, e.clientY - r.top);
+      if (hit) {
+        setFrameVis(hit, !S.frameVis[hit]);
+        e.preventDefault();
+        return;
+      }
+      // Throws if the pointer is not active (released early, or synthetic).
+      try { canvas.setPointerCapture(e.pointerId); } catch (_) { /* non-fatal */ }
+      setFromPointer(e);
+    });
 
   canvas.addEventListener("pointermove", (e) => {
     if (S.view3d) return;
     const r = canvas.getBoundingClientRect();
+    const px = e.clientX - r.left;
+    const py = e.clientY - r.top;
+    canvas.classList.toggle("legend-hover", Boolean(legendHitAt(px, py)));
     if (S.drag >= 0) { setFromPointer(e); return; }
 
-    const px = e.clientX - r.left;
     const j = nearestNibble(px);
-    const k = nearestReg(px, e.clientY - r.top);
+    const k = nearestReg(px, py);
     if (j !== S.hoverJ || k !== S.hoverReg) {
       S.hoverJ = j;
       S.hoverReg = k;
@@ -1935,6 +1991,7 @@
   canvas.addEventListener("pointerup", endDrag);
   canvas.addEventListener("pointercancel", endDrag);
   canvas.addEventListener("pointerleave", () => {
+    canvas.classList.remove("legend-hover");
     if (S.drag < 0 && S.hoverJ !== -1) {
       S.hoverJ = -1;
       S.hoverReg = null;
@@ -2635,20 +2692,24 @@
 
     btn.addEventListener("click", (ev) => {
       ev.stopPropagation();
-      toggleFrameVis(frame, btn);
+      setFrameVis(frame, !S.frameVis[frame]);
     });
     return btn;
   }
 
-  function toggleFrameVis(frame, btn) {
-    S.frameVis[frame] = !S.frameVis[frame];
-    const visible = S.frameVis[frame];
-    btn.classList.toggle("is-hidden", !visible);
-    btn.setAttribute("aria-pressed", String(visible));
-    btn.setAttribute("aria-label", frameVisLabel(frame));
-    btn.title = frameVisLabel(frame);
-    const row = btn.closest(".frame-row");
-    if (row) row.classList.toggle("is-hidden", !visible);
+  function setFrameVis(frame, visible) {
+    S.frameVis[frame] = visible;
+    if (framesPanel.hidden) return;
+    const row = framesBody.querySelector(`.frame-row[data-frame="${frame}"]`);
+    if (!row) return;
+    row.classList.toggle("is-hidden", !visible);
+    const eye = row.querySelector(".eye-btn");
+    if (eye) {
+      eye.classList.toggle("is-hidden", !visible);
+      eye.setAttribute("aria-pressed", String(visible));
+      eye.setAttribute("aria-label", frameVisLabel(frame));
+      eye.title = frameVisLabel(frame);
+    }
   }
 
   function buildFrameRow(laneKey, frame) {
