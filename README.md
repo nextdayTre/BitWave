@@ -36,8 +36,8 @@ the artifact stays readable.
 ## Verify
 
 ```bash
-npm test               # DOM-free core + state: 48 tests, zero dependencies
-npm run check:browser  # 24 artifact checks in headless Chromium (25 with --shots or --compare)
+npm test               # DOM-free core + state + actions: 55 tests, zero dependencies
+npm run check:browser  # 25 artifact checks in headless Chromium (26 with --shots or --compare)
 npm run capture        # state screenshots → .tmp-captures/
 ```
 
@@ -82,7 +82,7 @@ and example snapshot are in [`AGENTS.md`](AGENTS.md).
 |---|---|
 | `bitwave-v2.html` | The build: one self-contained file, generated from `src/` by `npm run build`. |
 | `index.html` | Untouched original reference build. |
-| `src/` | App source (`index.html`, `main.js`, `styles/app.css`), DOM-free state (`src/state/`) and the engine (`src/core/`). |
+| `src/` | App source (`index.html`, `main.js`, `styles/app.css`), DOM-free state (`src/state/`: instrument, store, actions, routing) and the engine (`src/core/`). |
 | `tools/` | `browser-check.mjs` (verification + parity gate), `build-artifact.mjs` (single-file gate), the example generator. |
 | `vite.config.mjs`, `package.json`, `tsconfig.core.json` | Build, test and typecheck setup. |
 | `docs/`, `PLAN.md`, `DECISIONS.md`, `STATUS.md`, `tests/`, `spike/`, `examples/` | Design analysis, plan/status, core tests, housing spike and project example. |
@@ -94,13 +94,15 @@ as a single-file bundle under `backups/` (ignored by Git), so it can be restored
 or cloned without a remote:
 
 ```bash
-git clone backups/bitwave-v2-2026-11-06-state.bundle bitwave-restore
+git clone backups/bitwave-v2-2026-11-06-transaction.bundle bitwave-restore
 ```
 
 Tags: `v2-checkpoint-2026-11-06` (frame navigator, eyes, wheel-step),
 `v2-focus-2026-11-06` (global frame names, focus lens, browser harness),
 `v2-agent-seam-2026-11-06` (read-only `window.BitWave` state/geometry surface),
-`v2-toolchain-2026-11-06` (Vite build, `src/` source tree, rebuild parity gate) and
-`v2-state-2026-11-06` (DOM-free state tree + transaction store, core arithmetic wired).
+`v2-toolchain-2026-11-06` (Vite build, `src/` source tree, rebuild parity gate),
+`v2-state-2026-11-06` (DOM-free state tree + transaction store) and
+`v2-transaction-2026-11-06` (actions module, core `evaluateAll` in the transaction,
+all register writers wired).
 
 For off-machine safety, add a remote and push the `main` branch and tags.

@@ -8,6 +8,8 @@
 
 **State update 2026-11-06 (D20):** `src/state/instrument.ts` (single tree, frame names, selection helpers) and `src/state/store.ts` (nested patches collapse to one transaction) are in, and the app's register/derive math delegates to `src/core`. `commit()` runs inside the store transaction. Renderers, input handlers and the remaining writers still live in `src/main.js`; `evaluateAll()` joins the transaction next.
 
+**Actions/routing update 2026-11-06 (D21):** `src/state/actions.ts` owns the commands and delegates unary ops/presets to `src/core/ops.ts`; `src/state/routing.ts` maps the app slots onto a core `LaneMap` (shared registers) and `evaluate()` runs the core `evaluateAll()` in the transaction. All register writers are wrapped in `store.patch`, and `tests/actions.test.ts` proves a core route reaches the app tree and unroutes byte-identically. Remaining for F2: the render/ui split and the view-state writers.
+
 Governing constraints: `DESIGN.md` is the visual source of truth, no new hue is introduced below, and §11 (lines 419–437) must pass after every phase.
 
 ---

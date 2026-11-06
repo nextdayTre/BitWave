@@ -703,6 +703,27 @@ try {
     return 'lane 2 C/D/Z2 · lane 3 E/F/Z3 in strip, stage bar, readouts and truth';
   });
 
+  await runCheck('edit · bit click and wheel update the register through actions', async () => {
+    await loadApp();
+    const before = await evaluate(`document.getElementById('hex').textContent.trim()`);
+    assert(before === '8ADEFEDA85210125', `boot A: ${before}`);
+
+    await evaluate(`document.querySelector('#nibs .bit').click()`);
+    const clicked = await evaluate(`document.getElementById('hex').textContent.trim()`);
+    assert(clicked === '0ADEFEDA85210125', `after MSB toggle: ${clicked}`);
+
+    await evaluate(
+      `document.querySelector('#nibs .nib[data-j="0"] .hex')
+        .dispatchEvent(new WheelEvent('wheel', { deltaY: -1, bubbles: true, cancelable: true }))`
+    );
+    const wheeled = await evaluate(`document.getElementById('hex').textContent.trim()`);
+    assert(wheeled === '1ADEFEDA85210125', `after wheel: ${wheeled}`);
+
+    const dec = await evaluate(`document.getElementById('dec').textContent.trim()`);
+    assert(BigInt(`0x${wheeled}`).toString() === dec, 'decimal readout drifted');
+    return 'MSB toggle 8A→0A · wheel 0A→1A · decimal agrees';
+  });
+
   /* 4. 3-D field -------------------------------------------------------- */
   await runCheck('3d · depth field shows A/B/Z with Z = A xor B', async () => {
     await loadApp();

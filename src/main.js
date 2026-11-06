@@ -19,13 +19,24 @@ import {
   nibCount,
   nibValue,
   nibWeightPow,
-  recomputeZ,
   regOf,
   regToBig,
   setNibAt,
-  setNibValue,
   syncTarget,
 } from "./state/instrument.ts";
+import {
+  applyPreset,
+  applyUnary,
+  copyLane,
+  setBinop,
+  setFocus,
+  setLiveNibble,
+  setNibble,
+  toggleBit,
+  toggleFrameVisibility,
+  unpair,
+} from "./state/actions.ts";
+import { evaluate } from "./state/routing.ts";
 import { createStore } from "./state/store.ts";
 
 (() => {
@@ -47,54 +58,57 @@ import { createStore } from "./state/store.ts";
      slots remap together before S.N changes. */
   function resizeRegister(newN) {
     if (newN === S.N) return;
-    lfoStop();                       // its snapshot belongs to the old width
+    store.patch(() => {
+      lfoStop();                     // its snapshot belongs to the old width
 
-    const oldN = S.N;
-    const oldNibs = oldN >> 2;
-    const newNibs = newN >> 2;
-    const keep = Math.min(oldNibs, newNibs) >> 1;
+      const oldN = S.N;
+      const oldNibs = oldN >> 2;
+      const newNibs = newN >> 2;
+      const keep = Math.min(oldNibs, newNibs) >> 1;
 
-    const remap = (r) => {
-      const oldVals = new Array(oldNibs);
-      for (let j = 0; j < oldNibs; j++) oldVals[j] = nibAt(r.bits, j);
-      const vals = new Array(newNibs).fill(0);
-      for (let k = 0; k < keep; k++) {
-        vals[k] = oldVals[k];                               // MSB side
-        vals[newNibs - 1 - k] = oldVals[oldNibs - 1 - k];   // LSB side
-      }
-      return vals;
-    };
-
-    const mapped = {};
-    for (const k of SLOT_KEYS) {
-      mapped[k] = {
-        a: remap(S.slots[k].A),
-        b: remap(S.slots[k].B),
+      const remap = (r) => {
+        const oldVals = new Array(oldNibs);
+        for (let j = 0; j < oldNibs; j++) oldVals[j] = nibAt(r.bits, j);
+        const vals = new Array(newNibs).fill(0);
+        for (let k = 0; k < keep; k++) {
+          vals[k] = oldVals[k];                               // MSB side
+          vals[newNibs - 1 - k] = oldVals[oldNibs - 1 - k];   // LSB side
+        }
+        return vals;
       };
-    }
 
-    S.N = newN;
-
-    for (const k of SLOT_KEYS) {
-      const sl = S.slots[k];
-      for (const [r, vals] of [[sl.A, mapped[k].a], [sl.B, mapped[k].b]]) {
-        r.bits = new Uint8Array(newN);
-        r.target = vals.slice();
-        r.anim = vals.slice();
-        for (let j = 0; j < newNibs; j++) setNibAt(r.bits, j, vals[j]);
+      const mapped = {};
+      for (const k of SLOT_KEYS) {
+        mapped[k] = {
+          a: remap(S.slots[k].A),
+          b: remap(S.slots[k].B),
+        };
       }
-      sl.Z.bits = new Uint8Array(newN);
-      sl.Z.target = new Array(newNibs).fill(0);
-      sl.Z.anim = new Array(newNibs).fill(0);
-      recomputeZ(true, sl);
-    }
 
-    S.drag = -1;
-    S.hoverReg = null;
-    S.hoverJ = -1;
+      S.N = newN;
 
-    renderStrip();
-    updateReadouts();
+      for (const k of SLOT_KEYS) {
+        const sl = S.slots[k];
+        for (const [r, vals] of [[sl.A, mapped[k].a], [sl.B, mapped[k].b]]) {
+          r.bits = new Uint8Array(newN);
+          r.target = vals.slice();
+          r.anim = vals.slice();
+          for (let j = 0; j < newNibs; j++) setNibAt(r.bits, j, vals[j]);
+        }
+        sl.Z.bits = new Uint8Array(newN);
+        sl.Z.target = new Array(newNibs).fill(0);
+        sl.Z.anim = new Array(newNibs).fill(0);
+      }
+
+      evaluate(true);
+
+      S.drag = -1;
+      S.hoverReg = null;
+      S.hoverJ = -1;
+
+      renderStrip();
+      updateReadouts();
+    });
   }
 
   /* ══════════════════════════════════════════════════════════
@@ -841,12 +855,12 @@ import { createStore } from "./state/store.ts";
   }
 
   function commit(instant = false) {
-    /* One transaction boundary: the state writes happen, then the renderers
-       read the settled tree. Routing evaluation joins this block in F2. */
+    /* One transaction boundary: base writes, then the clocked evaluation
+       (routes in dependency order, then every lane's Z), then renderers. */
     store.patch(() => {
       syncTarget(S.A, instant);
       syncTarget(S.B, instant);
-      recomputeZ(instant);
+      evaluate(instant);
       renderStrip();
       updateReadouts();
     });
@@ -900,31 +914,30 @@ import { createStore } from "./state/store.ts";
     const px = e.clientX - r.left;
     const py = e.clientY - r.top;
 
-    if (S.drag < 0) {
-      lfoStop();
-      const j = nearestNibble(px);
-      if (j < 0) return;
-      S.drag = j;
-      S.hoverReg = nearestReg(px, py);
-      S.hoverJ = j;
-      S.edit = S.hoverReg;
-      S.focus = S.hoverReg;
-      syncEditUi();
-      renderStrip();
-      canvas.classList.add("grabbing");
-      document.getElementById("hint").classList.add("off");
-    }
+    store.patch(() => {
+      if (S.drag < 0) {
+        lfoStop();
+        const j = nearestNibble(px);
+        if (j < 0) return;
+        S.drag = j;
+        S.hoverReg = nearestReg(px, py);
+        S.hoverJ = j;
+        setFocus(curSlot(), S.hoverReg);
+        syncEditUi();
+        renderStrip();
+        canvas.classList.add("grabbing");
+        document.getElementById("hint").classList.add("off");
+      }
 
-    const k = S.hoverReg || editKey();
-    const reg = regOf(k);
-    const v = valueFromY(py);
-    setNibValue(reg, S.drag, v);
-    reg.target[S.drag] = v;
-    reg.anim[S.drag] = v;            // 1:1 tracking while dragging
-    recomputeZ();
-    S.Z.anim = S.Z.target.slice();   // results follow the drag exactly
-    patchNibble(S.drag);
-    updateReadouts(false);
+      const k = S.hoverReg || editKey();
+      const reg = regOf(k);
+      const v = valueFromY(py);
+      setLiveNibble(reg, S.drag, v);
+      evaluate();
+      S.Z.anim = S.Z.target.slice();   // results follow the drag exactly
+      patchNibble(S.drag);
+      updateReadouts(false);
+    });
   }
 
     canvas.addEventListener("pointerdown", (e) => {
@@ -994,14 +1007,12 @@ import { createStore } from "./state/store.ts";
     if (!bit) return;
     if (!focusEditable()) return;   // Z is derived — never editable
     lfoStop();
-    const reg = editReg();
-    const b = Number(bit.dataset.b);
-    reg.bits[b] ^= 1;
-    const j = Math.floor((S.N - 1 - b) / 4);
-    reg.target[j] = nibValue(reg, j);
-    recomputeZ();
-    patchNibble(j);
-    updateReadouts();
+    store.patch(() => {
+      const j = toggleBit(editReg(), Number(bit.dataset.b));
+      evaluate();
+      patchNibble(j);
+      updateReadouts();
+    });
   });
 
   /* Mouse-wheel over a hex glyph nudges that nibble by ±1, clamped 0–F.
@@ -1019,16 +1030,16 @@ import { createStore } from "./state/store.ts";
 
     e.preventDefault();
     lfoStop();
-    const reg = editReg();
-    const current = nibValue(reg, j);
-    const next = Math.max(0, Math.min(15, current + (e.deltaY < 0 ? 1 : -1)));
-    if (next === current) return;
-
-    setNibValue(reg, j, next);
-    reg.target[j] = next;
-    recomputeZ();
-    patchNibble(j);
-    updateReadouts();
+    store.patch(() => {
+      const reg = editReg();
+      const current = nibValue(reg, j);
+      const next = Math.max(0, Math.min(15, current + (e.deltaY < 0 ? 1 : -1)));
+      if (next === current) return;
+      setNibble(reg, j, next);
+      evaluate();
+      patchNibble(j);
+      updateReadouts();
+    });
   }, { passive: false });
 
   nibsEl.addEventListener("pointerover", (e) => {
@@ -1090,26 +1101,28 @@ import { createStore } from "./state/store.ts";
 
   function lfoStop() {
     if (!S.lfo.on) return;
-    S.lfo.on = false;
-    lfoBtn.setAttribute("aria-pressed", "false");
-    const snap = S.lfo.base;
-    if (snap) {
-      if (S.lfo.mode !== "csvStep") {
-        for (const k of SLOT_KEYS) {
-          const sl = S.slots[k];
-          if (snap[k]) {
-            sl.A.bits = snap[k].a.slice();
-            sl.B.bits = snap[k].b.slice();
+    store.patch(() => {
+      S.lfo.on = false;
+      lfoBtn.setAttribute("aria-pressed", "false");
+      const snap = S.lfo.base;
+      if (snap) {
+        if (S.lfo.mode !== "csvStep") {
+          for (const k of SLOT_KEYS) {
+            const sl = S.slots[k];
+            if (snap[k]) {
+              sl.A.bits = snap[k].a.slice();
+              sl.B.bits = snap[k].b.slice();
+            }
+            syncTarget(sl.A);
+            syncTarget(sl.B);
           }
-          syncTarget(sl.A);
-          syncTarget(sl.B);
-          recomputeZ(false, sl);
+          evaluate();
         }
+        S.lfo.base = null;
+        renderStrip();
+        updateReadouts();
       }
-      S.lfo.base = null;
-      renderStrip();
-      updateReadouts();
-    }
+    });
   }
 
   /* Rotate (wrapping) or truncate a snapshot by a SIGNED bit count. */
@@ -1139,38 +1152,40 @@ import { createStore } from "./state/store.ts";
     const base = S.lfo.base;
     if (!base) return;
 
-    const k = Math.max(1, Number(amountSel.value) || 4);
-    const rotate = S.lfo.mode !== "slide";
-    S.lfo.t++;
-    const t = S.lfo.t;
+    store.patch(() => {
+      const k = Math.max(1, Number(amountSel.value) || 4);
+      const rotate = S.lfo.mode !== "slide";
+      S.lfo.t++;
+      const t = S.lfo.t;
 
-    let shift;
-    if (rotate) {
-      shift = t * k * (S.lfo.mode === "rotccw" ? -1 : 1);
-    } else {
-      const maxSteps = Math.max(1, Math.ceil(S.N / k));
-      const p = t % (2 * maxSteps);
-      shift = (p <= maxSteps ? p : 2 * maxSteps - p) * k;
-    }
-
-    for (const sk of SLOT_KEYS) {
-      const sl = S.slots[sk];
-      const sb = base[sk];
-      if (!sb) continue;
-      sweepInto(sl.A, sb.a, shift, rotate);
-      if (sl.showB) {
-        const cfg = lfoBConfig(sl.lfoB);
-        /* Counter-rotation is the only offset that makes Z *change shape*;
-           a fixed offset just slides a rigid pattern around the register. */
-        sweepInto(sl.B, sb.b, (cfg.opp ? -shift : shift) + cfg.off, rotate);
+      let shift;
+      if (rotate) {
+        shift = t * k * (S.lfo.mode === "rotccw" ? -1 : 1);
+      } else {
+        const maxSteps = Math.max(1, Math.ceil(S.N / k));
+        const p = t % (2 * maxSteps);
+        shift = (p <= maxSteps ? p : 2 * maxSteps - p) * k;
       }
-      syncTarget(sl.A);
-      syncTarget(sl.B);
-      recomputeZ(false, sl);
-    }
 
-    renderStrip();
-    updateReadouts();
+      for (const sk of SLOT_KEYS) {
+        const sl = S.slots[sk];
+        const sb = base[sk];
+        if (!sb) continue;
+        sweepInto(sl.A, sb.a, shift, rotate);
+        if (sl.showB) {
+          const cfg = lfoBConfig(sl.lfoB);
+          /* Counter-rotation is the only offset that makes Z *change shape*;
+             a fixed offset just slides a rigid pattern around the register. */
+          sweepInto(sl.B, sb.b, (cfg.opp ? -shift : shift) + cfg.off, rotate);
+        }
+        syncTarget(sl.A);
+        syncTarget(sl.B);
+      }
+
+      evaluate();
+      renderStrip();
+      updateReadouts();
+    });
   }
 
   lfoBtn.addEventListener("click", () => (S.lfo.on ? lfoStop() : lfoStart()));
@@ -1190,103 +1205,22 @@ import { createStore } from "./state/store.ts";
     curSlot().lfoB = lfoBSel.value;
   });
 
-  const clampNib = (v) => Math.max(0, Math.min(15, Math.round(v)));
-
-  const TABLES = {
-    zero:     () => 0,
-    max:      () => 15,
-    sine:     (n, j) => clampNib(7.5 + 7.5 * Math.sin((2 * Math.PI * j) / n)),
-    cosine:   (n, j) => clampNib(7.5 + 7.5 * Math.cos((2 * Math.PI * j) / n)),
-    triangle: (n, j) => {
-      const t = n === 1 ? 0 : j / (n - 1);
-      return clampNib(15 * (1 - Math.abs(2 * t - 1)));
-    },
-    sawDown:  (n, j) => clampNib(15 * (1 - j / Math.max(1, n - 1))),
-    sawUp:    (n, j) => clampNib(15 * (j / Math.max(1, n - 1))),
-    square:   (n, j) => (j < n / 2 ? 15 : 0),
-  };
-
   function applyTable(name, reg = editReg()) {
-    const n = nibCount();
-    const fn = TABLES[name];
-    if (!fn) return;
-    for (let j = 0; j < n; j++) setNibValue(reg, j, fn(n, j));
+    applyPreset(reg, name);
     commit();
   }
 
   /* ══════════════════════════════════════════════════════════
-     OPS — all unary ops act on the register you are editing
+     OPS — all unary ops act on the register you are editing.
+     The implementations live in src/core/ops.ts and run through
+     src/state/actions.ts; the render module only calls them.
      ══════════════════════════════════════════════════════════ */
-
-  function rotateLeft(r, k) {
-    k = ((k % S.N) + S.N) % S.N;
-    const next = new Uint8Array(S.N);
-    for (let b = 0; b < S.N; b++) next[(b + k) % S.N] = r.bits[b];
-    r.bits = next;
-  }
-
-  function rotateRight(r, k) {
-    k = ((k % S.N) + S.N) % S.N;
-    const next = new Uint8Array(S.N);
-    for (let b = 0; b < S.N; b++) next[(b - k + S.N) % S.N] = r.bits[b];
-    r.bits = next;
-  }
-
-  function shiftLeft(r, k) {
-    const next = new Uint8Array(S.N);       // bits past the MSB are discarded, not folded
-    for (let b = 0; b + k < S.N; b++) next[b + k] = r.bits[b];
-    r.bits = next;
-  }
-
-  function shiftRight(r, k) {
-    const next = new Uint8Array(S.N);
-    for (let b = S.N - 1; b - k >= 0; b--) next[b - k] = r.bits[b];
-    r.bits = next;
-  }
-
-  function invert(r) {
-    for (let b = 0; b < S.N; b++) r.bits[b] ^= 1;
-  }
-
-  /* XOR against a rising ramp — a wavefolder, and the clearest
-     demonstration that bitwise XOR changes harmonic content. */
-  function fold(r) {
-    const n = nibCount();
-    for (let j = 0; j < n; j++) setNibValue(r, j, nibValue(r, j) ^ (j & 15));
-  }
-
-  /* Endianness swap: reverse the order of the bytes (nibble pairs).
-     Bit order *within* a byte is untouched. No-op at 8 bits, because
-     a single byte has no byte order. */
-  function byteSwap(r) {
-    const n = nibCount();
-    const bytes = n >> 1;
-    if (bytes < 2) return;
-    const cur = new Array(n);
-    for (let j = 0; j < n; j++) cur[j] = nibValue(r, j);
-    for (let j = 0; j < n; j++) {
-      const byteIdx = j >> 1;
-      const inByte = j & 1;
-      const dest = (bytes - 1 - byteIdx) * 2 + inByte;
-      setNibValue(r, dest, cur[j]);
-    }
-  }
-
-  const OPS = {
-    rol:   (r, k) => rotateLeft(r, k),
-    ror:   (r, k) => rotateRight(r, k),
-    shl:   (r, k) => shiftLeft(r, k),
-    shr:   (r, k) => shiftRight(r, k),
-    not:   (r) => invert(r),
-    fold:  (r) => fold(r),
-    bswap: (r) => byteSwap(r),
-  };
 
   document.querySelectorAll("[data-op]").forEach((btn) => {
     btn.addEventListener("click", () => {
       lfoStop();                       // a manual op takes the wheel back
       const k = Number(document.getElementById("amount").value) || 4;
-      OPS[btn.dataset.op](editReg(), k);
+      applyUnary(editReg(), btn.dataset.op, k);
       commit();
     });
   });
@@ -1330,26 +1264,29 @@ import { createStore } from "./state/store.ts";
     const sl = curSlot();
     if (!sl.showB) return;
     lfoStop();
-    sl.showB = false;
-    sl.edit = "a";
-    sl.focus = "a";
-    S.hoverReg = null;
-    S.hoverJ = -1;
-    syncEditUi();
-    syncViewUi();
-    renderStrip();
-    updateReadouts();
+    store.patch(() => {
+      unpair(sl);
+      S.hoverReg = null;
+      S.hoverJ = -1;
+      syncEditUi();
+      syncViewUi();
+      evaluate();
+      renderStrip();
+      updateReadouts();
+    });
     if (!framesPanel.hidden) renderFramesPanel(S.slot);
     else framesBtn.focus();
   }
 
   binopBtns.forEach((b) => {
     b.addEventListener("click", () => {
-      S.binop = b.dataset.binop;
-      syncEditUi();
-      syncViewUi();
-      recomputeZ();
-      updateReadouts();
+      store.patch(() => {
+        setBinop(curSlot(), b.dataset.binop);
+        syncEditUi();
+        syncViewUi();
+        evaluate();
+        updateReadouts();
+      });
     });
   });
 
@@ -1490,14 +1427,13 @@ import { createStore } from "./state/store.ts";
     sl.showB = true;
     if (!sl.seededB) {
       sl.seededB = true;
-      const n = nibCount();
-      for (let j = 0; j < n; j++) setNibValue(sl.B, j, TABLES.square(n, j));
+      applyPreset(sl.B, "square");
       syncTarget(sl.B, true);
       if (S.lfo.base && S.lfo.base[sl.key]) {
         S.lfo.base[sl.key].b = sl.B.bits.slice();
       }
     }
-    recomputeZ(true, sl);
+    evaluate(true);
   }
 
   function enableB() {
@@ -1510,21 +1446,12 @@ import { createStore } from "./state/store.ts";
     lfoStop();
     const src = S.slots[srcKey];
     const dst = S.slots[dstKey];
-    dst.A.bits = src.A.bits.slice();
-    dst.B.bits = src.B.bits.slice();
-    dst.Z.bits = src.Z.bits.slice();
-    dst.showB = src.showB;
-    dst.seededB = src.seededB;
-    dst.binop = src.binop;
-    dst.edit = src.edit;
-    dst.focus = src.focus;
-    dst.frameVis = { ...src.frameVis };
-    dst.lfoB = src.lfoB;
-    dst.colA = src.colA;
-    dst.colB = src.colB;
-    syncTarget(dst.A, true);
-    syncTarget(dst.B, true);
-    recomputeZ(true, dst);
+    store.patch(() => {
+      copyLane(src, dst);
+      syncTarget(dst.A, true);
+      syncTarget(dst.B, true);
+      evaluate(true);
+    });
   }
 
   function refreshActiveSlotUi() {
@@ -1727,7 +1654,8 @@ import { createStore } from "./state/store.ts";
   }
 
   function setFrameVis(laneKey, frame, visible) {
-    S.slots[laneKey].frameVis[frame] = visible;
+    const sl = S.slots[laneKey];
+    if (sl.frameVis[frame] !== visible) toggleFrameVisibility(sl, frame);
     if (framesPanel.hidden) return;
     const row = framesBody.querySelector(`.frame-row[data-frame="${frame}"]`);
     if (!row) return;
@@ -1854,18 +1782,19 @@ import { createStore } from "./state/store.ts";
      editable; Z is a read-only lens (DESIGN §10.8). */
   function selectFrame(laneKey, frame) {
     S.copyArmed = false;
-    S.slots[laneKey].frameVis[frame] = true;
-    if (S.slot !== laneKey) selectSlot(laneKey);
-    const sl = curSlot();
-    if (frame !== "a" && !sl.showB) enableBOnSlot(sl);
-    sl.focus = frame;
-    if (frame !== "z") sl.edit = frame;
-    S.hoverReg = null;
-    S.hoverJ = -1;
-    syncEditUi();
-    syncViewUi();
-    renderStrip();
-    updateReadouts();
+    store.patch(() => {
+      if (!S.slots[laneKey].frameVis[frame]) toggleFrameVisibility(S.slots[laneKey], frame);
+      if (S.slot !== laneKey) selectSlot(laneKey);
+      const sl = curSlot();
+      if (frame !== "a" && !sl.showB) enableBOnSlot(sl);
+      setFocus(sl, frame);
+      S.hoverReg = null;
+      S.hoverJ = -1;
+      syncEditUi();
+      syncViewUi();
+      renderStrip();
+      updateReadouts();
+    });
     if (!framesPanel.hidden) {
       renderFramesPanel();
       const focusedBtn = framesBody.querySelector(`.frame-row[data-frame="${frame}"] .frame-btn`);
@@ -2060,34 +1989,36 @@ import { createStore } from "./state/store.ts";
 
   function applyExample(idx, instant, keepLfo = false) {
     if (!DEMO.rows.length) return;
-    if (!framesPanel.hidden) closeFrames(false);
-    if (!keepLfo) lfoStop();
-    const n = DEMO.rows.length;
-    DEMO.i = ((idx % n) + n) % n;
-    const row = DEMO.rows[DEMO.i];
+    store.patch(() => {
+      if (!framesPanel.hidden) closeFrames(false);
+      if (!keepLfo) lfoStop();
+      const n = DEMO.rows.length;
+      DEMO.i = ((idx % n) + n) % n;
+      const row = DEMO.rows[DEMO.i];
 
-    for (const k of SLOT_KEYS) {
-      const sl = S.slots[k];
-      if (sl.colA >= 0) {
-        const a = cellToBits(row[sl.colA], columnMode(DEMO.rows, sl.colA));
-        if (a) writeBitsInto(sl.A, a);
-        syncTarget(sl.A, instant === true);
-      }
-      if (sl.colB >= 0) {
-        const b = cellToBits(row[sl.colB], columnMode(DEMO.rows, sl.colB));
-        if (b) {
-          writeBitsInto(sl.B, b);
-          sl.seededB = true;
+      for (const k of SLOT_KEYS) {
+        const sl = S.slots[k];
+        if (sl.colA >= 0) {
+          const a = cellToBits(row[sl.colA], columnMode(DEMO.rows, sl.colA));
+          if (a) writeBitsInto(sl.A, a);
+          syncTarget(sl.A, instant === true);
         }
-        syncTarget(sl.B, instant === true);
+        if (sl.colB >= 0) {
+          const b = cellToBits(row[sl.colB], columnMode(DEMO.rows, sl.colB));
+          if (b) {
+            writeBitsInto(sl.B, b);
+            sl.seededB = true;
+          }
+          syncTarget(sl.B, instant === true);
+        }
       }
-      recomputeZ(instant === true, sl);
-    }
 
-    renderStrip();
-    updateReadouts();
-    syncViewUi();
-    renderDemoUi();
+      evaluate(instant === true);
+      renderStrip();
+      updateReadouts();
+      syncViewUi();
+      renderDemoUi();
+    });
   }
 
   function renderDemoUi() {
@@ -2351,28 +2282,26 @@ import { createStore } from "./state/store.ts";
      ══════════════════════════════════════════════════════════ */
 
   function boot() {
-    const n = nibCount();
-
     // Lane 1: sine + square (classic default)
-    for (let j = 0; j < n; j++) setNibValue(S.slots.A.A, j, TABLES.sine(n, j));
-    for (let j = 0; j < n; j++) setNibValue(S.slots.A.B, j, TABLES.square(n, j));
+    applyPreset(S.slots.A.A, "sine");
+    applyPreset(S.slots.A.B, "square");
 
     // Lane 2: cosine + triangle (ready for instant lane & split exploration)
-    for (let j = 0; j < n; j++) setNibValue(S.slots.B.A, j, TABLES.cosine(n, j));
-    for (let j = 0; j < n; j++) setNibValue(S.slots.B.B, j, TABLES.triangle(n, j));
+    applyPreset(S.slots.B.A, "cosine");
+    applyPreset(S.slots.B.B, "triangle");
     S.slots.B.seededB = true;
 
     // Lane 3: sawUp + sine (AND mask)
-    for (let j = 0; j < n; j++) setNibValue(S.slots.C.A, j, TABLES.sawUp(n, j));
-    for (let j = 0; j < n; j++) setNibValue(S.slots.C.B, j, TABLES.sine(n, j));
+    applyPreset(S.slots.C.A, "sawUp");
+    applyPreset(S.slots.C.B, "sine");
     S.slots.C.seededB = true;
 
     for (const k of SLOT_KEYS) {
       const sl = S.slots[k];
       syncTarget(sl.A, true);
       syncTarget(sl.B, true);
-      recomputeZ(true, sl);
     }
+    evaluate(true);
 
     buildStageBar();
     syncSizeLabel();
