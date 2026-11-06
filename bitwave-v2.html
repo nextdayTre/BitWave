@@ -13,6 +13,7 @@
     · copy mode says what it does and Escape cancels it
     · segmented controls expose aria-pressed; ambiguous preset names are labelled
     · the hint mentions that bits are clickable too
+    · wheel over a hex glyph nudges that nibble by ±1, clamped 0–F
     · agent-interop intent is recorded in AGENTS.md: state/render surfaces,
       not screenshot automation
 
@@ -535,6 +536,8 @@
     font-variant-numeric: tabular-nums;
   }
 
+  .hex:hover { color: var(--text); }
+
   /* A nibble's own value in decimal (0–15) — its share of the vertical axis. */
   .dec {
     text-align: center;
@@ -793,7 +796,7 @@
 
 <section class="stage">
   <canvas id="wave"></canvas>
-  <div class="hint" id="hint">drag a nibble · click a bit</div>
+  <div class="hint" id="hint">drag a nibble · click a bit · scroll a hex</div>
   <div class="stage-bar" id="stageBar" hidden></div>
   <aside class="frames-panel" id="framesPanel" hidden aria-label="Frame navigator">
     <div class="fp-head">
@@ -1726,7 +1729,7 @@
         html += `<i class="${cls}" data-b="${b}">${r.bits[b]}</i>`;
       }
       html += `</div>`;
-      html += `<div class="hex">${v.toString(16).toUpperCase()}</div>`;
+      html += `<div class="hex" title="scroll to adjust this nibble">${v.toString(16).toUpperCase()}</div>`;
       html += `<div class="dec">${v}</div>`;
 
       /* At 256-bit density a weight under every column would collide, so
@@ -2013,6 +2016,32 @@
     patchNibble(j);
     updateReadouts();
   });
+
+  /* Mouse-wheel over a hex glyph nudges that nibble by ±1, clamped 0–F.
+     Same update path as a bit click; no wrap and no page scrolling. */
+  nibsEl.addEventListener("wheel", (e) => {
+    if (S.drag >= 0 || e.deltaY === 0) return;
+    if (e.ctrlKey || e.metaKey) return; // leave browser zoom alone
+    const hexEl = e.target.closest(".hex");
+    if (!hexEl) return;
+    const nib = hexEl.closest(".nib");
+    if (!nib) return;
+    const j = Number(nib.dataset.j);
+    if (!Number.isInteger(j)) return;
+
+    e.preventDefault();
+    lfoStop();
+    const reg = editReg();
+    const current = nibValue(reg, j);
+    const next = Math.max(0, Math.min(15, current + (e.deltaY < 0 ? 1 : -1)));
+    if (next === current) return;
+
+    setNibValue(reg, j, next);
+    reg.target[j] = next;
+    recomputeZ();
+    patchNibble(j);
+    updateReadouts();
+  }, { passive: false });
 
   nibsEl.addEventListener("pointerover", (e) => {
     const nib = e.target.closest(".nib");
