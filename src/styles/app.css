@@ -180,12 +180,13 @@
   .hint {
     position: absolute;
     left: 50%;
-    top: 10px;
+    bottom: 6px;
     transform: translateX(-50%);
     font-size: 10.5px;
     letter-spacing: 0.09em;
     text-transform: uppercase;
     color: var(--dimmer);
+    white-space: nowrap;
     pointer-events: none;
     user-select: none;
     transition: opacity 220ms ease;
@@ -738,18 +739,22 @@
     align-items: baseline;
   }
 
-  .truth-grid > span { text-align: center; font-variant-numeric: tabular-nums; }
-  .truth-grid > .th {
+  /* ARIA table rows are presentational for layout: `display: contents` keeps
+     the four-column grid while a screen reader hears real rows. */
+  .truth-grid [role="row"] { display: contents; }
+
+  .truth-grid span { text-align: center; font-variant-numeric: tabular-nums; }
+  .truth-grid .th {
     font-size: 9px;
     letter-spacing: 0.08em;
     text-transform: uppercase;
     color: var(--dimmer);
   }
-  .truth-grid > .z { color: var(--dim); }
-  .truth-grid > .z.on { color: var(--accent); }
+  .truth-grid .z { color: var(--dim); }
+  .truth-grid .z.on { color: var(--accent); }
   /* The count column is data about the register, not part of the
      algebra — a rule keeps the four logic cells from reading as one run. */
-  .truth-grid > .ct {
+  .truth-grid .ct {
     color: var(--text);
     border-left: 1px solid var(--line);
     padding-left: 9px;
@@ -760,9 +765,9 @@
     grid-template-columns: auto auto;
     gap: 0 14px;
   }
-  .truth-grid.ar > .th { text-align: left; }
-  .truth-grid.ar > .ct { text-align: left; border-left-width: 0; padding-left: 0; }
-  .truth-grid.ar > .ct.yes { color: var(--inf); }
+  .truth-grid.ar .th { text-align: left; }
+  .truth-grid.ar .ct { text-align: left; border-left-width: 0; padding-left: 0; }
+  .truth-grid.ar .ct.yes { color: var(--inf); }
 
   /* ── controls ─────────────────────────────────────────── */
   .controls {
@@ -804,10 +809,19 @@
   button.op.accent:hover { border-color: rgba(52,211,153,0.5); }
 
   button.op.on,
-  button.op[aria-pressed="true"] {
+  button.op[aria-pressed="true"],
+  button.op[aria-checked="true"] {
     color: var(--accent);
     border-color: rgba(52,211,153,0.5);
     background: rgba(52,211,153,0.10);
+  }
+
+  /* Reserved space (DESIGN §9): an inapplicable control stays in place,
+     dimmed and non-interactive, instead of disappearing. */
+  .op[aria-disabled="true"],
+  .seg[aria-disabled="true"] .op {
+    opacity: 0.42;
+    cursor: default;
   }
 
   /* segmented A | B | C */
@@ -858,11 +872,116 @@
     text-align: center;
   }
 
+  /* ── F4 IA: register edit, copy menu, keyboard map ───────── */
+
+  .sub-label {
+    font-size: 9px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--dimmer);
+    margin-left: 2px;
+  }
+
+  .edit-target {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--dim);
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .hex-entry {
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--text);
+    background: var(--panel-hi);
+    border: 1px solid var(--line);
+    border-radius: 5px;
+    padding: 5px 8px;
+    width: 20ch;
+    text-align: right;
+    letter-spacing: 0.02em;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .hex-entry::placeholder { color: var(--dimmer); }
+  .hex-entry:focus-visible { outline: none; box-shadow: 0 0 0 2px rgba(52,211,153,0.35); }
+  .hex-entry:disabled { opacity: 0.42; cursor: default; }
+  .hex-entry.invalid { border-color: rgba(245,181,68,0.7); }
+
+  .b-state {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    color: var(--dim);
+    white-space: nowrap;
+    min-width: 34px;
+  }
+
+  /* Explicit copy menu — overlays, focus moves in, Esc cancels. */
+  .copy-menu {
+    position: fixed;
+    z-index: 20;
+    min-width: 110px;
+    padding: 4px;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 5px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  }
+
+  .copy-menu .op {
+    display: block;
+    width: 100%;
+    text-align: left;
+    border-color: transparent;
+    background: transparent;
+  }
+
+  .copy-menu .op:hover,
+  .copy-menu .op:focus-visible { background: var(--panel-hover); }
+
+  /* Keyboard map — a utility panel, not onboarding. */
+  .help-panel {
+    position: fixed;
+    z-index: 20;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    width: min(430px, calc(100% - 2 * var(--pad)));
+    max-height: calc(100dvh - 40px);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 5px;
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+  }
+
+  .help-body { overflow: auto; padding: 2px 14px 14px; }
+
+  .help-list {
+    display: grid;
+    grid-template-columns: max-content minmax(0, 1fr);
+    gap: 7px 14px;
+    margin: 10px 0 0;
+    font-size: 11.5px;
+  }
+
+  .help-list dt {
+    font-family: var(--mono);
+    color: var(--text);
+    white-space: nowrap;
+  }
+
+  .help-list dd { margin: 0; color: var(--dim); }
+
   @media (max-width: 720px) {
     :root { --pad: 16px; }
     header { flex-wrap: wrap; gap: 12px; padding-top: 12px; padding-bottom: 12px; }
     .title p { display: none; }
-    .sizer { width: 100%; }
+    .sizer { width: 100%; order: 2; }
+    #helpBtn { order: 1; }
     .sizer input[type="range"] { flex: 1 1 auto; width: auto; }
     #sizeOut { min-width: 0; }
     .controls { gap: 8px 16px; }

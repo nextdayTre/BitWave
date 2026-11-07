@@ -66,9 +66,11 @@ import { stripEl } from "./strip.js";
       const label = S.binop === "add" ? "carry out" : "borrow out";
       truthEl.innerHTML =
         `<div class="truth-h">${fa} ${OPSYM[S.binop]} ${fb} → ${fz}</div>` +
-        `<div class="truth-grid ar">` +
-        `<span class="th">${label}</span>` +
-        `<span class="ct${over ? " yes" : ""}">${over ? "yes" : "no"}</span>` +
+        `<div class="truth-grid ar" role="table" aria-label="${label}">` +
+        `<div role="row">` +
+        `<span class="th" role="columnheader">${label}</span>` +
+        `<span class="ct${over ? " yes" : ""}" role="cell">${over ? "yes" : "no"}</span>` +
+        `</div>` +
         `</div>`;
       return;
     }
@@ -79,13 +81,21 @@ import { stripEl } from "./strip.js";
     }
 
     let html = `<div class="truth-h">${fa} ${OPSYM[S.binop]} ${fb} → ${fz}</div>`;
-    html += `<div class="truth-grid">`;
-    html += `<span class="th">a</span><span class="th">b</span><span class="th">→</span><span class="th">n</span>`;
+    html += `<div class="truth-grid" role="table" aria-label="truth table">`;
+    html += `<div role="row">` +
+      `<span class="th" role="columnheader">a</span>` +
+      `<span class="th" role="columnheader">b</span>` +
+      `<span class="th" role="columnheader">→</span>` +
+      `<span class="th" role="columnheader">n</span>` +
+      `</div>`;
     for (const [a, b] of PAIRS) {
       const z = binFn(a, b);
-      html += `<span>${a}</span><span>${b}</span>`;
-      html += `<span class="z${z ? " on" : ""}">${z}</span>`;
-      html += `<span class="ct">${counts[(a << 1) | b]}</span>`;
+      html += `<div role="row">` +
+        `<span role="cell">${a}</span>` +
+        `<span role="cell">${b}</span>` +
+        `<span class="z${z ? " on" : ""}" role="cell">${z}</span>` +
+        `<span class="ct" role="cell">${counts[(a << 1) | b]}</span>` +
+        `</div>`;
     }
     html += `</div>`;
     truthEl.innerHTML = html;

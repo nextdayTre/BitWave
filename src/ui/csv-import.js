@@ -98,10 +98,23 @@ export function createCsvImport(deps) {
 
   function renderDemoUi() {
     const loaded = DEMO.rows.length > 0;
-    [stepSeg, exCount, obsSeg, obsCount].forEach((el) => { if (el) el.hidden = !loaded; });
-    if (!loaded) return;
-    exCount.textContent = `${DEMO.i + 1} / ${DEMO.rows.length}`;
-    if (obsCount) obsCount.textContent = `${observations.length} obs`;
+    /* Reserve space (DESIGN §9): the stepper and logger never disappear; they
+       sit in place disabled until a dataset exists. */
+    stepSeg.hidden = false;
+    stepSeg.setAttribute("aria-disabled", String(!loaded));
+    prevEx.setAttribute("aria-disabled", String(!loaded));
+    nextEx.setAttribute("aria-disabled", String(!loaded));
+    prevEx.title = loaded ? "Previous example (←)" : "Load a CSV first";
+    nextEx.title = loaded ? "Next example (→)" : "Load a CSV first";
+    if (exCount) {
+      exCount.hidden = false;
+      exCount.textContent = loaded ? `${DEMO.i + 1} / ${DEMO.rows.length}` : "— / —";
+    }
+    if (obsSeg) obsSeg.hidden = false;
+    if (obsCount) {
+      obsCount.hidden = false;
+      obsCount.textContent = `${observations.length} obs`;
+    }
   }
 
   function loadCSV(text) {

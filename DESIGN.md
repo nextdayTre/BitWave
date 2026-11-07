@@ -130,8 +130,8 @@ strip can never disagree. CSS declares it only as the pre-JS fallback.
 | Constant | Value | Where |
 |---|---|---|
 | `--pad` | `40px` / `16px` | Every band, and the canvas plot inset |
-| Canvas top inset | `34px` | Leaves room for the hint |
-| Canvas bottom inset | `26px` | Keeps the last handle off the edge |
+| Canvas top inset | `34px` | Leaves room for the always-visible stage bar |
+| Canvas bottom inset | `26px` | Keeps the last handle off the edge, and hosts the hint |
 | Border radius | `3px` nib · `2px` bit · `5px` button/select · `99px` badge | |
 | Band padding | `header 16/14` · `strip 12/10` · `meta 9` · `controls 11/14` | |
 | Row gap | `24px` header · `22px` meta · `26px` controls | |
@@ -436,17 +436,25 @@ The easing constant is deliberately high (`0.24`) — fast enough to feel like t
   lane 2) plus any routed CSV column names. The depth axis shows the
   *relationship between the inputs and the result*; it deliberately does **not** imply 256
   morphing frames.
-- **Multi-view lanes & parallel 3-D split** (`slotSeg`, `splitBtn`, `copySlotBtn`,
-  `.stage-bar`) — three independent lanes (`1`, `2`, `3`; internal keys `A`/`B`/`C`)
-  sharing register width `S.N`, each holding its own operand pair and derived frame
-  (`A/B/Z1`, `C/D/Z2`, `E/F/Z3`), binary/arithmetic operator, B-phase,
-  and the six source bindings (CSV column or frame output). `copy →` clones the
-  focused lane's base registers into another lane; the route table belongs to the
-  rack, not the lane.
-  `split` divides the 3-D stage into two side-by-side axonometric visualizers separated by
-  a `1px` `--line` rule while keeping the single bottom strip, truth table, and controls
-  bound to the focused slot (`S.slot`). Drawn exclusively from `--panel-hi`, `--line`,
-  `--text`, `--dim`, `--dimmer`, and `--accent`.
+- **Stage bar** (`.stage-bar`) — **always visible**, and the single canonical home of the
+  lane set, the `frames` opener, `split` and the routing-aware lane expression
+  (`LANE 1 · A ⊕ B → Z1`). Three lanes (`1`, `2`, `3`; internal keys `A`/`B`/`C`) share
+  register width `S.N`; each holds its own operand pair and derived frame (`A/B/Z1`,
+  `C/D/Z2`, `E/F/Z3`), binary/arithmetic operator, B-phase and the six source bindings.
+  In 2-D `split` stays in place `aria-disabled`; in 3-D it splits the stage into two
+  side-by-side axonometric visualizers separated by a `1px` `--line` rule while the strip,
+  truth table and controls stay bound to the focused lane (`S.slot`). Per-pane focus dots
+  and the second pane head only exist in split 3-D. Drawn exclusively from `--panel-hi`,
+  `--line`, `--text`, `--dim`, `--dimmer` and `--accent`.
+- **Copy menu** (`.copy-menu`) — `copy to…` opens an explicit `role="menu"` with one
+  `role="menuitem"` per lane (`lane 1/2/3`); focus moves into the menu, `↑/↓`/`Home`/`End`
+  move between items, `Enter` copies, `Escape` or an outside click closes and returns focus,
+  and the live status says `copied lane 1 → lane 2`. There is no invisible armed mode.
+  `copyLane` clones the focused lane's base registers; routes belong to the rack.
+- **Register edit module** (`.edit-target`, `.hex-entry`) — the read-only edit target
+  (`edit · A`) plus the whole-word mono hex entry; the width slider itself stays in the
+  header. The module is always present; the entry is disabled and explained when the
+  focused frame is derived or driven.
 
 ---
 
@@ -460,6 +468,12 @@ One breakpoint: **720px**.
   below ~46px per nibble, so the strip drops to hex-only. This is driven by *available
   width* in `draw()`, not by nibble count. At 16 nibbles a 420px phone engages compact;
   the same 16 nibbles on a 1440px desktop do not.
+
+**Stable module order.** The controls row is `source | register edit | operate | derive |
+motion | view` — one named `role="group"` per module, same order at every width; the row
+wraps, it never reorders. `source` comes first because it is the daily-use path; `operate`
+before `derive` follows the signal flow (edit → op → result); `motion` and `view` are display
+settings and come last. The register width slider stays in the header.
 
 **Zoom and reflow** (with §5): at 200 %/400 % browser zoom the viewport is small, so the
 page scrolls and the stage keeps its `220–620px` floor. The responsive rules above still
@@ -637,6 +651,13 @@ The visual contract is measurable, so measure it rather than eyeballing:
 - **Automated a11y audit:** axe-core (dev-only, never in the artifact) reports **zero
   critical/serious** violations in the 2-D, A·B, 3-D and source-table states.
 
+- **Information architecture:** the stage bar is visible in 2-D and 3-D and is the only
+  home of the lane set, the `frames` opener and `split` (disabled in 2-D); the controls row
+  renders the six named modules in order at every width; inapplicable controls are present
+  and `aria-disabled`, never absent; `copy to…` is a focus-in menu that Esc closes and whose
+  copy is spoken; the hex entry right-aligns a word, refuses invalid input and reverts on Esc;
+  `?` opens the keyboard map; the truth table exposes `role="table"` rows/cells.
+
 A headless-Chrome CDP pass drives these in seconds: `npm run check:browser`
 ([`tools/browser-check.mjs`](tools/browser-check.mjs), zero dependencies) asserts
 them on the shipped file over `file://`. Any change touching §5 or §6 must re-run
@@ -676,6 +697,13 @@ them.
   `data` / `1:1` / `z⁻¹` / `—` states. Labels carry the assignment (`A · Hex 1`). Driven
   inputs are locked against local edits, unplugging restores the parked base, and the
   panel is transient — no cable graphics, no routing mode.
+- **F4 accessibility + information architecture** — keyboard-editable nibble spinbuttons,
+  reflow/zoom with a stage floor, reduced motion, one committed-change live region, 24 px
+  targets and an axe gate; the always-visible stage bar as the single home of lane, frames
+  and split; the stable module order (source | register edit | operate | derive | motion |
+  view); an explicit copy menu; `width` + whole-word hex entry; reserved-space disabled
+  states; the `?` keyboard map and real table semantics for the truth table. Palette
+  unchanged (D10).
 
 ### Next
 

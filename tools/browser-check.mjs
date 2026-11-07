@@ -457,7 +457,7 @@ try {
   cdp.on('Runtime.exceptionThrown', (params) => {
     const details = params.exceptionDetails;
     const text = details?.exception?.description || details?.text || 'unknown exception';
-    consoleErrors.push(`exception: ${String(text).split('\n')[0]}`);
+    consoleErrors.push(`exception: ${String(text).split('\n').slice(0, 3).join(' | ')}`);
   });
   cdp.on('Runtime.consoleAPICalled', (params) => {
     if (params.type !== 'error') return;
@@ -623,7 +623,7 @@ try {
     [...document.querySelectorAll('#framesBody .frame-row .frame-glyph')].map((el) => el.textContent.trim())
   )`));
   const clickSlot = async (key) => {
-    await click(`#slotSeg [data-slot="${key}"]`);
+    await click(`#stageBar .pane-head:not([hidden]) [data-slot="${key}"]`);
     await sleep(120);
   };
 
@@ -941,10 +941,11 @@ try {
 
   await runCheck('keyboard · Tab enters the strip and Enter-focus survives a render', async () => {
     await loadApp();
-    await evaluate(`document.getElementById('size').focus()`);
+    /* DOM order: header → help → stage bar (lane set, frames, split) → strip. */
+    await evaluate(`document.querySelector('#stageBar .op.mini').focus()`);
     await pressNative('Tab', 'Tab', 9);
     const entered = await evaluate(`document.activeElement?.closest?.('.nib')?.dataset?.j ?? null`);
-    assert(entered === '0', `Tab from size did not enter the strip (active nibble: ${entered})`);
+    assert(entered === '0', `Tab from the stage bar did not enter the strip (active nibble: ${entered})`);
 
     /* A commit re-renders the strip's innerHTML; the focused nibble must survive. */
     await evaluate(`document.querySelector('#nibs .nib[data-j="3"]').focus()`);
@@ -1023,16 +1024,19 @@ try {
     })())`));
     assert(a.mains === 1, `main landmarks: ${a.mains}`);
     assert(
-      JSON.stringify(a.inside) === JSON.stringify(['stage', 'strip', 'meta', 'controls']),
+      JSON.stringify(a.inside) === JSON.stringify(['stage', 'strip', 'meta', 'controls', 'help-panel']),
       `main children: ${JSON.stringify(a.inside)}`
     );
-    assert(a.groups >= 7 && a.named === a.groups, `named groups: ${a.named}/${a.groups}`);
-    assert(a.groupLabels.every(Boolean), `group labels: ${JSON.stringify(a.groupLabels)}`);
+    assert(a.groups === 6 && a.named === a.groups, `named groups: ${a.named}/${a.groups}`);
+    assert(
+      JSON.stringify(a.groupLabels) === JSON.stringify(['source', 'register edit', 'operate', 'derive', 'motion', 'view']),
+      `group order: ${JSON.stringify(a.groupLabels)}`
+    );
     assert(a.canvasRole === 'img', `canvas role: ${a.canvasRole}`);
     assert(/2-D waveform · lane 1 · A 8ADEFEDA85210125 · editing A/.test(a.canvasAlt), `canvas alt: ${a.canvasAlt}`);
     assert(a.liveRole === 'status' && a.liveLive === 'polite' && a.liveAtomic === 'true', 'live region attributes');
     assert(a.stripRole === 'group' && /A register/.test(a.stripLabel), `strip group: ${a.stripRole}/${a.stripLabel}`);
-    return 'main landmark · 7 named groups · canvas alt · polite live region';
+    return 'main landmark · 6 named groups in module order · canvas alt · polite live region';
   });
 
   await runCheck('a11y · live status announces committed changes only', async () => {
@@ -1061,24 +1065,27 @@ try {
 
   await runCheck('a11y · lane set is a radiogroup with arrow-key selection', async () => {
     await loadApp();
-    const before = JSON.parse(await evaluate(`JSON.stringify({
-      role: document.getElementById('slotSeg').getAttribute('role'),
-      radios: [...document.querySelectorAll('#slotSeg [data-slot]')].map((b) => ({
-        role: b.getAttribute('role'),
-        checked: b.getAttribute('aria-checked'),
-        tab: b.getAttribute('tabindex')
-      }))
-    })`));
+    const before = JSON.parse(await evaluate(`JSON.stringify((() => {
+      const seg = document.querySelector('#stageBar .pane-head:not([hidden]) .seg[role="radiogroup"]');
+      return {
+        role: seg.getAttribute('role'),
+        radios: [...seg.querySelectorAll('[data-slot]')].map((b) => ({
+          role: b.getAttribute('role'),
+          checked: b.getAttribute('aria-checked'),
+          tab: b.getAttribute('tabindex')
+        }))
+      };
+    })())`));
     assert(before.role === 'radiogroup', `lane set role: ${before.role}`);
     assert(before.radios.every((r) => r.role === 'radio'), `lane roles: ${JSON.stringify(before.radios.map((r) => r.role))}`);
     assert(before.radios.filter((r) => r.checked === 'true').length === 1, 'exactly one lane checked');
     assert(before.radios.filter((r) => r.tab === '0').length === 1, 'roving tab stop on the lane set');
 
-    await evaluate(`document.querySelector('#slotSeg [data-slot="A"]').focus()`);
+    await evaluate(`document.querySelector('#stageBar .pane-head:not([hidden]) [data-slot="A"]').focus()`);
     await keydown('ArrowRight');
     const after = JSON.parse(await evaluate(`JSON.stringify({
       lane: window.BitWave.state().lane,
-      checked: [...document.querySelectorAll('#slotSeg [data-slot]')].map((b) => b.getAttribute('aria-checked')),
+      checked: [...document.querySelectorAll('#stageBar .pane-head:not([hidden]) [data-slot]')].map((b) => b.getAttribute('aria-checked')),
       focused: document.activeElement.dataset.slot
     })`));
     assert(after.lane === 2, `arrow-right selected lane ${after.lane}`);
@@ -1134,7 +1141,243 @@ try {
     }
   });
 
-  /* 5d. automated a11y audit — axe-core is a dev dependency only ---------- */
+  /* 5e. F4 IA — module order, stage bar, copy menu, hex entry, map ------- */
+  await runCheck('ia · stage bar is always visible and owns lane + frames + split', async () => {
+    await loadApp();
+    let bar = JSON.parse(await evaluate(`JSON.stringify({
+      visible: document.getElementById('stageBar').offsetParent !== null,
+      hasFrames: document.getElementById('stageBar').contains(document.getElementById('framesBtn')),
+      laneRadios: document.querySelectorAll('#stageBar .pane-head:not([hidden]) [data-slot]').length,
+      splitDisabled: document.querySelector('#stageBar .op.mini').getAttribute('aria-disabled'),
+      expr: document.querySelector('#stageBar .stage-expr').textContent,
+      controlsHasLane: document.querySelectorAll('.controls [data-slot]').length,
+      controlsHasSplit: document.querySelectorAll('.controls .op.mini').length
+    })`));
+    assert(bar.visible, 'stage bar is hidden in 2-D');
+    assert(bar.hasFrames, 'frames opener is not in the stage bar');
+    assert(bar.laneRadios === 3, `stage-bar lane radios: ${bar.laneRadios}`);
+    assert(bar.splitDisabled === 'true', `split should be aria-disabled in 2-D: ${bar.splitDisabled}`);
+    assert(/LANE 1 · A ⊕ B → Z1/.test(bar.expr), `stage expression: ${JSON.stringify(bar.expr)}`);
+    assert(bar.controlsHasLane === 0, 'lane set is duplicated in the controls row');
+    assert(bar.controlsHasSplit === 0, 'split is duplicated in the controls row');
+
+    await click('#depthBtn');
+    await sleep(200);
+    bar = JSON.parse(await evaluate(`JSON.stringify({
+      splitDisabled: document.querySelector('#stageBar .op.mini').getAttribute('aria-disabled'),
+      expr: document.querySelector('#stageBar .stage-expr').textContent
+    })`));
+    assert(bar.splitDisabled === 'false', 'split should be enabled in 3-D');
+
+    await click('#stageBar .op.mini');
+    await sleep(250);
+    const split = JSON.parse(await evaluate(`JSON.stringify({
+      panes: [...document.querySelectorAll('#stageBar .pane-head')].filter((p) => !p.hidden).length,
+      expr: document.querySelector('#stageBar .pane-head:not([hidden]):last-child .stage-expr').textContent
+    })`));
+    assert(split.panes === 2, `split panes: ${split.panes}`);
+    assert(/C ⊕ D → Z2/.test(split.expr), `split second-pane expression: ${JSON.stringify(split.expr)}`);
+
+    await click('#stageBar .pane-head:not([hidden]):last-child .op.mini');
+    await sleep(250);
+    const unsplit = await evaluate(`[...document.querySelectorAll('#stageBar .pane-head')].filter((p) => !p.hidden).length`);
+    assert(unsplit === 1, `returning from split left ${unsplit} panes visible`);
+    return 'stage bar visible in 2-D and 3-D · lane+frames+split single home · split panes';
+  });
+
+  await runCheck('ia · reserved space: modules and disabled placeholders stay put', async () => {
+    await loadApp();
+    const boot = JSON.parse(await evaluate(`JSON.stringify({
+      groups: [...document.querySelectorAll('.controls .group')].map((g) => g.getAttribute('aria-label')),
+      binops: [...document.querySelectorAll('#binopSet [data-binop]')].map((b) => ({
+        visible: b.offsetParent !== null,
+        disabled: b.getAttribute('aria-disabled'),
+        checked: b.getAttribute('aria-checked')
+      })),
+      bState: document.getElementById('bState').textContent,
+      stepDisabled: document.getElementById('stepSeg').getAttribute('aria-disabled'),
+      stepVisible: document.getElementById('stepSeg').offsetParent !== null,
+      exCount: document.getElementById('exCount').textContent.trim(),
+      logVisible: document.getElementById('obsSeg').offsetParent !== null,
+      hexDisabled: document.getElementById('hexEntry').disabled,
+      hexFits: (() => {
+        const el = document.getElementById('hexEntry');
+        return el.scrollWidth <= el.clientWidth + 1;
+      })()
+    })`));
+    assert(
+      JSON.stringify(boot.groups) === JSON.stringify(['source', 'register edit', 'operate', 'derive', 'motion', 'view']),
+      `module order: ${JSON.stringify(boot.groups)}`
+    );
+    assert(boot.binops.every((b) => b.visible), 'binops were removed from the DOM without B');
+    assert(boot.binops.every((b) => b.disabled === 'true'), 'binops are not aria-disabled without B');
+    assert(boot.binops.filter((b) => b.checked === 'true').length === 1, 'exactly one binop checked');
+    assert(boot.bState === 'B off', `B state chip: ${boot.bState}`);
+    assert(boot.stepVisible && boot.stepDisabled === 'true', 'CSV stepper should be reserved-space disabled');
+    assert(boot.exCount === '— / —', `exCount before a load: ${boot.exCount}`);
+    assert(boot.logVisible, 'log/export should be visible before a load');
+    assert(boot.hexDisabled === false, 'hex entry should be editable on operand A');
+    assert(boot.hexFits, 'the 16-digit hex word is clipped in the entry field');
+
+    await importCsv();
+    const loaded = JSON.parse(await evaluate(`JSON.stringify({
+      stepDisabled: document.getElementById('stepSeg').getAttribute('aria-disabled'),
+      exCount: document.getElementById('exCount').textContent.trim()
+    })`));
+    assert(loaded.stepDisabled === 'false', 'stepper still disabled after import');
+    assert(loaded.exCount === '1 / 1', `exCount after import: ${loaded.exCount}`);
+
+    await click('#depthBtn');
+    await sleep(200);
+    const bOn = JSON.parse(await evaluate(`JSON.stringify({
+      disabled: document.querySelector('#binopSet [data-binop]').getAttribute('aria-disabled'),
+      checkedTab: [...document.querySelectorAll('#binopSet [data-binop]')]
+        .find((b) => b.getAttribute('aria-checked') === 'true')?.getAttribute('tabindex'),
+      bState: document.getElementById('bState').textContent
+    })`));
+    assert(bOn.disabled === 'false', 'binops should enable with B');
+    assert(bOn.checkedTab === '0', `checked binop tabindex: ${bOn.checkedTab}`);
+    assert(bOn.bState === 'B on', `B state chip: ${bOn.bState}`);
+    return 'six modules in order · disabled placeholders stay in place';
+  });
+
+  await runCheck('ia · copy to… is an explicit focus-in menu with Esc', async () => {
+    await loadApp();
+    await click('#copySlotBtn');
+    let menu = JSON.parse(await evaluate(`JSON.stringify({
+      open: !document.querySelector('.copy-menu').hidden,
+      role: document.querySelector('.copy-menu').getAttribute('role'),
+      items: [...document.querySelectorAll('.copy-menu [role="menuitem"]')].map((b) => b.textContent.trim()),
+      expanded: document.getElementById('copySlotBtn').getAttribute('aria-expanded'),
+      focused: document.activeElement.getAttribute('role')
+    })`));
+    assert(menu.open && menu.role === 'menu', 'copy menu did not open as a menu');
+    assert(JSON.stringify(menu.items) === JSON.stringify(['lane 1', 'lane 2', 'lane 3']), `menu items: ${JSON.stringify(menu.items)}`);
+    assert(menu.expanded === 'true', 'copy button aria-expanded is not true');
+    assert(menu.focused === 'menuitem', `focus did not move into the menu: ${menu.focused}`);
+    assert((await evaluate(`window.BitWave.state().editing.copyArmed`)) === true, 'copyArmed not reported while open');
+
+    await keydown('Escape');
+    menu = JSON.parse(await evaluate(`JSON.stringify({
+      open: !document.querySelector('.copy-menu').hidden,
+      focused: document.activeElement.id,
+      armed: window.BitWave.state().editing.copyArmed
+    })`));
+    assert(menu.open === false && menu.focused === 'copySlotBtn' && menu.armed === false, `Esc did not close cleanly: ${JSON.stringify(menu)}`);
+
+    await click('#copySlotBtn');
+    await sleep(100);
+    const before = JSON.parse(await evaluate(`JSON.stringify({
+      a: window.BitWave.state().lanes['1'].frames.A,
+      b: window.BitWave.state().lanes['1'].frames.B
+    })`));
+    await click('.copy-menu [data-lane="B"]');
+    await sleep(300);
+    const copied = JSON.parse(await evaluate(`JSON.stringify({
+      c: window.BitWave.state().lanes['2'].frames.C,
+      d: window.BitWave.state().lanes['2'].frames.D,
+      open: !document.querySelector('.copy-menu').hidden,
+      live: document.getElementById('liveStatus').textContent.trim()
+    })`));
+    assert(copied.c === before.a && copied.d === before.b, `lane 2 was not copied: ${JSON.stringify(copied)}`);
+    assert(copied.open === false, 'menu stayed open after copy');
+    assert(/copied lane 1 → lane 2/.test(copied.live), `live status did not report the copy: ${copied.live}`);
+    return 'menu opens with focus in, Esc cancels, lane copy + spoken confirmation';
+  });
+
+  await runCheck('ia · whole-word hex entry commits, rejects and reverts', async () => {
+    await loadApp();
+    const commit = async (text) => {
+      await evaluate(`(() => {
+        const el = document.getElementById('hexEntry');
+        el.focus();
+        el.value = ${JSON.stringify(text)};
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+        el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+        return true;
+      })()`);
+      await sleep(150);
+      return JSON.parse(await evaluate(`JSON.stringify({
+        hex: document.getElementById('hex').textContent.trim(),
+        invalid: document.getElementById('hexEntry').getAttribute('aria-invalid'),
+        value: document.getElementById('hexEntry').value
+      })`));
+    };
+
+    let result = await commit('DEADBEEF');
+    assert(result.hex === '00000000DEADBEEF', `hex entry did not right-align: ${result.hex}`);
+    assert(result.invalid === null, 'valid hex was marked invalid');
+
+    result = await commit('ZZZZ');
+    assert(result.invalid === 'true', 'invalid hex was not flagged');
+    assert(result.hex === '00000000DEADBEEF', `invalid hex reached the register: ${result.hex}`);
+
+    await evaluate(`(() => {
+      const el = document.getElementById('hexEntry');
+      el.focus();
+      el.value = 'ABC';
+      el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+      return true;
+    })()`);
+    const reverted = await evaluate(`document.getElementById('hexEntry').value`);
+    assert(reverted === '00000000DEADBEEF', `Esc did not revert the hex entry: ${reverted}`);
+
+    await click('#framesBtn');
+    await waitFor(`!document.getElementById('framesPanel').hidden`, 'frame navigator');
+    await click('#framesBody .frame-row[data-frame="z"] .frame-btn');
+    await sleep(200);
+    const derived = JSON.parse(await evaluate(`JSON.stringify({
+      disabled: document.getElementById('hexEntry').disabled,
+      value: document.getElementById('hexEntry').value,
+      target: document.getElementById('editTarget').textContent.trim()
+    })`));
+    assert(derived.disabled === true, 'hex entry should be disabled on a derived frame');
+    assert(derived.target.includes('read-only'), `edit target: ${derived.target}`);
+    return 'right-aligned commit · invalid refused · Esc reverts · derived disabled';
+  });
+
+  await runCheck('ia · keyboard map opens with ? and closes with Escape', async () => {
+    await loadApp();
+    await evaluate(`document.body.dispatchEvent(new KeyboardEvent('keydown', { key: '?', bubbles: true, cancelable: true }))`);
+    await sleep(120);
+    const open = JSON.parse(await evaluate(`JSON.stringify({
+      visible: !document.getElementById('helpPanel').hidden,
+      expanded: document.getElementById('helpBtn').getAttribute('aria-expanded'),
+      rows: document.querySelectorAll('#helpPanel .help-list dt').length,
+      focused: document.activeElement.id
+    })`));
+    assert(open.visible, '? did not open the keyboard map');
+    assert(open.expanded === 'true' && open.rows >= 8, `keyboard map state: ${JSON.stringify(open)}`);
+    assert(open.focused === 'helpClose', `focus did not move into the map: ${open.focused}`);
+
+    await evaluate(`document.getElementById('helpPanel').dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))`);
+    await sleep(120);
+    const closed = JSON.parse(await evaluate(`JSON.stringify({
+      visible: !document.getElementById('helpPanel').hidden,
+      expanded: document.getElementById('helpBtn').getAttribute('aria-expanded')
+    })`));
+    assert(closed.visible === false && closed.expanded === 'false', 'Escape did not close the keyboard map');
+    return '? opens · focus moves in · Escape closes';
+  });
+
+  await runCheck('ia · truth table has table semantics', async () => {
+    await loadApp();
+    await click('#depthBtn');
+    await sleep(250);
+    const table = JSON.parse(await evaluate(`JSON.stringify({
+      role: document.querySelector('#truth [role="table"]')?.getAttribute('role') ?? null,
+      rows: document.querySelectorAll('#truth [role="row"]').length,
+      headers: document.querySelectorAll('#truth [role="columnheader"]').length,
+      cells: document.querySelectorAll('#truth [role="cell"]').length
+    })`));
+    assert(table.role === 'table', 'truth table has no table role');
+    assert(table.rows === 5, `truth rows: ${table.rows}`);
+    assert(table.headers === 4, `truth column headers: ${table.headers}`);
+    assert(table.cells === 16, `truth cells: ${table.cells}`);
+    return 'role=table · 5 rows · 4 column headers · 16 cells';
+  });
+
+
   const axeSource = readFileSync(resolve(ROOT, 'node_modules/axe-core/axe.min.js'), 'utf8');
   await runCheck('axe · zero critical/serious in 2-D, A·B 3-D, source table and navigator', async () => {
     const states = [

@@ -1,16 +1,23 @@
 /**
- * 3-D stage bar — lane selector, split toggle and the lane expression.
+ * Stage bar — the single canonical home of lane selection, the frame navigator
+ * opener, split and the lane expression (F4 IA, DESIGN §8).
  *
- * Moved out of main.js in F2. Reads the state tree; writes only the stage bar.
+ * Always visible: in 2-D it shows the lane set, `frames`, a disabled `split`
+ * and `LANE 1 · A ⊕ B → Z1`; in 3-D it adds the per-pane focus dots and, in
+ * split mode, a second pane head. Reads the state tree; writes only this DOM.
  */
 
 import { S, SLOT_KEYS, curSlot, laneLabel } from "../state/instrument.ts";
 
 export function createStageBar(deps) {
-  const { element, selectSlot, selectSlotInPane, setSplitMode, focusSplitPane, slotExprText } = deps;
+  const { element, framesBtn, selectSlot, selectSlotInPane, setSplitMode, focusSplitPane, slotExprText } = deps;
   let stageDom = null;
 
   function buildStageBar() {
+    /* The static `frames` opener lives in the stage-bar markup so it is found
+       by id before this build; keep that node and re-house it in pane 0. */
+    const keep = [...element.children];
+
     const makePane = (paneIdx) => {
       const wrap = document.createElement("div");
       wrap.className = "pane-head";
@@ -46,8 +53,8 @@ export function createStageBar(deps) {
         seg.appendChild(b);
         btns[k] = b;
       }
-      /* Radiogroup keyboard model (DESIGN §8): arrows move the lane
-         selection, exactly like the controls-row lane set. */
+      /* Radiogroup keyboard model (DESIGN §8): arrows move the lane selection,
+         Home/End jump to the ends, and the set is one Tab stop. */
       seg.addEventListener("keydown", (e) => {
         const current = S.split3d
           ? (paneIdx === 0 ? S.splitPair[0] : S.splitPair[1])
@@ -67,23 +74,23 @@ export function createStageBar(deps) {
       });
       wrap.appendChild(seg);
 
-      const expr = document.createElement("span");
-      expr.className = "stage-expr";
-      wrap.appendChild(expr);
+      if (paneIdx === 0 && framesBtn) wrap.appendChild(framesBtn);
 
       const spBtn = document.createElement("button");
       spBtn.type = "button";
       spBtn.className = "op mini";
       spBtn.textContent = "split";
-      spBtn.title = paneIdx === 0
-        ? "Split main 3D view into two side-by-side visualizers (Alt+S)"
-        : "Return to single 3D view (Alt+S)";
+      spBtn.setAttribute("aria-pressed", "false");
       spBtn.addEventListener("click", (ev) => {
         ev.stopPropagation();
+        if (!S.view3d && !S.split3d) return;   // split is 3-D only; stays in place
         setSplitMode(!S.split3d);
       });
-      if (paneIdx === 0) wrap.insertBefore(spBtn, expr);
-      else wrap.appendChild(spBtn);
+      wrap.appendChild(spBtn);
+
+      const expr = document.createElement("span");
+      expr.className = "stage-expr";
+      wrap.appendChild(expr);
 
       wrap.addEventListener("click", () => {
         if (S.split3d) focusSplitPane(paneIdx);
@@ -93,8 +100,12 @@ export function createStageBar(deps) {
       return { wrap, dot, btns, expr, spBtn };
     };
 
-    element.innerHTML = "";
+    element.textContent = "";
     stageDom = { p0: makePane(0), p1: makePane(1) };
+    /* makePane(0) re-appended the captured frames opener; drop unused extras. */
+    for (const node of keep) {
+      if (node !== framesBtn && node.parentNode !== element) node.remove();
+    }
   }
 
   function syncRadio(btns, active) {
@@ -106,27 +117,51 @@ export function createStageBar(deps) {
     }
   }
 
+  function setSplitEnabled(btn, enabled) {
+    btn.setAttribute("aria-disabled", String(!enabled));
+    btn.title = enabled
+      ? "Split the 3-D view into two side-by-side visualizers (Alt+S)"
+      : "Split is 3-D only — turn on 3D first (Alt+S)";
+  }
+
   function syncStageBar() {
     if (!stageDom) return;
-    element.hidden = !S.view3d;
-    if (!S.view3d) return;
 
     const { p0, p1 } = stageDom;
     element.classList.toggle("is-split", S.split3d);
+    element.dataset.view = S.view3d ? (S.split3d ? "split" : "3d") : "2d";
+
+    if (!S.view3d) {
+      /* 2-D: one pane head, the lane set and a reserved-space disabled split. */
+      p0.dot.hidden = true;
+      p0.wrap.classList.add("focused");
+      p0.wrap.hidden = false;
+      p0.spBtn.hidden = false;
+      p0.spBtn.setAttribute("aria-pressed", "false");
+      p0.spBtn.classList.remove("on");
+      setSplitEnabled(p0.spBtn, false);
+      syncRadio(p0.btns, S.slot);
+      p0.expr.textContent = slotExprText(curSlot(), true);
+      p1.wrap.hidden = true;
+      return;
+    }
 
     if (!S.split3d) {
       const sl = curSlot();
       p0.dot.hidden = true;
       p0.wrap.classList.add("focused");
+      p0.wrap.hidden = false;
       p0.spBtn.hidden = false;
       p0.spBtn.setAttribute("aria-pressed", "false");
       p0.spBtn.classList.remove("on");
+      setSplitEnabled(p0.spBtn, true);
       syncRadio(p0.btns, S.slot);
       p0.expr.textContent = slotExprText(sl, true);
       p1.wrap.hidden = true;
     } else {
       const k0 = S.splitPair[0], k1 = S.splitPair[1];
       p0.dot.hidden = false;
+      p0.wrap.hidden = false;
       p0.spBtn.hidden = true;
       p0.wrap.classList.toggle("focused", S.activePane === 0);
       syncRadio(p0.btns, k0);
@@ -137,6 +172,7 @@ export function createStageBar(deps) {
       p1.spBtn.hidden = false;
       p1.spBtn.setAttribute("aria-pressed", "true");
       p1.spBtn.classList.add("on");
+      setSplitEnabled(p1.spBtn, true);
       p1.wrap.classList.toggle("focused", S.activePane === 1);
       syncRadio(p1.btns, k1);
       p1.expr.textContent = slotExprText(S.slots[k1], false);

@@ -5,7 +5,7 @@
   `npm run build` bundles src/main.js and src/styles/app.css into one
   self-contained file at the repo root; open that file directly.
 
-  Same engine, same visual system, same feature set. User-facing changes only:
+  Engine, visual system and feature set are unchanged. Interface changes:
     · lanes are numbered 1 / 2 / 3 (letters now mean frames/operands only)
     · frame names are global: lane 1 A/B/Z1, lane 2 C/D/Z2, lane 3 E/F/Z3
     · a Pro-Q4-style frame navigator browses lanes and their frames with static
@@ -13,15 +13,18 @@
       toggle shows/hides that lane's frame in the 2D view
     · focus is a lens, not navigation: derived frames focus read-only, the view
       never switches and the navigator never closes on a frame click
-    · the old "logic B" toggle and 2D/3D segment are gone: the navigator shows
-      the frames, and one "3D" toggle switches the depth field
     · the six-input source table (data columns or frame outputs) is the routing
       housing: labels carry the assignment and driven inputs are locked
-    · lane controls and display controls are separate groups
-    · copy mode says what it does and Escape cancels it
-    · segmented controls expose aria-pressed; ambiguous preset names are labelled
-    · the hint mentions that bits are clickable too
-    · wheel over a hex glyph nudges that nibble by ±1, clamped 0–F
+    · F4 IA (author-approved 2026-11-06): stable module order
+      source | width·edit | operate | derive | motion | view; an always-visible
+      stage bar is the single home of lane, frames and split; `copy to…` is an
+      explicit menu; `width` replaces `register`; a whole-word hex entry sits
+      beside the edit target; inapplicable controls stay in place (aria-disabled)
+      instead of disappearing
+    · F4 accessibility: every operand nibble is a focusable spinbutton (keyboard
+      editing), the canvas has a live text alternative, there is one polite live
+      region for committed changes, reduced motion is honoured and targets are
+      at least 24 px
     · agent-interop intent is recorded in AGENTS.md: state/render surfaces,
       not screenshot automation
 
@@ -452,6 +455,16 @@ function setLiveNibble(reg, j, value) {
 	const v = setNibble(reg, j, value);
 	reg.anim[j] = v;
 	return v;
+}
+/** Writes a whole hex word, right-aligned into the register (the CSV rule). */
+function setHexWord(reg, hex) {
+	const n = S.N >> 2;
+	const digits = hex.replace(/[^0-9a-f]/gi, "").toUpperCase().slice(-n).padStart(n, "0");
+	for (let j = 0; j < n; j++) {
+		const v = parseInt(digits[j], 16);
+		setNibAt$1(reg.bits, S.N, j, v);
+		reg.target[j] = v;
+	}
 }
 /** Copies a lane's model state (not its parked route bases). */
 function copyLane(src, dst) {
@@ -1079,7 +1092,7 @@ function renderTruth() {
 		const b = regToBig(S.B);
 		const over = S.binop === "add" ? a + b >= 1n << BigInt(S.N) : a < b;
 		const label = S.binop === "add" ? "carry out" : "borrow out";
-		truthEl.innerHTML = `<div class="truth-h">${fa} ${OPSYM[S.binop]} ${fb} → ${fz}</div><div class="truth-grid ar"><span class="th">${label}</span><span class="ct${over ? " yes" : ""}">${over ? "yes" : "no"}</span></div>`;
+		truthEl.innerHTML = `<div class="truth-h">${fa} ${OPSYM[S.binop]} ${fb} → ${fz}</div><div class="truth-grid ar" role="table" aria-label="${label}"><div role="row"><span class="th" role="columnheader">${label}</span><span class="ct${over ? " yes" : ""}" role="cell">${over ? "yes" : "no"}</span></div></div>`;
 		return;
 	}
 	const counts = [
@@ -1090,13 +1103,11 @@ function renderTruth() {
 	];
 	for (let i = 0; i < S.N; i++) counts[S.A.bits[i] << 1 | S.B.bits[i]]++;
 	let html = `<div class="truth-h">${fa} ${OPSYM[S.binop]} ${fb} → ${fz}</div>`;
-	html += `<div class="truth-grid">`;
-	html += `<span class="th">a</span><span class="th">b</span><span class="th">→</span><span class="th">n</span>`;
+	html += `<div class="truth-grid" role="table" aria-label="truth table">`;
+	html += "<div role=\"row\"><span class=\"th\" role=\"columnheader\">a</span><span class=\"th\" role=\"columnheader\">b</span><span class=\"th\" role=\"columnheader\">→</span><span class=\"th\" role=\"columnheader\">n</span></div>";
 	for (const [a, b] of PAIRS) {
 		const z = binFn(a, b);
-		html += `<span>${a}</span><span>${b}</span>`;
-		html += `<span class="z${z ? " on" : ""}">${z}</span>`;
-		html += `<span class="ct">${counts[a << 1 | b]}</span>`;
+		html += `<div role="row"><span role="cell">${a}</span><span role="cell">${b}</span><span class="z${z ? " on" : ""}" role="cell">${z}</span><span class="ct" role="cell">${counts[a << 1 | b]}</span></div>`;
 	}
 	html += `</div>`;
 	truthEl.innerHTML = html;
@@ -1382,14 +1393,18 @@ function createFrameNavigator(deps) {
 }
 // src/ui/stage-bar.js
 /**
-* 3-D stage bar — lane selector, split toggle and the lane expression.
+* Stage bar — the single canonical home of lane selection, the frame navigator
+* opener, split and the lane expression (F4 IA, DESIGN §8).
 *
-* Moved out of main.js in F2. Reads the state tree; writes only the stage bar.
+* Always visible: in 2-D it shows the lane set, `frames`, a disabled `split`
+* and `LANE 1 · A ⊕ B → Z1`; in 3-D it adds the per-pane focus dots and, in
+* split mode, a second pane head. Reads the state tree; writes only this DOM.
 */
 function createStageBar(deps) {
-	const { element, selectSlot, selectSlotInPane, setSplitMode, focusSplitPane, slotExprText } = deps;
+	const { element, framesBtn, selectSlot, selectSlotInPane, setSplitMode, focusSplitPane, slotExprText } = deps;
 	let stageDom = null;
 	function buildStageBar() {
+		const keep = [...element.children];
 		const makePane = (paneIdx) => {
 			const wrap = document.createElement("div");
 			wrap.className = "pane-head";
@@ -1439,20 +1454,21 @@ function createStageBar(deps) {
 				seg.querySelector(`[data-slot="${chosen}"]`)?.focus();
 			});
 			wrap.appendChild(seg);
-			const expr = document.createElement("span");
-			expr.className = "stage-expr";
-			wrap.appendChild(expr);
+			if (paneIdx === 0 && framesBtn) wrap.appendChild(framesBtn);
 			const spBtn = document.createElement("button");
 			spBtn.type = "button";
 			spBtn.className = "op mini";
 			spBtn.textContent = "split";
-			spBtn.title = paneIdx === 0 ? "Split main 3D view into two side-by-side visualizers (Alt+S)" : "Return to single 3D view (Alt+S)";
+			spBtn.setAttribute("aria-pressed", "false");
 			spBtn.addEventListener("click", (ev) => {
 				ev.stopPropagation();
+				if (!S.view3d && !S.split3d) return;
 				setSplitMode(!S.split3d);
 			});
-			if (paneIdx === 0) wrap.insertBefore(spBtn, expr);
-			else wrap.appendChild(spBtn);
+			wrap.appendChild(spBtn);
+			const expr = document.createElement("span");
+			expr.className = "stage-expr";
+			wrap.appendChild(expr);
 			wrap.addEventListener("click", () => {
 				if (S.split3d) focusSplitPane(paneIdx);
 			});
@@ -1465,11 +1481,12 @@ function createStageBar(deps) {
 				spBtn
 			};
 		};
-		element.innerHTML = "";
+		element.textContent = "";
 		stageDom = {
 			p0: makePane(0),
 			p1: makePane(1)
 		};
+		for (const node of keep) if (node !== framesBtn && node.parentNode !== element) node.remove();
 	}
 	function syncRadio(btns, active) {
 		for (const k of SLOT_KEYS) {
@@ -1479,25 +1496,44 @@ function createStageBar(deps) {
 			btns[k].setAttribute("tabindex", on ? "0" : "-1");
 		}
 	}
+	function setSplitEnabled(btn, enabled) {
+		btn.setAttribute("aria-disabled", String(!enabled));
+		btn.title = enabled ? "Split the 3-D view into two side-by-side visualizers (Alt+S)" : "Split is 3-D only — turn on 3D first (Alt+S)";
+	}
 	function syncStageBar() {
 		if (!stageDom) return;
-		element.hidden = !S.view3d;
-		if (!S.view3d) return;
 		const { p0, p1 } = stageDom;
 		element.classList.toggle("is-split", S.split3d);
+		element.dataset.view = S.view3d ? S.split3d ? "split" : "3d" : "2d";
+		if (!S.view3d) {
+			p0.dot.hidden = true;
+			p0.wrap.classList.add("focused");
+			p0.wrap.hidden = false;
+			p0.spBtn.hidden = false;
+			p0.spBtn.setAttribute("aria-pressed", "false");
+			p0.spBtn.classList.remove("on");
+			setSplitEnabled(p0.spBtn, false);
+			syncRadio(p0.btns, S.slot);
+			p0.expr.textContent = slotExprText(curSlot(), true);
+			p1.wrap.hidden = true;
+			return;
+		}
 		if (!S.split3d) {
 			const sl = curSlot();
 			p0.dot.hidden = true;
 			p0.wrap.classList.add("focused");
+			p0.wrap.hidden = false;
 			p0.spBtn.hidden = false;
 			p0.spBtn.setAttribute("aria-pressed", "false");
 			p0.spBtn.classList.remove("on");
+			setSplitEnabled(p0.spBtn, true);
 			syncRadio(p0.btns, S.slot);
 			p0.expr.textContent = slotExprText(sl, true);
 			p1.wrap.hidden = true;
 		} else {
 			const k0 = S.splitPair[0], k1 = S.splitPair[1];
 			p0.dot.hidden = false;
+			p0.wrap.hidden = false;
 			p0.spBtn.hidden = true;
 			p0.wrap.classList.toggle("focused", S.activePane === 0);
 			syncRadio(p0.btns, k0);
@@ -1507,6 +1543,7 @@ function createStageBar(deps) {
 			p1.spBtn.hidden = false;
 			p1.spBtn.setAttribute("aria-pressed", "true");
 			p1.spBtn.classList.add("on");
+			setSplitEnabled(p1.spBtn, true);
 			p1.wrap.classList.toggle("focused", S.activePane === 1);
 			syncRadio(p1.btns, k1);
 			p1.expr.textContent = slotExprText(S.slots[k1], false);
@@ -1525,7 +1562,7 @@ function createStageBar(deps) {
 * Alt+1/2/3 select a lane, Alt+S toggles split; arrows step the dataset.
 */
 function attachKeyboard(deps) {
-	const { frameNav, syncViewUi, selectSlot, setSplitMode, applyExample, loadCSV, S, DEMO } = deps;
+	const { frameNav, syncViewUi, selectSlot, setSplitMode, applyExample, loadCSV, copyMenu, S, DEMO } = deps;
 	document.addEventListener("keydown", (e) => {
 		if (e.key === "Escape" && frameNav.isOpen()) {
 			frameNav.close(true);
@@ -1533,8 +1570,7 @@ function attachKeyboard(deps) {
 			return;
 		}
 		if (e.key === "Escape" && S.copyArmed) {
-			S.copyArmed = false;
-			syncViewUi();
+			copyMenu.close(true);
 			e.preventDefault();
 			return;
 		}
@@ -1558,7 +1594,7 @@ function attachKeyboard(deps) {
 				return;
 			}
 			if (e.key === "s" || e.key === "S" || e.code === "KeyS") {
-				setSplitMode(!(S.view3d && S.split3d));
+				if (S.view3d) setSplitMode(!S.split3d);
 				e.preventDefault();
 				return;
 			}
@@ -1601,6 +1637,9 @@ function createControls(deps) {
 	const lfoRateSel = document.getElementById("lfoRate");
 	const amountSel = document.getElementById("amount");
 	const lfoBSel = document.getElementById("lfoB");
+	const hexEntry = document.getElementById("hexEntry");
+	const editTarget = document.getElementById("editTarget");
+	const bState = document.getElementById("bState");
 	function lfoBConfig(v = curSlot().lfoB) {
 		const frac = v === "q" ? .25 : v === "h" ? .5 : 0;
 		return {
@@ -1741,19 +1780,32 @@ function createControls(deps) {
 		});
 	});
 	const logicGroup = document.getElementById("logicGroup");
+	const binopSet = document.getElementById("binopSet");
 	const binopBtns = [...document.querySelectorAll("[data-binop]")];
 	function syncEditUi() {
-		logicGroup.hidden = !S.showB;
+		const driven = isFocusDriven();
+		const editable = focusEditable();
+		logicGroup.setAttribute("aria-disabled", String(!S.showB));
+		binopSet.setAttribute("aria-disabled", String(!S.showB));
 		binopBtns.forEach((b) => {
-			b.hidden = !S.showB;
-			b.classList.toggle("on", b.dataset.binop === S.binop);
-			b.setAttribute("aria-pressed", String(b.dataset.binop === S.binop));
+			const on = b.dataset.binop === S.binop;
+			b.classList.toggle("on", on);
+			b.setAttribute("aria-checked", String(on));
+			b.setAttribute("aria-disabled", String(!S.showB));
+			b.setAttribute("tabindex", S.showB && on ? "0" : "-1");
 		});
-		stripEl.dataset.edit = frameLabel();
-		if (hintEl) {
-			const driven = isFocusDriven();
-			hintEl.textContent = !focusEditable() ? `${frameLabel()} is derived — read-only` : driven ? `${frameLabel()} is driven by ${driverName(curSlot(), focusKey())} — unplug in sources` : "drag a nibble · click a bit · scroll a hex";
+		if (bState) {
+			bState.textContent = S.showB ? "B on" : "B off";
+			bState.title = S.showB ? "Operand B is live in this lane" : "Operand B is enabled by focusing a B/D/F frame or entering 3-D";
 		}
+		if (driven) editTarget.textContent = `${frameLabel()} · driven`;
+		else if (editable) editTarget.textContent = `edit · ${frameLabel()}`;
+		else editTarget.textContent = `${frameLabel()} · read-only`;
+		hexEntry.disabled = !editable || driven;
+		hexEntry.setAttribute("aria-label", `hex value for ${frameLabel()}`);
+		if (document.activeElement !== hexEntry) hexEntry.value = toHexOf(editable ? editReg() : focusReg());
+		stripEl.dataset.edit = frameLabel();
+		if (hintEl) hintEl.textContent = !focusEditable() ? `${frameLabel()} is derived — read-only` : driven ? `${frameLabel()} is driven by ${driverName(curSlot(), focusKey())} — unplug in sources` : "drag a nibble · click a bit · Tab to edit";
 		lfoBSel.value = curSlot().lfoB;
 		lfoBSel.hidden = S.lfo.mode === "csvStep" || !S.view3d && !S.showB;
 	}
@@ -1771,6 +1823,56 @@ function createControls(deps) {
 		sizeInput.value = String(index);
 		syncSizeLabel();
 	}
+	let hexInvalidTimer = 0;
+	function currentEditHex() {
+		return toHexOf(focusEditable() ? editReg() : focusReg());
+	}
+	function flashInvalidHex() {
+		hexEntry.classList.add("invalid");
+		hexEntry.setAttribute("aria-invalid", "true");
+		clearTimeout(hexInvalidTimer);
+		hexInvalidTimer = setTimeout(() => {
+			hexEntry.classList.remove("invalid");
+			hexEntry.removeAttribute("aria-invalid");
+		}, 800);
+	}
+	function commitHex() {
+		if (!focusEditable() || isFocusDriven()) return;
+		const raw = hexEntry.value.trim().replace(/^0x/i, "");
+		if (!/^[0-9a-f]+$/i.test(raw) || raw.length > nibCount()) {
+			flashInvalidHex();
+			return;
+		}
+		hexEntry.classList.remove("invalid");
+		hexEntry.removeAttribute("aria-invalid");
+		store.patch(() => {
+			setHexWord(editReg(), raw);
+			evaluate();
+			renderStrip();
+			updateReadouts();
+			syncEditUi();
+		});
+		hexEntry.value = toHexOf(editReg());
+	}
+	hexEntry.addEventListener("keydown", (event) => {
+		if (event.key === "Enter") {
+			event.preventDefault();
+			commitHex();
+		} else if (event.key === "Escape") {
+			event.preventDefault();
+			event.stopPropagation();
+			hexEntry.value = currentEditHex();
+			hexEntry.blur();
+		}
+	});
+	hexEntry.addEventListener("input", () => {
+		if (!hexEntry.classList.contains("invalid")) return;
+		hexEntry.classList.remove("invalid");
+		hexEntry.removeAttribute("aria-invalid");
+	});
+	hexEntry.addEventListener("blur", () => {
+		hexEntry.value = currentEditHex();
+	});
 	return {
 		lfoStart,
 		lfoStop,
@@ -2012,17 +2114,21 @@ function createCsvImport(deps) {
 	}
 	function renderDemoUi() {
 		const loaded = DEMO.rows.length > 0;
-		[
-			stepSeg,
-			exCount,
-			obsSeg,
-			obsCount
-		].forEach((el) => {
-			if (el) el.hidden = !loaded;
-		});
-		if (!loaded) return;
-		exCount.textContent = `${DEMO.i + 1} / ${DEMO.rows.length}`;
-		if (obsCount) obsCount.textContent = `${observations.length} obs`;
+		stepSeg.hidden = false;
+		stepSeg.setAttribute("aria-disabled", String(!loaded));
+		prevEx.setAttribute("aria-disabled", String(!loaded));
+		nextEx.setAttribute("aria-disabled", String(!loaded));
+		prevEx.title = loaded ? "Previous example (←)" : "Load a CSV first";
+		nextEx.title = loaded ? "Next example (→)" : "Load a CSV first";
+		if (exCount) {
+			exCount.hidden = false;
+			exCount.textContent = loaded ? `${DEMO.i + 1} / ${DEMO.rows.length}` : "— / —";
+		}
+		if (obsSeg) obsSeg.hidden = false;
+		if (obsCount) {
+			obsCount.hidden = false;
+			obsCount.textContent = `${observations.length} obs`;
+		}
 	}
 	function loadCSV(text) {
 		const rows = parseDelimited(text).filter((r) => r.some((c) => normCell(c) !== ""));
@@ -2271,6 +2377,7 @@ function createLiveStatus(store) {
 	const el = document.getElementById("liveStatus");
 	let timer = 0;
 	let pending = "";
+	let holdUntil = 0;
 	const quiet = () => S.drag >= 0 || S.lfo.on;
 	function describe() {
 		const r = focusReg();
@@ -2288,7 +2395,7 @@ function createLiveStatus(store) {
 		el.textContent = pending;
 	}
 	function schedule() {
-		if (quiet()) {
+		if (quiet() || Date.now() < holdUntil) {
 			clearTimeout(timer);
 			timer = 0;
 			return;
@@ -2303,11 +2410,188 @@ function createLiveStatus(store) {
 		pending = describe();
 		el.textContent = pending;
 	}
+	function say(text) {
+		clearTimeout(timer);
+		timer = 0;
+		pending = text;
+		el.textContent = text;
+		holdUntil = Date.now() + 1400;
+	}
 	store.subscribe(schedule);
 	return {
 		schedule,
 		announceNow,
+		say,
 		describe
+	};
+}
+// src/ui/copy-menu.js
+/**
+* Explicit `copy to…` menu (F4 IA, DESIGN §8).
+*
+* Replaces the armed-mode button: opening the menu moves focus in, Escape or
+* an outside click closes it and returns focus, arrows move between the lane
+* items, and the copy itself is one `copyLane` transaction (the live region
+* reports the destination state). The copy belongs to the rack, not the lane.
+*/
+function createCopyMenu(deps) {
+	const { store, button, onCopy } = deps;
+	const menu = document.createElement("div");
+	menu.className = "copy-menu";
+	menu.hidden = true;
+	menu.setAttribute("role", "menu");
+	menu.setAttribute("aria-label", "copy the focused lane to");
+	const items = SLOT_KEYS.map((key) => {
+		const item = document.createElement("button");
+		item.type = "button";
+		item.className = "op";
+		item.setAttribute("role", "menuitem");
+		item.setAttribute("tabindex", "-1");
+		item.dataset.lane = key;
+		item.textContent = `lane ${laneLabel(key)}`;
+		item.title = `Copy lane ${laneLabel(S.slot)} into lane ${laneLabel(key)}`;
+		item.addEventListener("click", () => activate(key));
+		menu.appendChild(item);
+		return item;
+	});
+	document.body.appendChild(menu);
+	let open = false;
+	function position() {
+		menu.hidden = false;
+		const r = button.getBoundingClientRect();
+		const w = menu.offsetWidth;
+		const h = menu.offsetHeight;
+		const left = Math.min(Math.max(8, r.left), window.innerWidth - w - 8);
+		let top = r.bottom + 4;
+		if (top + h > window.innerHeight - 8) top = Math.max(8, r.top - h - 4);
+		menu.style.left = `${left}px`;
+		menu.style.top = `${top}px`;
+	}
+	function focusItem(index) {
+		const n = items.length;
+		items[(index % n + n) % n].focus();
+	}
+	function openMenu() {
+		if (open) return;
+		open = true;
+		items.forEach((item, i) => {
+			item.title = `Copy lane ${laneLabel(S.slot)} into lane ${laneLabel(SLOT_KEYS[i])}`;
+		});
+		store.patch(() => {
+			S.copyArmed = true;
+		});
+		position();
+		button.setAttribute("aria-expanded", "true");
+		button.classList.add("on");
+		focusItem(0);
+		document.addEventListener("pointerdown", onOutside, true);
+		window.addEventListener("resize", onResize);
+	}
+	function closeMenu(refocus = true) {
+		if (!open) return;
+		open = false;
+		menu.hidden = true;
+		button.setAttribute("aria-expanded", "false");
+		button.classList.remove("on");
+		document.removeEventListener("pointerdown", onOutside, true);
+		window.removeEventListener("resize", onResize);
+		if (S.copyArmed) store.patch(() => {
+			S.copyArmed = false;
+		});
+		if (refocus) button.focus();
+	}
+	function activate(key) {
+		const src = S.slot;
+		closeMenu(false);
+		if (key !== src) onCopy(src, key);
+		button.focus();
+	}
+	function onOutside(event) {
+		if (event.target === button || menu.contains(event.target)) return;
+		closeMenu(false);
+	}
+	function onResize() {
+		closeMenu(false);
+	}
+	menu.addEventListener("keydown", (event) => {
+		const index = items.indexOf(document.activeElement);
+		if (event.key === "ArrowDown") {
+			event.preventDefault();
+			focusItem(index + 1);
+		} else if (event.key === "ArrowUp") {
+			event.preventDefault();
+			focusItem(index - 1);
+		} else if (event.key === "Home") {
+			event.preventDefault();
+			focusItem(0);
+		} else if (event.key === "End") {
+			event.preventDefault();
+			focusItem(items.length - 1);
+		} else if (event.key === "Escape") {
+			event.preventDefault();
+			event.stopPropagation();
+			closeMenu(true);
+		} else if (event.key === "Tab") closeMenu(false);
+	});
+	button.addEventListener("click", () => open ? closeMenu(true) : openMenu());
+	return {
+		open: openMenu,
+		close: closeMenu,
+		isOpen: () => open
+	};
+}
+// src/ui/help.js
+/**
+* Keyboard map panel (F4 IA) — a utility surface, not onboarding.
+*
+* `?` (or the header button) opens a static list of the instrument's real
+* shortcuts; Escape closes it and focus returns to where it came from. This is
+* the one place the key map is declared, so a new control has to extend it.
+*/
+function createHelpPanel(deps) {
+	const { panel, button, closeButton } = deps;
+	let open = false;
+	let returnFocus = null;
+	function show() {
+		if (open) return;
+		open = true;
+		returnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : button;
+		panel.hidden = false;
+		button.setAttribute("aria-expanded", "true");
+		closeButton.focus();
+	}
+	function hide(refocus = true) {
+		if (!open) return;
+		open = false;
+		panel.hidden = true;
+		button.setAttribute("aria-expanded", "false");
+		if (refocus) (returnFocus && document.contains(returnFocus) ? returnFocus : button).focus();
+		returnFocus = null;
+	}
+	function toggle() {
+		if (open) hide();
+		else show();
+	}
+	button.addEventListener("click", toggle);
+	closeButton.addEventListener("click", () => hide());
+	panel.addEventListener("keydown", (event) => {
+		if (event.key !== "Escape") return;
+		event.preventDefault();
+		event.stopPropagation();
+		hide();
+	});
+	document.addEventListener("keydown", (event) => {
+		if (event.key !== "?") return;
+		const target = event.target;
+		if (target && (/^(INPUT|SELECT|TEXTAREA)$/.test(target.tagName) || target.closest?.("#nibs"))) return;
+		event.preventDefault();
+		toggle();
+	});
+	return {
+		show,
+		hide,
+		toggle,
+		isOpen: () => open
 	};
 }
 // src/render/canvas.js
@@ -2761,6 +3045,11 @@ var getPad = () => PAD;
 	const store = createStore(S);
 	const prefersReducedMotion = () => window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 	const liveStatus = createLiveStatus(store);
+	createHelpPanel({
+		panel: document.getElementById("helpPanel"),
+		button: document.getElementById("helpBtn"),
+		closeButton: document.getElementById("helpClose")
+	});
 	const controls = createControls({
 		store,
 		resizeRegister,
@@ -3067,20 +3356,36 @@ var getPad = () => PAD;
 		if (frameNav.isOpen()) frameNav.render(S.slot);
 		else frameNav.focusButton();
 	}
-	[...document.querySelectorAll("[data-binop]")].forEach((b) => {
-		b.addEventListener("click", () => {
-			store.patch(() => {
-				setBinop(curSlot(), b.dataset.binop);
-				controls.syncEditUi();
-				syncViewUi();
-				evaluate();
-				updateReadouts();
-			});
+	const binopBtns = [...document.querySelectorAll("[data-binop]")];
+	const binopSet = document.getElementById("binopSet");
+	function chooseBinop(op) {
+		if (!S.showB) return;
+		store.patch(() => {
+			setBinop(curSlot(), op);
+			controls.syncEditUi();
+			syncViewUi();
+			evaluate();
+			updateReadouts();
 		});
+		binopSet.querySelector(`[data-binop="${op}"]`)?.focus();
+	}
+	binopBtns.forEach((b) => {
+		b.addEventListener("click", () => chooseBinop(b.dataset.binop));
+	});
+	binopSet.addEventListener("keydown", (e) => {
+		if (!S.showB) return;
+		const keys = binopBtns.map((b) => b.dataset.binop);
+		let next = keys.indexOf(S.binop);
+		if (e.key === "ArrowLeft" || e.key === "ArrowUp") next = (next + keys.length - 1) % keys.length;
+		else if (e.key === "ArrowRight" || e.key === "ArrowDown") next = (next + 1) % keys.length;
+		else if (e.key === "Home") next = 0;
+		else if (e.key === "End") next = keys.length - 1;
+		else return;
+		e.preventDefault();
+		e.stopPropagation();
+		chooseBinop(keys[next]);
 	});
 	const depthBtn = document.getElementById("depthBtn");
-	const slotSeg = document.getElementById("slotSeg");
-	const splitBtn = document.getElementById("splitBtn");
 	const copySlotBtn = document.getElementById("copySlotBtn");
 	const frameNav = createFrameNavigator({
 		store,
@@ -3095,11 +3400,20 @@ var getPad = () => PAD;
 	});
 	const stageBar = createStageBar({
 		element: document.getElementById("stageBar"),
+		framesBtn: document.getElementById("framesBtn"),
 		selectSlot,
 		selectSlotInPane,
 		setSplitMode,
 		focusSplitPane,
 		slotExprText
+	});
+	const copyMenu = createCopyMenu({
+		store,
+		button: copySlotBtn,
+		onCopy: (srcKey, dstKey) => {
+			copySlotInto(srcKey, dstKey);
+			liveStatus.say(`copied lane ${laneLabel(srcKey)} → lane ${laneLabel(dstKey)}`);
+		}
 	});
 	const hintEl = document.getElementById("hint");
 	function slotExprText(sl, withViewPrefix) {
@@ -3153,11 +3467,8 @@ var getPad = () => PAD;
 		});
 	}
 	function selectSlotInPane(paneIdx, key) {
+		if (S.copyArmed) copyMenu.close(false);
 		store.patch(() => {
-			if (S.copyArmed) {
-				S.copyArmed = false;
-				copySlotInto(S.slot, key);
-			}
 			S.splitPair[paneIdx] = key;
 			S.activePane = paneIdx;
 			S.slot = key;
@@ -3167,11 +3478,8 @@ var getPad = () => PAD;
 	}
 	function selectSlot(key) {
 		if (!S.slots[key]) return;
+		if (S.copyArmed) copyMenu.close(false);
 		store.patch(() => {
-			if (S.copyArmed) {
-				S.copyArmed = false;
-				copySlotInto(S.slot, key);
-			}
 			if (S.view3d && S.split3d) {
 				if (S.splitPair[0] === key && S.splitPair[1] !== key) S.activePane = 0;
 				else if (S.splitPair[1] === key && S.splitPair[0] !== key) S.activePane = 1;
@@ -3183,8 +3491,8 @@ var getPad = () => PAD;
 		});
 	}
 	function setSplitMode(on) {
+		if (S.copyArmed) copyMenu.close(false);
 		store.patch(() => {
-			S.copyArmed = false;
 			if (on) {
 				S.view3d = true;
 				S.split3d = true;
@@ -3207,55 +3515,19 @@ var getPad = () => PAD;
 		depthBtn.setAttribute("aria-pressed", String(S.view3d));
 		depthBtn.classList.toggle("on", S.view3d);
 		depthBtn.title = S.view3d ? "Return to the 2D register view" : "Show the depth field: operands at frame 1 and 256, the result at 128";
-		slotSeg.querySelectorAll("[data-slot]").forEach((b) => {
-			const active = b.dataset.slot === S.slot;
-			b.classList.toggle("on", active);
-			b.setAttribute("aria-checked", String(active));
-			b.setAttribute("tabindex", active ? "0" : "-1");
-			b.textContent = laneLabel(b.dataset.slot);
-		});
 		const isSplit = S.view3d && S.split3d;
-		splitBtn.setAttribute("aria-pressed", String(isSplit));
-		splitBtn.classList.toggle("on", isSplit);
-		copySlotBtn.setAttribute("aria-pressed", String(S.copyArmed));
-		copySlotBtn.classList.toggle("on", S.copyArmed);
-		copySlotBtn.textContent = S.copyArmed ? "pick lane" : "copy to…";
-		copySlotBtn.title = S.copyArmed ? "Choose lane 1, 2, or 3 to copy into" : "Copy the focused lane into another lane (click, then pick 1, 2, or 3)";
 		canvas.classList.toggle("readonly", S.view3d && !S.split3d);
 		canvas.classList.toggle("split-view", isSplit);
 		hintEl.hidden = S.view3d;
 		stageBar.sync();
 	}
 	depthBtn.addEventListener("click", () => {
+		if (S.copyArmed) copyMenu.close(false);
 		store.patch(() => {
-			S.copyArmed = false;
 			S.view3d = !S.view3d;
 			if (!S.view3d) S.split3d = false;
 			if (S.view3d) enableBOnSlot(curSlot());
 			refreshActiveSlotUi();
-		});
-	});
-	slotSeg.querySelectorAll("[data-slot]").forEach((b) => {
-		b.addEventListener("click", () => selectSlot(b.dataset.slot));
-	});
-	slotSeg.addEventListener("keydown", (e) => {
-		const idx = SLOT_KEYS.indexOf(S.slot);
-		let next = idx;
-		if (e.key === "ArrowLeft" || e.key === "ArrowUp") next = (idx + SLOT_KEYS.length - 1) % SLOT_KEYS.length;
-		else if (e.key === "ArrowRight" || e.key === "ArrowDown") next = (idx + 1) % SLOT_KEYS.length;
-		else if (e.key === "Home") next = 0;
-		else if (e.key === "End") next = SLOT_KEYS.length - 1;
-		else return;
-		e.preventDefault();
-		e.stopPropagation();
-		selectSlot(SLOT_KEYS[next]);
-		slotSeg.querySelector(`[data-slot="${SLOT_KEYS[next]}"]`)?.focus();
-	});
-	splitBtn.addEventListener("click", () => setSplitMode(!(S.view3d && S.split3d)));
-	copySlotBtn.addEventListener("click", () => {
-		store.patch(() => {
-			S.copyArmed = !S.copyArmed;
-			syncViewUi();
 		});
 	});
 	const csv = createCsvImport({
@@ -3285,6 +3557,7 @@ var getPad = () => PAD;
 		syncViewUi,
 		selectSlot,
 		setSplitMode,
+		copyMenu,
 		S,
 		DEMO
 	});
@@ -3351,6 +3624,7 @@ var getPad = () => PAD;
 		controls.syncSizeLabel();
 		controls.syncEditUi();
 		syncViewUi();
+		csv.renderUi();
 		renderStrip();
 		updateReadouts();
 		new ResizeObserver(() => fitCanvas()).observe(canvas);
@@ -3689,12 +3963,13 @@ var getPad = () => PAD;
   .hint {
     position: absolute;
     left: 50%;
-    top: 10px;
+    bottom: 6px;
     transform: translateX(-50%);
     font-size: 10.5px;
     letter-spacing: 0.09em;
     text-transform: uppercase;
     color: var(--dimmer);
+    white-space: nowrap;
     pointer-events: none;
     user-select: none;
     transition: opacity 220ms ease;
@@ -4247,18 +4522,22 @@ var getPad = () => PAD;
     align-items: baseline;
   }
 
-  .truth-grid > span { text-align: center; font-variant-numeric: tabular-nums; }
-  .truth-grid > .th {
+  /* ARIA table rows are presentational for layout: `display: contents` keeps
+     the four-column grid while a screen reader hears real rows. */
+  .truth-grid [role="row"] { display: contents; }
+
+  .truth-grid span { text-align: center; font-variant-numeric: tabular-nums; }
+  .truth-grid .th {
     font-size: 9px;
     letter-spacing: 0.08em;
     text-transform: uppercase;
     color: var(--dimmer);
   }
-  .truth-grid > .z { color: var(--dim); }
-  .truth-grid > .z.on { color: var(--accent); }
+  .truth-grid .z { color: var(--dim); }
+  .truth-grid .z.on { color: var(--accent); }
   /* The count column is data about the register, not part of the
      algebra — a rule keeps the four logic cells from reading as one run. */
-  .truth-grid > .ct {
+  .truth-grid .ct {
     color: var(--text);
     border-left: 1px solid var(--line);
     padding-left: 9px;
@@ -4269,9 +4548,9 @@ var getPad = () => PAD;
     grid-template-columns: auto auto;
     gap: 0 14px;
   }
-  .truth-grid.ar > .th { text-align: left; }
-  .truth-grid.ar > .ct { text-align: left; border-left-width: 0; padding-left: 0; }
-  .truth-grid.ar > .ct.yes { color: var(--inf); }
+  .truth-grid.ar .th { text-align: left; }
+  .truth-grid.ar .ct { text-align: left; border-left-width: 0; padding-left: 0; }
+  .truth-grid.ar .ct.yes { color: var(--inf); }
 
   /* ── controls ─────────────────────────────────────────── */
   .controls {
@@ -4313,10 +4592,19 @@ var getPad = () => PAD;
   button.op.accent:hover { border-color: rgba(52,211,153,0.5); }
 
   button.op.on,
-  button.op[aria-pressed="true"] {
+  button.op[aria-pressed="true"],
+  button.op[aria-checked="true"] {
     color: var(--accent);
     border-color: rgba(52,211,153,0.5);
     background: rgba(52,211,153,0.10);
+  }
+
+  /* Reserved space (DESIGN §9): an inapplicable control stays in place,
+     dimmed and non-interactive, instead of disappearing. */
+  .op[aria-disabled="true"],
+  .seg[aria-disabled="true"] .op {
+    opacity: 0.42;
+    cursor: default;
   }
 
   /* segmented A | B | C */
@@ -4367,11 +4655,116 @@ var getPad = () => PAD;
     text-align: center;
   }
 
+  /* ── F4 IA: register edit, copy menu, keyboard map ───────── */
+
+  .sub-label {
+    font-size: 9px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--dimmer);
+    margin-left: 2px;
+  }
+
+  .edit-target {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--dim);
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .hex-entry {
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--text);
+    background: var(--panel-hi);
+    border: 1px solid var(--line);
+    border-radius: 5px;
+    padding: 5px 8px;
+    width: 20ch;
+    text-align: right;
+    letter-spacing: 0.02em;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .hex-entry::placeholder { color: var(--dimmer); }
+  .hex-entry:focus-visible { outline: none; box-shadow: 0 0 0 2px rgba(52,211,153,0.35); }
+  .hex-entry:disabled { opacity: 0.42; cursor: default; }
+  .hex-entry.invalid { border-color: rgba(245,181,68,0.7); }
+
+  .b-state {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    color: var(--dim);
+    white-space: nowrap;
+    min-width: 34px;
+  }
+
+  /* Explicit copy menu — overlays, focus moves in, Esc cancels. */
+  .copy-menu {
+    position: fixed;
+    z-index: 20;
+    min-width: 110px;
+    padding: 4px;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 5px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  }
+
+  .copy-menu .op {
+    display: block;
+    width: 100%;
+    text-align: left;
+    border-color: transparent;
+    background: transparent;
+  }
+
+  .copy-menu .op:hover,
+  .copy-menu .op:focus-visible { background: var(--panel-hover); }
+
+  /* Keyboard map — a utility panel, not onboarding. */
+  .help-panel {
+    position: fixed;
+    z-index: 20;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    width: min(430px, calc(100% - 2 * var(--pad)));
+    max-height: calc(100dvh - 40px);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 5px;
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+  }
+
+  .help-body { overflow: auto; padding: 2px 14px 14px; }
+
+  .help-list {
+    display: grid;
+    grid-template-columns: max-content minmax(0, 1fr);
+    gap: 7px 14px;
+    margin: 10px 0 0;
+    font-size: 11.5px;
+  }
+
+  .help-list dt {
+    font-family: var(--mono);
+    color: var(--text);
+    white-space: nowrap;
+  }
+
+  .help-list dd { margin: 0; color: var(--dim); }
+
   @media (max-width: 720px) {
     :root { --pad: 16px; }
     header { flex-wrap: wrap; gap: 12px; padding-top: 12px; padding-bottom: 12px; }
     .title p { display: none; }
-    .sizer { width: 100%; }
+    .sizer { width: 100%; order: 2; }
+    #helpBtn { order: 1; }
     .sizer input[type="range"] { flex: 1 1 auto; width: auto; }
     #sizeOut { min-width: 0; }
     .controls { gap: 8px 16px; }
@@ -4419,17 +4812,20 @@ var getPad = () => PAD;
     <p>registers as waveforms — every nibble is a sample</p>
   </div>
   <div class="sizer">
-    <label for="size">register</label>
-    <input id="size" type="range" min="0" max="5" step="1" value="3" aria-label="Register size" />
+    <label for="size">width</label>
+    <input id="size" type="range" min="0" max="5" step="1" value="3" aria-label="Register width in bits" />
     <output id="sizeOut" for="size">64 bits · 16 nibbles</output>
   </div>
+  <button class="op" id="helpBtn" type="button" aria-expanded="false" aria-controls="helpPanel" aria-keyshortcuts="?" title="Keyboard map (?)">?</button>
 </header>
 
 <main>
 <section class="stage" aria-label="waveform stage">
   <canvas id="wave" role="img" aria-label="2-D waveform plot of the register"></canvas>
-  <div class="hint" id="hint">drag a nibble · click a bit · scroll a hex</div>
-  <div class="stage-bar" id="stageBar" hidden></div>
+  <div class="hint" id="hint">drag a nibble · click a bit · Tab to edit</div>
+  <div class="stage-bar" id="stageBar" role="group" aria-label="stage">
+    <button class="op" id="framesBtn" type="button" aria-expanded="false" aria-controls="framesPanel" title="Browse frames A, Z, B across lanes">frames</button>
+  </div>
   <aside class="frames-panel" id="framesPanel" hidden aria-label="Frame navigator">
     <div class="fp-head">
       <h2 class="fp-title">frames</h2>
@@ -4480,25 +4876,33 @@ var getPad = () => PAD;
 </section>
 
 <section class="controls" aria-label="controls">
-  <div class="group" role="group" aria-label="source data">
-    <label>data</label>
+  <div class="group" role="group" aria-label="source">
+    <label>source</label>
     <button class="op" id="csvBtn" title="Import a CSV or TSV of examples">import csv</button>
     <input type="file" id="csvFile" accept=".csv,.tsv,text/csv,text/plain" hidden />
-    <div class="seg" id="stepSeg" role="group" aria-label="example stepper" hidden>
+    <div class="seg" id="stepSeg" role="group" aria-label="example stepper">
       <button class="op" id="prevEx" title="Previous example (←)" aria-label="◀ previous example">◀</button>
       <button class="op" id="nextEx" title="Next example (→)" aria-label="▶ next example">▶</button>
     </div>
-    <span class="excount" id="exCount" hidden>0 / 0</span>
+    <span class="excount" id="exCount">— / —</span>
     <button class="op" id="sourcesBtn" aria-expanded="false" aria-controls="sourcesPanel" title="Show the six input bindings">sources</button>
-    <div class="seg" id="obsSeg" role="group" aria-label="observation logger" hidden>
+    <div class="seg" id="obsSeg" role="group" aria-label="observation logger">
       <button class="op" id="logObsBtn" title="Log current observation">log</button>
       <button class="op" id="exportObsBtn" title="Export observations to CSV">export</button>
     </div>
-    <span class="excount" id="obsCount" hidden>0 obs</span>
+    <span class="excount" id="obsCount">0 obs</span>
   </div>
 
-  <div class="group" role="group" aria-label="shape presets">
-    <label>shape</label>
+  <div class="group" role="group" aria-label="register edit">
+    <label>width · edit</label>
+    <span class="edit-target" id="editTarget">edit · A</span>
+    <input id="hexEntry" class="hex-entry" type="text" spellcheck="false" autocomplete="off"
+           autocapitalize="characters" aria-label="hex value for the focused register" placeholder="DEADBEEF" />
+  </div>
+
+  <div class="group" role="group" aria-label="operate">
+    <label>operate</label>
+    <span class="sub-label">presets</span>
     <button class="op" data-preset="zero" title="All zeros" aria-label="all zeros 0">0</button>
     <button class="op" data-preset="max" title="All ones (F)" aria-label="all ones F">F</button>
     <button class="op" data-preset="sine">sine</button>
@@ -4507,36 +4911,36 @@ var getPad = () => PAD;
     <button class="op" data-preset="sawDown">saw ↓</button>
     <button class="op" data-preset="sawUp">saw ↑</button>
     <button class="op" data-preset="square">square</button>
+    <span class="sub-label">unary</span>
+    <select id="amount" aria-label="Rotate / shift amount in bits">
+      <option value="1">1 bit</option>
+      <option value="2">2 bits</option>
+      <option value="4" selected>4 bits</option>
+      <option value="8">8 bits</option>
+    </select>
+    <button class="op accent" data-op="rol">ROL ←</button>
+    <button class="op accent" data-op="ror">ROR →</button>
+    <button class="op accent" data-op="shl">SHL ←</button>
+    <button class="op accent" data-op="shr">SHR →</button>
+    <button class="op accent" data-op="not">NOT</button>
+    <button class="op accent" data-op="fold">FOLD</button>
+    <button class="op accent" data-op="bswap" title="Reverse byte order — endianness swap">BSWAP</button>
   </div>
 
-  <div class="group" id="logicGroup" role="group" aria-label="binary logic">
-    <label>logic</label>
-    <button class="op accent" data-binop="and" hidden>AND</button>
-    <button class="op accent" data-binop="or" hidden>OR</button>
-    <button class="op accent" data-binop="xor" hidden>XOR</button>
-    <button class="op accent" data-binop="add" hidden title="Arithmetic add — carries propagate">ADD</button>
-    <button class="op accent" data-binop="sub" hidden title="Arithmetic subtract — borrows propagate">SUB</button>
-  </div>
-
-  <div class="group" role="group" aria-label="lanes">
-    <label>lane</label>
-    <div class="seg" id="slotSeg" role="radiogroup" aria-label="Lane 1, 2, or 3">
-      <button class="op on" data-slot="A" role="radio" aria-checked="true" tabindex="0" title="Lane 1 (Alt+1)" aria-keyshortcuts="Alt+1">1</button>
-      <button class="op" data-slot="B" role="radio" aria-checked="false" tabindex="-1" title="Lane 2 (Alt+2)" aria-keyshortcuts="Alt+2">2</button>
-      <button class="op" data-slot="C" role="radio" aria-checked="false" tabindex="-1" title="Lane 3 (Alt+3)" aria-keyshortcuts="Alt+3">3</button>
+  <div class="group" id="logicGroup" role="group" aria-label="derive">
+    <label>derive</label>
+    <span class="b-state" id="bState">B off</span>
+    <div class="seg" id="binopSet" role="radiogroup" aria-label="binary operation">
+      <button class="op accent" data-binop="and" role="radio" aria-checked="true" tabindex="0">AND</button>
+      <button class="op accent" data-binop="or" role="radio" aria-checked="false" tabindex="-1">OR</button>
+      <button class="op accent" data-binop="xor" role="radio" aria-checked="false" tabindex="-1">XOR</button>
+      <button class="op accent" data-binop="add" role="radio" aria-checked="false" tabindex="-1" title="Arithmetic add — carries propagate">ADD</button>
+      <button class="op accent" data-binop="sub" role="radio" aria-checked="false" tabindex="-1" title="Arithmetic subtract — borrows propagate">SUB</button>
     </div>
-    <button class="op" id="framesBtn" aria-expanded="false" aria-controls="framesPanel" title="Browse frames A, Z, B across lanes">frames</button>
-    <button class="op" id="splitBtn" aria-pressed="false" aria-keyshortcuts="Alt+S" title="Split main 3D view into two side-by-side visualizers (Alt+S)">split</button>
-    <button class="op" id="copySlotBtn" aria-pressed="false" title="Copy the focused lane into another lane (click, then pick 1, 2, or 3)">copy to…</button>
-  </div>
-
-  <div class="group" role="group" aria-label="view">
-    <label>view</label>
-    <button class="op" id="depthBtn" aria-pressed="false" title="Show the depth field: A at frame 1, Z at 128, B at 256">3D</button>
   </div>
 
   <div class="group" role="group" aria-label="motion">
-    <label>lfo</label>
+    <label>motion</label>
     <button class="op" id="lfoBtn" aria-pressed="false" title="Animate the register you are editing">LFO</button>
     <select id="lfoMode" aria-label="LFO motion">
       <option value="rotcw">rot ↻</option>
@@ -4558,25 +4962,36 @@ var getPad = () => PAD;
     </select>
   </div>
 
-  <div class="group" role="group" aria-label="bit operations">
-    <label>bit ops</label>
-    <select id="amount" aria-label="Rotate / shift amount in bits">
-      <option value="1">1 bit</option>
-      <option value="2">2 bits</option>
-      <option value="4" selected>4 bits</option>
-      <option value="8">8 bits</option>
-    </select>
-    <button class="op accent" data-op="rol">ROL ←</button>
-    <button class="op accent" data-op="ror">ROR →</button>
-    <button class="op accent" data-op="shl">SHL ←</button>
-    <button class="op accent" data-op="shr">SHR →</button>
-    <button class="op accent" data-op="not">NOT</button>
-    <button class="op accent" data-op="fold">FOLD</button>
-    <button class="op accent" data-op="bswap" title="Reverse byte order — endianness swap">BSWAP</button>
+  <div class="group" role="group" aria-label="view">
+    <label>view</label>
+    <button class="op" id="depthBtn" aria-pressed="false" title="Show the depth field: A at frame 1, Z at 128, B at 256">3D</button>
+    <button class="op" id="copySlotBtn" aria-haspopup="menu" aria-expanded="false" title="Copy the focused lane into another lane">copy to…</button>
   </div>
 
   <span id="liveStatus" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></span>
 </section>
+
+<aside class="help-panel" id="helpPanel" hidden aria-label="Keyboard map">
+  <div class="fp-head">
+    <h2 class="fp-title">keyboard map</h2>
+    <button class="op" id="helpClose" type="button" aria-label="× close keyboard map" title="Close (Esc)">×</button>
+  </div>
+  <div class="help-body">
+    <dl class="help-list">
+      <dt>Tab</dt><dd>enter the strip at the last-focused nibble</dd>
+      <dt>← / →</dt><dd>move between nibbles</dd>
+      <dt>↑ / ↓</dt><dd>nibble value ±1, clamped 0–F</dd>
+      <dt>Home / End</dt><dd>first / last nibble</dd>
+      <dt>0–9, a–f</dt><dd>set the focused nibble to that digit</dd>
+      <dt>Enter</dt><dd>hex entry: commit the whole word</dd>
+      <dt>Esc</dt><dd>cancel hex entry, a menu or a panel</dd>
+      <dt>Alt+1/2/3</dt><dd>select lane 1, 2 or 3</dd>
+      <dt>Alt+S</dt><dd>split the 3-D view</dd>
+      <dt>← / →</dt><dd>step CSV examples when focus is outside the controls and the strip</dd>
+      <dt>?</dt><dd>this keyboard map</dd>
+    </dl>
+  </div>
+</aside>
 </main>
 
 </body>

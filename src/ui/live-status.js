@@ -23,6 +23,7 @@ export function createLiveStatus(store) {
   const el = document.getElementById("liveStatus");
   let timer = 0;
   let pending = "";
+  let holdUntil = 0;
 
   const quiet = () => S.drag >= 0 || S.lfo.on;
 
@@ -45,7 +46,7 @@ export function createLiveStatus(store) {
 
   /* Called once per completed transaction. */
   function schedule() {
-    if (quiet()) {
+    if (quiet() || Date.now() < holdUntil) {
       clearTimeout(timer);
       timer = 0;
       return;
@@ -63,6 +64,17 @@ export function createLiveStatus(store) {
     el.textContent = pending;
   }
 
+  /* A one-shot message that holds the region against the next auto-updates
+     (e.g. "copied lane 1 → lane 2" must not be replaced by the register text
+     a moment later). */
+  function say(text) {
+    clearTimeout(timer);
+    timer = 0;
+    pending = text;
+    el.textContent = text;
+    holdUntil = Date.now() + 1400;
+  }
+
   store.subscribe(schedule);
-  return { schedule, announceNow, describe };
+  return { schedule, announceNow, say, describe };
 }

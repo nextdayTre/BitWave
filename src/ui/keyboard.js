@@ -6,7 +6,7 @@
  */
 
 export function attachKeyboard(deps) {
-  const { frameNav, syncViewUi, selectSlot, setSplitMode, applyExample, loadCSV, S, DEMO } = deps;
+  const { frameNav, syncViewUi, selectSlot, setSplitMode, applyExample, loadCSV, copyMenu, S, DEMO } = deps;
 
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape" && frameNav.isOpen()) {
@@ -15,8 +15,7 @@ export function attachKeyboard(deps) {
       return;
     }
     if (e.key === "Escape" && S.copyArmed) {
-      S.copyArmed = false;
-      syncViewUi();
+      copyMenu.close(true);
       e.preventDefault();
       return;
     }
@@ -24,7 +23,12 @@ export function attachKeyboard(deps) {
       if (e.key === "1" || e.code === "Digit1") { selectSlot("A"); if (frameNav.isOpen()) frameNav.render(); e.preventDefault(); return; }
       if (e.key === "2" || e.code === "Digit2") { selectSlot("B"); if (frameNav.isOpen()) frameNav.render(); e.preventDefault(); return; }
       if (e.key === "3" || e.code === "Digit3") { selectSlot("C"); if (frameNav.isOpen()) frameNav.render(); e.preventDefault(); return; }
-      if (e.key === "s" || e.key === "S" || e.code === "KeyS") { setSplitMode(!(S.view3d && S.split3d)); e.preventDefault(); return; }
+      if (e.key === "s" || e.key === "S" || e.code === "KeyS") {
+        /* Split is 3-D only; the stage-bar button is disabled in 2-D too. */
+        if (S.view3d) setSplitMode(!S.split3d);
+        e.preventDefault();
+        return;
+      }
     }
     if (!DEMO.rows.length) return;
     if (/^(INPUT|SELECT|TEXTAREA)$/.test((e.target && e.target.tagName) || "")) return;

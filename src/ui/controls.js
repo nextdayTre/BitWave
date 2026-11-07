@@ -7,7 +7,7 @@
  * the core pass.
  */
 
-import { applyPreset, applyUnary, setBinop } from "../state/actions.ts";
+import { applyPreset, applyUnary, setBinop, setHexWord } from "../state/actions.ts";
 import { driverName, isFocusDriven, isInputDriven } from "../state/bindings.ts";
 import { DEMO } from "../state/dataset.ts";
 import {
@@ -18,12 +18,14 @@ import {
   editReg,
   focusEditable,
   focusKey,
+  focusReg,
   frameLabel,
   nibCount,
   syncTarget,
 } from "../state/instrument.ts";
 import { evaluate } from "../state/routing.ts";
 import { stripEl } from "../render/strip.js";
+import { toHexOf } from "../render/readouts.js";
 
 export function createControls(deps) {
   const {
@@ -43,6 +45,9 @@ export function createControls(deps) {
   const lfoRateSel = document.getElementById("lfoRate");
   const amountSel = document.getElementById("amount");
   const lfoBSel = document.getElementById("lfoB");
+  const hexEntry = document.getElementById("hexEntry");
+  const editTarget = document.getElementById("editTarget");
+  const bState = document.getElementById("bState");
 
   function lfoBConfig(v = curSlot().lfoB) {
     const frac = v === "q" ? 0.25 : v === "h" ? 0.5 : 0;
@@ -208,23 +213,48 @@ export function createControls(deps) {
      ══════════════════════════════════════════════════════════ */
 
   const logicGroup = document.getElementById("logicGroup");
+  const binopSet = document.getElementById("binopSet");
   const binopBtns = [...document.querySelectorAll("[data-binop]")];
 
   function syncEditUi() {
-    logicGroup.hidden = !S.showB;
+    const driven = isFocusDriven();
+    const editable = focusEditable();
+
+    /* Derive is a live radiogroup that never disappears; without operand B the
+       radios stay in place, dimmed and `aria-disabled` (DESIGN §9). */
+    logicGroup.setAttribute("aria-disabled", String(!S.showB));
+    binopSet.setAttribute("aria-disabled", String(!S.showB));
     binopBtns.forEach((b) => {
-      b.hidden = !S.showB;
-      b.classList.toggle("on", b.dataset.binop === S.binop);
-      b.setAttribute("aria-pressed", String(b.dataset.binop === S.binop));
+      const on = b.dataset.binop === S.binop;
+      b.classList.toggle("on", on);
+      b.setAttribute("aria-checked", String(on));
+      b.setAttribute("aria-disabled", String(!S.showB));
+      b.setAttribute("tabindex", S.showB && on ? "0" : "-1");
     });
+    if (bState) {
+      bState.textContent = S.showB ? "B on" : "B off";
+      bState.title = S.showB
+        ? "Operand B is live in this lane"
+        : "Operand B is enabled by focusing a B/D/F frame or entering 3-D";
+    }
+
+    /* Register edit: the target label and the whole-word hex entry. */
+    if (driven) editTarget.textContent = `${frameLabel()} · driven`;
+    else if (editable) editTarget.textContent = `edit · ${frameLabel()}`;
+    else editTarget.textContent = `${frameLabel()} · read-only`;
+    hexEntry.disabled = !editable || driven;
+    hexEntry.setAttribute("aria-label", `hex value for ${frameLabel()}`);
+    if (document.activeElement !== hexEntry) {
+      hexEntry.value = toHexOf(editable ? editReg() : focusReg());
+    }
+
     stripEl.dataset.edit = frameLabel();
     if (hintEl) {
-      const driven = isFocusDriven();
       hintEl.textContent = !focusEditable()
         ? `${frameLabel()} is derived — read-only`
         : driven
           ? `${frameLabel()} is driven by ${driverName(curSlot(), focusKey())} — unplug in sources`
-          : "drag a nibble · click a bit · scroll a hex";
+          : "drag a nibble · click a bit · Tab to edit";
     }
     lfoBSel.value = curSlot().lfoB;
     lfoBSel.hidden = S.lfo.mode === "csvStep" || (!S.view3d && !S.showB);
@@ -250,6 +280,66 @@ export function createControls(deps) {
     sizeInput.value = String(index);
     syncSizeLabel();
   }
+
+  /* Whole-word hex entry (DESIGN §8): Enter commits, Esc reverts, invalid
+     input is refused with a visible state and never reaches the register. */
+  let hexInvalidTimer = 0;
+
+  function currentEditHex() {
+    return toHexOf(focusEditable() ? editReg() : focusReg());
+  }
+
+  function flashInvalidHex() {
+    hexEntry.classList.add("invalid");
+    hexEntry.setAttribute("aria-invalid", "true");
+    clearTimeout(hexInvalidTimer);
+    hexInvalidTimer = setTimeout(() => {
+      hexEntry.classList.remove("invalid");
+      hexEntry.removeAttribute("aria-invalid");
+    }, 800);
+  }
+
+  function commitHex() {
+    if (!focusEditable() || isFocusDriven()) return;
+    const raw = hexEntry.value.trim().replace(/^0x/i, "");
+    if (!/^[0-9a-f]+$/i.test(raw) || raw.length > nibCount()) {
+      flashInvalidHex();
+      return;
+    }
+    hexEntry.classList.remove("invalid");
+    hexEntry.removeAttribute("aria-invalid");
+    store.patch(() => {
+      setHexWord(editReg(), raw);
+      evaluate();
+      renderStrip();
+      updateReadouts();
+      syncEditUi();
+    });
+    /* Normalise the field to the committed, zero-padded word (CSV rule). */
+    hexEntry.value = toHexOf(editReg());
+  }
+
+  hexEntry.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      commitHex();
+    } else if (event.key === "Escape") {
+      event.preventDefault();
+      event.stopPropagation();
+      hexEntry.value = currentEditHex();
+      hexEntry.blur();
+    }
+  });
+
+  hexEntry.addEventListener("input", () => {
+    if (!hexEntry.classList.contains("invalid")) return;
+    hexEntry.classList.remove("invalid");
+    hexEntry.removeAttribute("aria-invalid");
+  });
+
+  hexEntry.addEventListener("blur", () => {
+    hexEntry.value = currentEditHex();
+  });
 
   return { lfoStart, lfoStop, lfoTick, syncEditUi, syncSizeLabel, setSize };
 }

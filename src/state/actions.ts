@@ -95,6 +95,17 @@ export function setLiveNibble(reg: Reg, j: number, value: number): number {
   return v;
 }
 
+/** Writes a whole hex word, right-aligned into the register (the CSV rule). */
+export function setHexWord(reg: Reg, hex: string): void {
+  const n = S.N >> 2;
+  const digits = hex.replace(/[^0-9a-f]/gi, "").toUpperCase().slice(-n).padStart(n, "0");
+  for (let j = 0; j < n; j++) {
+    const v = parseInt(digits[j], 16);
+    setNibAt(reg.bits, S.N, j, v);
+    reg.target[j] = v;
+  }
+}
+
 /** Copies a lane's model state (not its parked route bases). */
 export function copyLane(src: Slot, dst: Slot): void {
   dst.A.bits = src.A.bits.slice();

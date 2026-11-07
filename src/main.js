@@ -46,6 +46,8 @@ import { createControls } from "./ui/controls.js";
 import { createCsvImport } from "./ui/csv-import.js";
 import { createSourceTable } from "./ui/source-table.js";
 import { createLiveStatus } from "./ui/live-status.js";
+import { createCopyMenu } from "./ui/copy-menu.js";
+import { createHelpPanel } from "./ui/help.js";
 import { evalSpline } from "./core/spline.ts";
 import { G, canvasEl as canvas, draw, fitCanvas, getPad, shortCol } from "./render/canvas.js";
 import { focusNibble, nibsEl, patchNibble, renderStrip, syncHoverClasses } from "./render/strip.js";
@@ -71,6 +73,13 @@ import { toHexOf, updateReadouts } from "./render/readouts.js";
 
   /* One polite, atomic live region for committed changes (DESIGN §8/§10.34). */
   const liveStatus = createLiveStatus(store);
+
+  /* Keyboard map panel — the one declared shortcut surface (F4 IA). */
+  const help = createHelpPanel({
+    panel: document.getElementById("helpPanel"),
+    button: document.getElementById("helpBtn"),
+    closeButton: document.getElementById("helpClose"),
+  });
 
   const controls = createControls({
     store,
@@ -451,16 +460,38 @@ import { toHexOf, updateReadouts } from "./render/readouts.js";
   }
 
   const binopBtns = [...document.querySelectorAll("[data-binop]")];
-  binopBtns.forEach((b) => {
-    b.addEventListener("click", () => {
-      store.patch(() => {
-        setBinop(curSlot(), b.dataset.binop);
-        controls.syncEditUi();
-        syncViewUi();
-        evaluate();
-        updateReadouts();
-      });
+  const binopSet = document.getElementById("binopSet");
+
+  function chooseBinop(op) {
+    if (!S.showB) return;          // reserved-space: disabled until B exists
+    store.patch(() => {
+      setBinop(curSlot(), op);
+      controls.syncEditUi();
+      syncViewUi();
+      evaluate();
+      updateReadouts();
     });
+    binopSet.querySelector(`[data-binop="${op}"]`)?.focus();
+  }
+
+  binopBtns.forEach((b) => {
+    b.addEventListener("click", () => chooseBinop(b.dataset.binop));
+  });
+
+  /* Radiogroup keyboard model for derive: arrows move the operation, Home/End
+     jump to the ends, and only the checked radio is in the tab order. */
+  binopSet.addEventListener("keydown", (e) => {
+    if (!S.showB) return;
+    const keys = binopBtns.map((b) => b.dataset.binop);
+    let next = keys.indexOf(S.binop);
+    if (e.key === "ArrowLeft" || e.key === "ArrowUp") next = (next + keys.length - 1) % keys.length;
+    else if (e.key === "ArrowRight" || e.key === "ArrowDown") next = (next + 1) % keys.length;
+    else if (e.key === "Home") next = 0;
+    else if (e.key === "End") next = keys.length - 1;
+    else return;
+    e.preventDefault();
+    e.stopPropagation();
+    chooseBinop(keys[next]);
   });
 
   /* ══════════════════════════════════════════════════════════
@@ -468,8 +499,6 @@ import { toHexOf, updateReadouts } from "./render/readouts.js";
      ══════════════════════════════════════════════════════════ */
 
   const depthBtn = document.getElementById("depthBtn");
-  const slotSeg = document.getElementById("slotSeg");
-  const splitBtn = document.getElementById("splitBtn");
   const copySlotBtn = document.getElementById("copySlotBtn");
   const frameNav = createFrameNavigator({
     store,
@@ -485,11 +514,23 @@ import { toHexOf, updateReadouts } from "./render/readouts.js";
 
   const stageBar = createStageBar({
     element: document.getElementById("stageBar"),
+    framesBtn: document.getElementById("framesBtn"),
     selectSlot,
     selectSlotInPane,
     setSplitMode,
     focusSplitPane,
     slotExprText,
+  });
+
+  /* Explicit copy menu — focus moves in, Esc/outside closes, and the live
+     status reports the copy in words (F4 IA). */
+  const copyMenu = createCopyMenu({
+    store,
+    button: copySlotBtn,
+    onCopy: (srcKey, dstKey) => {
+      copySlotInto(srcKey, dstKey);
+      liveStatus.say(`copied lane ${laneLabel(srcKey)} → lane ${laneLabel(dstKey)}`);
+    },
   });
   const hintEl = document.getElementById("hint");
 
@@ -554,11 +595,8 @@ import { toHexOf, updateReadouts } from "./render/readouts.js";
   }
 
   function selectSlotInPane(paneIdx, key) {
+    if (S.copyArmed) copyMenu.close(false);
     store.patch(() => {
-      if (S.copyArmed) {
-        S.copyArmed = false;
-        copySlotInto(S.slot, key);
-      }
       S.splitPair[paneIdx] = key;
       S.activePane = paneIdx;
       S.slot = key;
@@ -569,11 +607,8 @@ import { toHexOf, updateReadouts } from "./render/readouts.js";
 
   function selectSlot(key) {
     if (!S.slots[key]) return;
+    if (S.copyArmed) copyMenu.close(false);
     store.patch(() => {
-      if (S.copyArmed) {
-        S.copyArmed = false;
-        copySlotInto(S.slot, key);
-      }
       if (S.view3d && S.split3d) {
         if (S.splitPair[0] === key && S.splitPair[1] !== key) {
           S.activePane = 0;
@@ -590,8 +625,8 @@ import { toHexOf, updateReadouts } from "./render/readouts.js";
   }
 
   function setSplitMode(on) {
+    if (S.copyArmed) copyMenu.close(false);
     store.patch(() => {
-      S.copyArmed = false;
       if (on) {
         S.view3d = true;
         S.split3d = true;
@@ -621,68 +656,20 @@ import { toHexOf, updateReadouts } from "./render/readouts.js";
     depthBtn.title = S.view3d
       ? "Return to the 2D register view"
       : "Show the depth field: operands at frame 1 and 256, the result at 128";
-    slotSeg.querySelectorAll("[data-slot]").forEach((b) => {
-      const active = b.dataset.slot === S.slot;
-      b.classList.toggle("on", active);
-      b.setAttribute("aria-checked", String(active));
-      b.setAttribute("tabindex", active ? "0" : "-1");
-      b.textContent = laneLabel(b.dataset.slot);
-    });
     const isSplit = S.view3d && S.split3d;
-    splitBtn.setAttribute("aria-pressed", String(isSplit));
-    splitBtn.classList.toggle("on", isSplit);
-
-    copySlotBtn.setAttribute("aria-pressed", String(S.copyArmed));
-    copySlotBtn.classList.toggle("on", S.copyArmed);
-    copySlotBtn.textContent = S.copyArmed ? "pick lane" : "copy to\u2026";
-    copySlotBtn.title = S.copyArmed
-      ? "Choose lane 1, 2, or 3 to copy into"
-      : "Copy the focused lane into another lane (click, then pick 1, 2, or 3)";
-
     canvas.classList.toggle("readonly", S.view3d && !S.split3d);
     canvas.classList.toggle("split-view", isSplit);
-
     hintEl.hidden = S.view3d;
     stageBar.sync();
   }
 
   depthBtn.addEventListener("click", () => {
+    if (S.copyArmed) copyMenu.close(false);
     store.patch(() => {
-      S.copyArmed = false;
       S.view3d = !S.view3d;
       if (!S.view3d) S.split3d = false;
       if (S.view3d) enableBOnSlot(curSlot());
       refreshActiveSlotUi();
-    });
-  });
-
-  slotSeg.querySelectorAll("[data-slot]").forEach((b) => {
-    b.addEventListener("click", () => selectSlot(b.dataset.slot));
-  });
-
-  /* Radiogroup keyboard model for the lane set (DESIGN §8): arrows move the
-     selection itself, Home/End jump to the ends, and the roving tabindex means
-     the set is one Tab stop. */
-  slotSeg.addEventListener("keydown", (e) => {
-    const idx = SLOT_KEYS.indexOf(S.slot);
-    let next = idx;
-    if (e.key === "ArrowLeft" || e.key === "ArrowUp") next = (idx + SLOT_KEYS.length - 1) % SLOT_KEYS.length;
-    else if (e.key === "ArrowRight" || e.key === "ArrowDown") next = (idx + 1) % SLOT_KEYS.length;
-    else if (e.key === "Home") next = 0;
-    else if (e.key === "End") next = SLOT_KEYS.length - 1;
-    else return;
-    e.preventDefault();
-    e.stopPropagation();
-    selectSlot(SLOT_KEYS[next]);
-    slotSeg.querySelector(`[data-slot="${SLOT_KEYS[next]}"]`)?.focus();
-  });
-
-  splitBtn.addEventListener("click", () => setSplitMode(!(S.view3d && S.split3d)));
-
-  copySlotBtn.addEventListener("click", () => {
-    store.patch(() => {
-      S.copyArmed = !S.copyArmed;
-      syncViewUi();
     });
   });
 
@@ -721,6 +708,7 @@ import { toHexOf, updateReadouts } from "./render/readouts.js";
     syncViewUi,
     selectSlot,
     setSplitMode,
+    copyMenu,
     S,
     DEMO,
   });
@@ -810,6 +798,7 @@ import { toHexOf, updateReadouts } from "./render/readouts.js";
     controls.syncSizeLabel();
     controls.syncEditUi();
     syncViewUi();
+    csv.renderUi();
     renderStrip();
     updateReadouts();
 

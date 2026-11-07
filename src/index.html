@@ -5,7 +5,7 @@
   `npm run build` bundles src/main.js and src/styles/app.css into one
   self-contained file at the repo root; open that file directly.
 
-  Same engine, same visual system, same feature set. User-facing changes only:
+  Engine, visual system and feature set are unchanged. Interface changes:
     · lanes are numbered 1 / 2 / 3 (letters now mean frames/operands only)
     · frame names are global: lane 1 A/B/Z1, lane 2 C/D/Z2, lane 3 E/F/Z3
     · a Pro-Q4-style frame navigator browses lanes and their frames with static
@@ -13,15 +13,18 @@
       toggle shows/hides that lane's frame in the 2D view
     · focus is a lens, not navigation: derived frames focus read-only, the view
       never switches and the navigator never closes on a frame click
-    · the old "logic B" toggle and 2D/3D segment are gone: the navigator shows
-      the frames, and one "3D" toggle switches the depth field
     · the six-input source table (data columns or frame outputs) is the routing
       housing: labels carry the assignment and driven inputs are locked
-    · lane controls and display controls are separate groups
-    · copy mode says what it does and Escape cancels it
-    · segmented controls expose aria-pressed; ambiguous preset names are labelled
-    · the hint mentions that bits are clickable too
-    · wheel over a hex glyph nudges that nibble by ±1, clamped 0–F
+    · F4 IA (author-approved 2026-11-06): stable module order
+      source | width·edit | operate | derive | motion | view; an always-visible
+      stage bar is the single home of lane, frames and split; `copy to…` is an
+      explicit menu; `width` replaces `register`; a whole-word hex entry sits
+      beside the edit target; inapplicable controls stay in place (aria-disabled)
+      instead of disappearing
+    · F4 accessibility: every operand nibble is a focusable spinbutton (keyboard
+      editing), the canvas has a live text alternative, there is one polite live
+      region for committed changes, reduced motion is honoured and targets are
+      at least 24 px
     · agent-interop intent is recorded in AGENTS.md: state/render surfaces,
       not screenshot automation
 
@@ -42,17 +45,20 @@
     <p>registers as waveforms — every nibble is a sample</p>
   </div>
   <div class="sizer">
-    <label for="size">register</label>
-    <input id="size" type="range" min="0" max="5" step="1" value="3" aria-label="Register size" />
+    <label for="size">width</label>
+    <input id="size" type="range" min="0" max="5" step="1" value="3" aria-label="Register width in bits" />
     <output id="sizeOut" for="size">64 bits · 16 nibbles</output>
   </div>
+  <button class="op" id="helpBtn" type="button" aria-expanded="false" aria-controls="helpPanel" aria-keyshortcuts="?" title="Keyboard map (?)">?</button>
 </header>
 
 <main>
 <section class="stage" aria-label="waveform stage">
   <canvas id="wave" role="img" aria-label="2-D waveform plot of the register"></canvas>
-  <div class="hint" id="hint">drag a nibble · click a bit · scroll a hex</div>
-  <div class="stage-bar" id="stageBar" hidden></div>
+  <div class="hint" id="hint">drag a nibble · click a bit · Tab to edit</div>
+  <div class="stage-bar" id="stageBar" role="group" aria-label="stage">
+    <button class="op" id="framesBtn" type="button" aria-expanded="false" aria-controls="framesPanel" title="Browse frames A, Z, B across lanes">frames</button>
+  </div>
   <aside class="frames-panel" id="framesPanel" hidden aria-label="Frame navigator">
     <div class="fp-head">
       <h2 class="fp-title">frames</h2>
@@ -103,25 +109,33 @@
 </section>
 
 <section class="controls" aria-label="controls">
-  <div class="group" role="group" aria-label="source data">
-    <label>data</label>
+  <div class="group" role="group" aria-label="source">
+    <label>source</label>
     <button class="op" id="csvBtn" title="Import a CSV or TSV of examples">import csv</button>
     <input type="file" id="csvFile" accept=".csv,.tsv,text/csv,text/plain" hidden />
-    <div class="seg" id="stepSeg" role="group" aria-label="example stepper" hidden>
+    <div class="seg" id="stepSeg" role="group" aria-label="example stepper">
       <button class="op" id="prevEx" title="Previous example (←)" aria-label="◀ previous example">◀</button>
       <button class="op" id="nextEx" title="Next example (→)" aria-label="▶ next example">▶</button>
     </div>
-    <span class="excount" id="exCount" hidden>0 / 0</span>
+    <span class="excount" id="exCount">— / —</span>
     <button class="op" id="sourcesBtn" aria-expanded="false" aria-controls="sourcesPanel" title="Show the six input bindings">sources</button>
-    <div class="seg" id="obsSeg" role="group" aria-label="observation logger" hidden>
+    <div class="seg" id="obsSeg" role="group" aria-label="observation logger">
       <button class="op" id="logObsBtn" title="Log current observation">log</button>
       <button class="op" id="exportObsBtn" title="Export observations to CSV">export</button>
     </div>
-    <span class="excount" id="obsCount" hidden>0 obs</span>
+    <span class="excount" id="obsCount">0 obs</span>
   </div>
 
-  <div class="group" role="group" aria-label="shape presets">
-    <label>shape</label>
+  <div class="group" role="group" aria-label="register edit">
+    <label>width · edit</label>
+    <span class="edit-target" id="editTarget">edit · A</span>
+    <input id="hexEntry" class="hex-entry" type="text" spellcheck="false" autocomplete="off"
+           autocapitalize="characters" aria-label="hex value for the focused register" placeholder="DEADBEEF" />
+  </div>
+
+  <div class="group" role="group" aria-label="operate">
+    <label>operate</label>
+    <span class="sub-label">presets</span>
     <button class="op" data-preset="zero" title="All zeros" aria-label="all zeros 0">0</button>
     <button class="op" data-preset="max" title="All ones (F)" aria-label="all ones F">F</button>
     <button class="op" data-preset="sine">sine</button>
@@ -130,36 +144,36 @@
     <button class="op" data-preset="sawDown">saw ↓</button>
     <button class="op" data-preset="sawUp">saw ↑</button>
     <button class="op" data-preset="square">square</button>
+    <span class="sub-label">unary</span>
+    <select id="amount" aria-label="Rotate / shift amount in bits">
+      <option value="1">1 bit</option>
+      <option value="2">2 bits</option>
+      <option value="4" selected>4 bits</option>
+      <option value="8">8 bits</option>
+    </select>
+    <button class="op accent" data-op="rol">ROL ←</button>
+    <button class="op accent" data-op="ror">ROR →</button>
+    <button class="op accent" data-op="shl">SHL ←</button>
+    <button class="op accent" data-op="shr">SHR →</button>
+    <button class="op accent" data-op="not">NOT</button>
+    <button class="op accent" data-op="fold">FOLD</button>
+    <button class="op accent" data-op="bswap" title="Reverse byte order — endianness swap">BSWAP</button>
   </div>
 
-  <div class="group" id="logicGroup" role="group" aria-label="binary logic">
-    <label>logic</label>
-    <button class="op accent" data-binop="and" hidden>AND</button>
-    <button class="op accent" data-binop="or" hidden>OR</button>
-    <button class="op accent" data-binop="xor" hidden>XOR</button>
-    <button class="op accent" data-binop="add" hidden title="Arithmetic add — carries propagate">ADD</button>
-    <button class="op accent" data-binop="sub" hidden title="Arithmetic subtract — borrows propagate">SUB</button>
-  </div>
-
-  <div class="group" role="group" aria-label="lanes">
-    <label>lane</label>
-    <div class="seg" id="slotSeg" role="radiogroup" aria-label="Lane 1, 2, or 3">
-      <button class="op on" data-slot="A" role="radio" aria-checked="true" tabindex="0" title="Lane 1 (Alt+1)" aria-keyshortcuts="Alt+1">1</button>
-      <button class="op" data-slot="B" role="radio" aria-checked="false" tabindex="-1" title="Lane 2 (Alt+2)" aria-keyshortcuts="Alt+2">2</button>
-      <button class="op" data-slot="C" role="radio" aria-checked="false" tabindex="-1" title="Lane 3 (Alt+3)" aria-keyshortcuts="Alt+3">3</button>
+  <div class="group" id="logicGroup" role="group" aria-label="derive">
+    <label>derive</label>
+    <span class="b-state" id="bState">B off</span>
+    <div class="seg" id="binopSet" role="radiogroup" aria-label="binary operation">
+      <button class="op accent" data-binop="and" role="radio" aria-checked="true" tabindex="0">AND</button>
+      <button class="op accent" data-binop="or" role="radio" aria-checked="false" tabindex="-1">OR</button>
+      <button class="op accent" data-binop="xor" role="radio" aria-checked="false" tabindex="-1">XOR</button>
+      <button class="op accent" data-binop="add" role="radio" aria-checked="false" tabindex="-1" title="Arithmetic add — carries propagate">ADD</button>
+      <button class="op accent" data-binop="sub" role="radio" aria-checked="false" tabindex="-1" title="Arithmetic subtract — borrows propagate">SUB</button>
     </div>
-    <button class="op" id="framesBtn" aria-expanded="false" aria-controls="framesPanel" title="Browse frames A, Z, B across lanes">frames</button>
-    <button class="op" id="splitBtn" aria-pressed="false" aria-keyshortcuts="Alt+S" title="Split main 3D view into two side-by-side visualizers (Alt+S)">split</button>
-    <button class="op" id="copySlotBtn" aria-pressed="false" title="Copy the focused lane into another lane (click, then pick 1, 2, or 3)">copy to…</button>
-  </div>
-
-  <div class="group" role="group" aria-label="view">
-    <label>view</label>
-    <button class="op" id="depthBtn" aria-pressed="false" title="Show the depth field: A at frame 1, Z at 128, B at 256">3D</button>
   </div>
 
   <div class="group" role="group" aria-label="motion">
-    <label>lfo</label>
+    <label>motion</label>
     <button class="op" id="lfoBtn" aria-pressed="false" title="Animate the register you are editing">LFO</button>
     <select id="lfoMode" aria-label="LFO motion">
       <option value="rotcw">rot ↻</option>
@@ -181,25 +195,36 @@
     </select>
   </div>
 
-  <div class="group" role="group" aria-label="bit operations">
-    <label>bit ops</label>
-    <select id="amount" aria-label="Rotate / shift amount in bits">
-      <option value="1">1 bit</option>
-      <option value="2">2 bits</option>
-      <option value="4" selected>4 bits</option>
-      <option value="8">8 bits</option>
-    </select>
-    <button class="op accent" data-op="rol">ROL ←</button>
-    <button class="op accent" data-op="ror">ROR →</button>
-    <button class="op accent" data-op="shl">SHL ←</button>
-    <button class="op accent" data-op="shr">SHR →</button>
-    <button class="op accent" data-op="not">NOT</button>
-    <button class="op accent" data-op="fold">FOLD</button>
-    <button class="op accent" data-op="bswap" title="Reverse byte order — endianness swap">BSWAP</button>
+  <div class="group" role="group" aria-label="view">
+    <label>view</label>
+    <button class="op" id="depthBtn" aria-pressed="false" title="Show the depth field: A at frame 1, Z at 128, B at 256">3D</button>
+    <button class="op" id="copySlotBtn" aria-haspopup="menu" aria-expanded="false" title="Copy the focused lane into another lane">copy to…</button>
   </div>
 
   <span id="liveStatus" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></span>
 </section>
+
+<aside class="help-panel" id="helpPanel" hidden aria-label="Keyboard map">
+  <div class="fp-head">
+    <h2 class="fp-title">keyboard map</h2>
+    <button class="op" id="helpClose" type="button" aria-label="× close keyboard map" title="Close (Esc)">×</button>
+  </div>
+  <div class="help-body">
+    <dl class="help-list">
+      <dt>Tab</dt><dd>enter the strip at the last-focused nibble</dd>
+      <dt>← / →</dt><dd>move between nibbles</dd>
+      <dt>↑ / ↓</dt><dd>nibble value ±1, clamped 0–F</dd>
+      <dt>Home / End</dt><dd>first / last nibble</dd>
+      <dt>0–9, a–f</dt><dd>set the focused nibble to that digit</dd>
+      <dt>Enter</dt><dd>hex entry: commit the whole word</dd>
+      <dt>Esc</dt><dd>cancel hex entry, a menu or a panel</dd>
+      <dt>Alt+1/2/3</dt><dd>select lane 1, 2 or 3</dd>
+      <dt>Alt+S</dt><dd>split the 3-D view</dd>
+      <dt>← / →</dt><dd>step CSV examples when focus is outside the controls and the strip</dd>
+      <dt>?</dt><dd>this keyboard map</dd>
+    </dl>
+  </div>
+</aside>
 </main>
 
 <script type="module" src="/main.js"></script>

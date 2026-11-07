@@ -13,10 +13,11 @@ with 2-D and 3-D views, an LFO, CSV/TSV import and observation export.
 no network, no dependencies — **open it directly in a browser.**
 
 - **`bitwave-v2.html`** — the current build, generated from `src/`. Lanes 1/2/3,
-  the Pro-Q4-style frame navigator, per-frame visibility eyes, the frame focus
-  lens (A/B/Z1, C/D/Z2, E/F/Z3), the six-input **source table** (CSV columns or
-  frame outputs, with driven inputs locked), wheel-to-adjust hex, copy-to-lane,
-  CSV stepper, observation CSV export, LFO, split 3-D.
+  the always-visible stage bar (lane, frames, split), the Pro-Q4-style frame navigator,
+  per-frame visibility eyes, the frame focus lens (A/B/Z1, C/D/Z2, E/F/Z3), the six-input
+  **source table** (CSV columns or frame outputs, with driven inputs locked), wheel-to-adjust
+  hex, an explicit copy-to-lane menu, a whole-word hex entry, CSV stepper, observation CSV
+  export, LFO, split 3-D, and a keyboard-editable strip (every nibble is a spinbutton).
 - **`index.html`** — untouched original reference build.
 - `index.html.bak` — an older snapshot, kept only as history.
 
@@ -38,7 +39,7 @@ the artifact stays readable.
 
 ```bash
 npm test               # DOM-free core + state + bindings: 61 tests, zero dependencies
-npm run check:browser  # 40 artifact checks in headless Chromium (41 with --shots or --compare)
+npm run check:browser  # 46 artifact checks in headless Chromium (47 with --shots or --compare)
 npm run capture        # state screenshots → .tmp-captures/
 ```
 
@@ -51,9 +52,11 @@ user opens it — and asserts console cleanliness, layout at 360/420/720/1440, t
 DESIGN §5 strip geometry, the 2-D/3-D states, the frame navigator and focus lens,
 the 3-D truth table, CSV import, the source table, the §11 operation vectors, the
 agent surface, the F4 reflow (200 %/400 %), keyboard editing, roles/live status,
-reduced motion, targets and an axe-core audit (dev-only; zero critical/serious).
+reduced motion, targets, the IA pass (stage bar, module order, copy menu, hex entry,
+keyboard map) and an axe-core audit (dev-only; zero critical/serious).
 **Keyboard editing:** Tab into the strip, then ↑/↓ adjust a nibble, ←/→ move
-between nibbles, Home/End jump, 0–F set the digit; Esc cancels an armed mode.
+between nibbles, Home/End jump, 0–F set the digit; `?` opens the keyboard map and
+Esc closes a menu or panel.
 
 `--compare` is the rebuild gate: it loads a reference artifact and the new one in
 the same Chromium and asserts identical screenshots across six states.
@@ -101,7 +104,7 @@ as a single-file bundle under `backups/` (ignored by Git), so it can be restored
 or cloned without a remote:
 
 ```bash
-git clone backups/bitwave-v2-2026-11-06-source-matrix.bundle bitwave-restore
+git clone backups/bitwave-v2-2026-11-06-a11y.bundle bitwave-restore
 ```
 
 Tags: `v2-checkpoint-2026-11-06` (frame navigator, eyes, wheel-step),
@@ -111,7 +114,10 @@ Tags: `v2-checkpoint-2026-11-06` (frame navigator, eyes, wheel-step),
 `v2-state-2026-11-06` (DOM-free state tree + transaction store),
 `v2-transaction-2026-11-06` (actions, core `evaluateAll` in the transaction),
 `v2-render-2026-11-06` (render layer split),
-`v2-ui-2026-11-06` (UI feature modules) and
-`v2-source-matrix-2026-11-06` (six-row source table, frame routing, driven inputs).
+`v2-ui-2026-11-06` (UI feature modules),
+`v2-source-matrix-2026-11-06` (six-row source table, frame routing, driven inputs) and
+`v2-a11y-2026-11-06` (F4 accessibility floor + IA pass: reflow/zoom, keyboard editing,
+live status, reduced motion, targets, axe gate, stage bar, module order, copy menu,
+hex entry, keyboard map).
 
 For off-machine safety, add a remote and push the `main` branch and tags.

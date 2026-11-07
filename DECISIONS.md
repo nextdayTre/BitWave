@@ -4,7 +4,7 @@ Implementation decisions taken to keep the plan moving. Each one is reversible
 while the codebase is small; the ones the plan marked for the author are noted.
 Format is deliberately short: decision, basis, how to reverse it.
 
-**Status:** 2026-11-06 · applies to the `src/core` extraction, the F0 baseline, the browser-verification harness, the `window.BitWave` seam, the Vite build (D19), the F2 state/render/UI spine (D20–D23), the F3 source table (D24–D25) and the F4 accessibility floor (D26–D31).
+**Status:** 2026-11-06 · applies to the `src/core` extraction, the F0 baseline, the browser-verification harness, the `window.BitWave` seam, the Vite build (D19), the F2 state/render/UI spine (D20–D23), the F3 source table (D24–D25) and the F4 accessibility floor + IA pass (D26–D32).
 
 | # | Decision | Basis | Reverse by |
 |---|---|---|---|
@@ -38,14 +38,14 @@ Format is deliberately short: decision, basis, how to reverse it.
 | D28 | **Reduced motion caps, it does not remove.** Under `prefers-reduced-motion: reduce` commits are instant (no easing), LFO rate is capped at 4/s, transitions are removed; LFO still starts off and 1:1 drag is unchanged. The preference is read live from `matchMedia`. | DESIGN §7 amendment; audit §2.8. | Remove the `main.js` reduce branch + the media block; the reduced-motion check fails. |
 | D29 | **One committed-change live region.** `#liveStatus` (`role="status"`, polite, atomic) is driven by the transaction store, debounced ~150 ms, one sentence `lane N · frame = hex · Z# popcount P`; quiet during drag and LFO ticks, immediate on pointer-up and LFO stop. | Audit §2.4: naïve `aria-live` floods at pointermove/LFO rates. | Remove the module/CSS; the live-status check fails. |
 | D30 | **The a11y gate uses axe-core as a dev dependency only.** `axe-core` 4.14 is installed for `tools/browser-check.mjs` (injected via CDP; never bundled into the artifact) and must report **zero critical/serious** in 2-D, A·B 3-D, source-table and frame-navigator states. `color-contrast` is disabled inside axe by author decision D10/Q8; the measured contrast trade-off stays in PLAN §4.3. Label-in-Name (SC 2.5.3) is enabled and drove visible-text-consistent names for glyph buttons and the frame navigator. | PLAN §6.5 (`axe-core + manual`) reconciled with D10. | Remove the dev dependency and the axe check; the gate reverts to the role/name/keyboard assertions. |
-| D31 | **Landmarks and names are explicit.** One `<main>` wraps stage/strip/meta/controls; each control group is a named `role="group"`; the canvas is `role="img"` with a commit-updated text alternative; the lane/battery sets expose radio semantics; glyph buttons carry names that include their visible text; the truth table keeps its current visual markup (table semantics deferred to the IA slice). | Audit §2.1/§2.3; axe clean. | Unwind the markup/ARIA; the a11y checks fail. |
+| D31 | **Landmarks and names are explicit.** One `<main>` wraps stage/strip/meta/controls; each control group is a named `role="group"`; the canvas is `role="img"` with a commit-updated text alternative; the lane sets and the binop set expose radio semantics; glyph buttons carry names that include their visible text; the truth table is a real ARIA table (`role="table"`/`row`/`columnheader`/`cell`, with `display: contents` rows keeping the four-column grid). | Audit §2.1/§2.3; axe clean. | Unwind the markup/ARIA; the a11y checks fail. |
+| D32 | **The F4 IA layout ships as approved (author sign-off 2026-11-06).** Controls render six named modules in order `source | register edit | operate | derive | motion | view`; the **always-visible** stage bar is the single home of lane + frames + split (frames navigator stays left-docked, source table right-docked); `copy to…` is an explicit focus-in menu; `width` replaces `register`; a whole-word hex entry sits beside the read-only edit target; inapplicable controls are reserved-space `aria-disabled` placeholders; `?` opens the keyboard map. The mockup's right-docked frames panel was flipped back to the shipped left dock so both asides can be open at once. | Author answers to the mockup review: "approve, but keep frames navigator left-docked" and "stage bar owns lane + split + frames". | Revert the shell/DOM changes; the IA browser checks fail. |
 
 ## Open decisions still with the author
 
-- **IA layout (F4): mockup-first.** `spike/f4-ia.html` shows the proposed module order
-  (`source | width·edit | operate | derive | motion | view`), the always-visible stage bar,
-  the explicit `copy to…` menu and the `width`/hex-entry register row. The app layout is not
-  changed until the author signs off on that mockup.
+- **IA layout (F4): resolved 2026-11-06 (D32).** The author approved `spike/f4-ia.html` with
+  the frame navigator kept left-docked and the stage bar owning lane + split + frames; the
+  implementation is in `src/index.html` + `src/ui/stage-bar.js` + `src/ui/copy-menu.js`.
 - **Contrast trade-off** (PLAN §9 Q8): closed by D10 — keep the palette; axe contrast is disabled (D30).
 - **Timeline path** (PLAN §9 Q9): foundation-first (current) vs routing-in-the-old-file first. If the latter, `src/core/routing.ts` ports cleanly but the old `index.html` work would be a second implementation.
 - Whether to keep `index.html.bak` until F5; it is tracked in git so deleting it is recoverable. **Author decision 2026-11-06: keep until F5.**
