@@ -1,0 +1,1850 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BitWave — F4 IA layout mockup</title>
+<!--
+  BitWave · F4 (accessibility + information architecture) — static layout mockup
+  =============================================================================
+  WHAT THIS IS
+  - A self-contained, offline review artifact. It draws the proposed F4 shell
+    using the real DESIGN.md / src/styles/app.css token values, at the app's
+    real breakpoint behaviour. Open it over file://; nothing is fetched.
+  - The instrument below is a mock, not the app: no state, no keys, no drag.
+    The only script is a tiny renderer for the 2-D SVG (curve, guides, legend),
+    which is needed to keep the curve's control points over the strip's nibble
+    columns at every width (the DESIGN §5/§10 0 px alignment contract).
+
+  WHAT IT IS NOT
+  - Not the F4 implementation. No history, no commands, no live regions, no
+    keyboard behaviour; the annotations describe those, they do not run.
+  - Not a new visual system: tokens are copied from src/styles/app.css :root.
+    Every translucent value used is already listed in DESIGN.md §3.
+  - No external URLs, fonts, images, CDNs or modules.
+
+  ANNOTATION LAYER
+  - Everything dashed, and every numbered circle (1)–(12), is review markup.
+    It is deliberately outside the instrument aesthetic and is not UI.
+  - The <section class="notes"> below the instrument holds the legend and two
+    detail specimens (stage bar in split 3-D; reserved-space disabled states).
+
+  SOURCES
+  - DESIGN.md §2–§10 (stance, tokens, type, space, motion, components, responsive,
+    "do not break"); PLAN.md §5 Feature C; docs/analysis/ux-a11y.md §4–§5;
+    src/index.html + src/styles/app.css (current shipped shell, the base for the
+    IA changes); spike/routing-matrix.html (self-containment conventions).
+  - Adapted to the shipped shell (see .spec-note): the retired A|B edit-target
+    segmented pair and the toggleB button are not drawn; the edit target is the
+    frame navigator's focus lens (D16). `demo` is F5 scope and is omitted.
+-->
+<style>
+  /* ═══════════════════════════════ tokens ═══════════════════════════════
+     Copied exactly from src/styles/app.css :root. No new hex colours.      */
+  :root {
+    color-scheme: dark;
+    --bg:        #08090c;
+    --panel:     #0d1015;
+    --panel-hi:  #12161d;
+    --line:      #1b212b;
+    --line-soft: #141920;
+    --text:      #e8edf5;
+    --dim:       #67728a;
+    --dimmer:    #3f4859;
+    --accent:    #34d399;
+    --accent-hi: #5eead4;
+    --accent-low:#22c55e;
+    --panel-hover:#181d26;
+    --line-hi:   #2a3341;
+    --inf:       #f5b544;
+    --stage-glow:#0b0e13;
+    --handle-hi: #eafaf3;
+    --pad:       40px;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+    --sans: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+
+  /* ═══════════════════════════════ base ═════════════════════════════════ */
+  * { box-sizing: border-box; }
+  html { color-scheme: dark; }
+  html, body { margin: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* The instrument keeps the app's grid, but the stage has a fixed height so
+     the review page can carry its annotation layer underneath. */
+  .app {
+    display: grid;
+    grid-template-rows: auto auto auto auto auto;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  /* ═════════════════════════════ review header (annotation) ════════════ */
+  .review-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 12px 20px;
+    padding: 14px var(--pad) 12px;
+    border-bottom: 1px dashed var(--line-hi);
+  }
+  .review-head > div { min-width: 0; }
+  .eyebrow {
+    margin: 0 0 5px;
+    font: 500 10px/1.2 var(--sans);
+    letter-spacing: .09em;
+    text-transform: uppercase;
+    color: var(--dim);
+  }
+  .review-sub {
+    margin: 0;
+    max-width: 92ch;
+    font: 11.5px/1.45 var(--sans);
+    color: var(--dim);
+  }
+  .vp-badge {
+    flex: 0 0 auto;
+    padding: 6px 10px;
+    border: 1px dashed var(--line-hi);
+    border-radius: 99px;
+    font: 500 10px/1 var(--mono);
+    letter-spacing: .05em;
+    color: var(--dim);
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+  }
+  .vp-badge::after { content: "1440 px viewport"; }
+  @media (max-width: 720px) { .vp-badge::after { content: "720 px viewport"; } }
+  @media (max-width: 420px) { .vp-badge::after { content: "360 px viewport"; } }
+
+  /* ═══════════════════════════════ header ═══════════════════════════════
+     Same layout as the shipped shell; only the label changed (register→width). */
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 24px;
+    padding: 16px var(--pad) 14px;
+    border-bottom: 1px solid var(--line-soft);
+  }
+  .title { display: flex; align-items: baseline; gap: 12px; min-width: 0; }
+  h1 {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+  }
+  .title p {
+    margin: 0;
+    font-size: 12px;
+    color: var(--dim);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .sizer { display: flex; align-items: center; gap: 14px; flex: 0 0 auto; }
+  .sizer label {
+    font-size: 10.5px;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--dimmer);
+  }
+  input[type="range"] {
+    -webkit-appearance: none;
+    appearance: none;
+    width: clamp(110px, 16vw, 190px);
+    height: 26px;              /* F4: 24 px thumb needs headroom (was 22) */
+    background: transparent;
+    cursor: pointer;
+  }
+  input[type="range"]::-webkit-slider-runnable-track {
+    height: 2px;
+    background: var(--line);
+    border-radius: 2px;
+  }
+  input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 24px;               /* F4: 24 px target (was 12) */
+    height: 24px;
+    margin-top: -11px;
+    border-radius: 50%;
+    background: var(--accent);
+    border: 2px solid var(--bg);
+    box-shadow: 0 0 0 1px var(--accent);
+  }
+  input[type="range"]::-moz-range-track {
+    height: 2px;
+    background: var(--line);
+    border-radius: 2px;
+  }
+  input[type="range"]::-moz-range-thumb {
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    background: var(--accent);
+    border: 2px solid var(--bg);
+    box-shadow: 0 0 0 1px var(--accent);
+  }
+  input[type="range"]:focus-visible { outline: none; }
+  input[type="range"]:focus-visible::-webkit-slider-thumb { box-shadow: 0 0 0 4px rgba(52,211,153,0.25); }
+  #sizeOut {
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--text);
+    min-width: 132px;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* ═══════════════════════════════ stage ════════════════════════════════ */
+  .stage {
+    position: relative;
+    height: 400px;
+    background: radial-gradient(120% 90% at 50% 45%, var(--stage-glow) 0%, var(--bg) 70%);
+  }
+  .chart {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    display: block;
+  }
+  .chart text {
+    font-family: var(--mono);
+    font-size: 10px;
+    font-variant-numeric: tabular-nums;
+  }
+  .chart .ruler { fill: var(--dimmer); text-anchor: end; dominant-baseline: middle; }
+  .chart .legend-label { fill: var(--dimmer); dominant-baseline: middle; }
+  .chart .inf-label { fill: rgba(245,181,68,0.85); font-size: 14px; font-weight: 600; }
+
+  /* ── always-visible stage bar ─────────────────────────────────────────── */
+  .stage-bar {
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 6px;
+    z-index: 2;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0 var(--pad);
+    pointer-events: none;
+    user-select: none;
+  }
+  .stage-bar.is-split {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    padding: 0;
+  }
+  .pane-head {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    min-width: 0;
+    padding: 0 12px;
+    pointer-events: auto;
+  }
+  .focus-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--dimmer);
+    flex: 0 0 auto;
+  }
+  .pane-head.focused .focus-dot {
+    background: var(--accent);
+    box-shadow: 0 0 0 2px rgba(52,211,153,0.22);
+  }
+  .op.mini {
+    /* F4: 24 px minimum target (was ≈22.3×20.2). */
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 24px;
+    min-height: 24px;
+    font-size: 10.5px;
+    padding: 2px 7px;
+    line-height: 1.35;
+  }
+  .seg.mini .op {
+    min-width: 24px;
+    min-height: 24px;
+    font-size: 10.5px;
+    padding: 2px 7px;
+    line-height: 1.35;
+  }
+  .stage-expr {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    color: var(--dim);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 280px;
+    font-variant-numeric: tabular-nums;
+  }
+  .pane-head.focused .stage-expr { color: var(--text); }
+
+  /* ── frame navigator (transient aside, docked right in this proposal) ─── */
+  .frames-panel {
+    position: absolute;
+    z-index: 3;
+    top: 8px;
+    right: var(--pad);
+    width: min(330px, calc(100% - 2 * var(--pad)));
+    max-height: calc(100% - 16px);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 5px;
+  }
+  .fp-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 8px 10px;
+    border-bottom: 1px solid var(--line-soft);
+  }
+  .fp-title {
+    position: relative;
+    margin: 0;
+    font-size: 10px;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--dim);
+  }
+  .fp-body { overflow-y: auto; padding: 4px 0 6px; }
+  .lane-btn {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+    width: 100%;
+    padding: 8px 10px;
+    border: 0;
+    border-left: 2px solid transparent;
+    background: transparent;
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 11.5px;
+    font-weight: 600;
+    text-align: left;
+    cursor: pointer;
+  }
+  .lane-btn:hover { background: var(--panel-hover); }
+  .lane-btn[aria-expanded="true"] {
+    border-left-color: var(--accent);
+    background: rgba(52, 211, 153, 0.06);
+  }
+  .lane-num {
+    flex: 0 0 auto;
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--dimmer);
+    letter-spacing: 0.05em;
+  }
+  .lane-meta {
+    min-width: 0;
+    margin-left: auto;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-family: var(--mono);
+    font-size: 9.5px;
+    color: var(--dim);
+  }
+  .frame-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 32px;
+    align-items: center;
+    padding-left: 18px;
+    border-left: 2px solid transparent;
+  }
+  .frame-row:hover { background: var(--panel-hover); }
+  .frame-row.is-active {
+    border-left-color: var(--accent);
+    background: rgba(52, 211, 153, 0.07);
+  }
+  .frame-row.is-hidden .frame-btn { opacity: 0.55; }
+  .frame-btn {
+    display: grid;
+    grid-template-columns: 76px minmax(0, 1fr) 88px;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    padding: 5px 0;
+    border: 0;
+    background: transparent;
+    color: var(--dim);
+    text-align: left;
+    cursor: pointer;
+  }
+  .frame-row.is-active .frame-btn { color: var(--text); }
+  .frame-label { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
+  .frame-swatch { width: 12px; height: 2px; flex: 0 0 auto; background: var(--accent); opacity: 0.75; }
+  .frame-row[data-frame="b"] .frame-swatch {
+    background: repeating-linear-gradient(90deg, var(--accent) 0 4px, transparent 4px 7px);
+  }
+  .frame-row[data-frame="z"] .frame-swatch { height: 3px; opacity: 1; }
+  .frame-glyph { font-family: var(--mono); font-size: 11.5px; color: var(--text); }
+  .frame-sub {
+    font-family: var(--sans);
+    font-size: 9px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--dimmer);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .frame-preview { display: block; width: 100%; height: 24px; }
+  .frame-preview polyline {
+    fill: none;
+    stroke: var(--accent);
+    stroke-width: 1.2;
+    stroke-opacity: 0.8;
+    vector-effect: non-scaling-stroke;
+  }
+  .frame-preview.z polyline { stroke-width: 1.7; stroke-opacity: 1; }
+  .frame-preview.b polyline { stroke-dasharray: 4 3; }
+  .frame-hex {
+    font-family: var(--mono);
+    font-size: 9px;
+    color: var(--dim);
+    text-align: right;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .frame-row.is-active .frame-hex { color: var(--text); }
+  .eye-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    margin-right: 2px;
+    padding: 0;
+    border: 0;
+    border-radius: 5px;
+    background: transparent;
+    color: var(--dim);
+    cursor: pointer;
+  }
+  .eye-btn:hover { background: var(--panel-hover); color: var(--text); }
+  .eye-btn svg {
+    width: 16px;
+    height: 16px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.3;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+  .fp-foot {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 7px 10px;
+    border-top: 1px solid var(--line-soft);
+    color: var(--dim);
+    font-size: 10px;
+  }
+  .lane-btn:focus-visible,
+  .frame-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+  /* ═══════════════════════════════ strip ════════════════════════════════ */
+  .strip {
+    position: relative;
+    border-top: 1px solid var(--line-soft);
+    background: var(--panel);
+    padding: 12px 0 10px;
+    overflow-x: auto;
+    overflow-y: hidden;
+  }
+  .strip::before {
+    content: attr(data-edit);
+    position: absolute;
+    left: 5px;
+    top: 13px;
+    font-family: var(--mono);
+    font-size: 9px;
+    color: var(--dimmer);
+    letter-spacing: 0.08em;
+    pointer-events: none;
+  }
+  .nibs {
+    display: flex;
+    margin: 0 var(--pad);
+    font-family: var(--mono);
+    font-size: 13px;
+    user-select: none;
+    -webkit-user-select: none;
+    /* DESIGN §5 gutter: gap = clamp((pw/n)*0.16, 1.5, 12).  The SVG reads the
+       same formula, so the curve's control points land on these centres. */
+    gap: clamp(1.5px, calc((100vw - 2 * var(--pad)) / 16 * 0.16), 12px);
+  }
+  .nib {
+    position: relative;
+    flex: 1 1 0;
+    min-width: 0;
+    padding: 2px 0 3px;
+    border-radius: 3px;
+  }
+  .nib.hot { background: rgba(52,211,153,0.07); }
+  /* F4: the focused nibble is the spinbutton; the ring wraps the whole cell
+     so the pointer/AT target is the nibble, not a 10 px bit glyph. */
+  .nib.spin {
+    background: rgba(52, 211, 153, 0.07);
+    outline: 2px solid rgba(52, 211, 153, 0.55);
+    outline-offset: -2px;
+  }
+  .bits {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    width: min(100%, 5.2ch);
+    margin-inline: auto;
+  }
+  .bit {
+    text-align: center;
+    font-size: 0.86em;
+    line-height: 1.55;
+    color: var(--dimmer);
+    border-radius: 2px;
+  }
+  .bit.on { color: var(--accent); }
+  .bit.mid { box-shadow: inset 0 -2px 0 rgba(245,181,68,0.55); }
+  .hex {
+    text-align: center;
+    font-size: 0.76em;
+    line-height: 1.65;
+    color: var(--dim);
+    font-variant-numeric: tabular-nums;
+  }
+  .dec {
+    text-align: center;
+    font-size: 0.68em;
+    line-height: 1.45;
+    color: var(--dimmer);
+    font-variant-numeric: tabular-nums;
+  }
+  .wt {
+    text-align: center;
+    font-size: 0.62em;
+    line-height: 1.5;
+    color: var(--dimmer);
+    opacity: 0.75;
+    white-space: nowrap;
+    letter-spacing: -0.03em;
+    font-variant-numeric: tabular-nums;
+  }
+  /* Compact strip: pw/n < 46. At 16 nibbles that is true at 720 px, so this
+     mockup shows hex-only there — the spinbutton (and its focus ring) stays. */
+  @media (max-width: 820px) {
+    .strip .bits { display: none; }
+    .strip .hex { font-size: 0.86em; color: var(--text); line-height: 1.95; }
+    .strip .dec { font-size: 0.6em; line-height: 1.35; }
+    .strip .wt { font-size: 0.66em; display: none; }
+    /* DESIGN §8: in compact mode the weight ladder thins to every 8th
+       nibble plus the LSB, so consecutive marks stay far apart. */
+    .strip .nib:nth-child(1) .wt,
+    .strip .nib:nth-child(9) .wt,
+    .strip .nib:nth-child(16) .wt { display: block; }
+  }
+
+  /* ═══════════════════════════════ meta ═════════════════════════════════ */
+  .meta {
+    display: flex;
+    align-items: center;
+    gap: 10px 22px;
+    flex-wrap: wrap;
+    padding: 9px var(--pad);
+    border-top: 1px solid var(--line-soft);
+    background: var(--panel);
+    font-family: var(--mono);
+    font-size: 11.5px;
+  }
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 9px;
+    border: 1px solid var(--line);
+    border-radius: 99px;
+    color: var(--accent);
+    font-size: 10.5px;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    white-space: nowrap;
+  }
+  .badge.flat { color: var(--dim); }
+  .kv { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+  .kv > span {
+    font-family: var(--sans);
+    font-size: 10px;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--dimmer);
+  }
+  .kv code {
+    font-family: var(--mono);
+    color: var(--text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+  }
+  .truth {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    line-height: 1.35;
+    padding: 3px 9px 4px;
+    border: 1px solid var(--line);
+    border-radius: 5px;
+    background: var(--panel-hi);
+  }
+  .truth-h {
+    font-size: 9.5px;
+    letter-spacing: 0.06em;
+    color: var(--dim);
+    margin-bottom: 2px;
+    white-space: nowrap;
+  }
+  .truth-grid {
+    display: grid;
+    grid-template-columns: repeat(4, auto);
+    gap: 0 11px;
+    align-items: baseline;
+  }
+  .truth-grid > span { text-align: center; font-variant-numeric: tabular-nums; }
+  .truth-grid > .th {
+    font-size: 9px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--dimmer);
+  }
+  .truth-grid > .z { color: var(--dim); }
+  .truth-grid > .z.on { color: var(--accent); }
+  .truth-grid > .ct {
+    color: var(--text);
+    border-left: 1px solid var(--line);
+    padding-left: 9px;
+  }
+
+  /* ═══════════════════════════════ controls ═════════════════════════════ */
+  .controls {
+    display: flex;
+    align-items: center;
+    gap: 10px 26px;
+    flex-wrap: wrap;
+    padding: 11px var(--pad) 14px;
+    border-top: 1px solid var(--line);
+    background: var(--panel);
+  }
+  .group { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+  .group > label,
+  .glabel {
+    position: relative;
+    font-size: 10px;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--dimmer);
+    margin-right: 1px;
+  }
+  .sublabel {
+    font-family: var(--sans);
+    font-size: 9px;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--dimmer);
+    margin-right: 1px;
+  }
+  .set { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; min-width: 0; }
+  button.op {
+    font-family: var(--mono);
+    font-size: 11.5px;
+    color: var(--text);
+    background: var(--panel-hi);
+    border: 1px solid var(--line);
+    border-radius: 5px;
+    padding: 5px 10px;
+    cursor: pointer;
+    transition: background-color 110ms linear, border-color 110ms linear, color 110ms linear;
+  }
+  button.op:hover { background: var(--panel-hover); border-color: var(--line-hi); }
+  button.op:focus-visible { outline: none; box-shadow: 0 0 0 2px rgba(52,211,153,0.35); }
+  button.op.accent { color: var(--accent); border-color: rgba(52,211,153,0.28); }
+  button.op.accent:hover { border-color: rgba(52,211,153,0.5); }
+  button.op.on,
+  button.op[aria-pressed="true"],
+  button.op[aria-checked="true"] {
+    color: var(--accent);
+    border-color: rgba(52,211,153,0.5);
+    background: rgba(52,211,153,0.10);
+  }
+  .seg { display: flex; }
+  .seg .op { border-radius: 0; padding: 5px 9px; }
+  .seg .op:first-child { border-radius: 5px 0 0 5px; }
+  .seg .op:last-child { border-radius: 0 5px 5px 0; }
+  .seg .op + .op { margin-left: -1px; }
+  .seg .op.on,
+  .seg .op[aria-pressed="true"],
+  .seg .op:hover,
+  .seg .op:focus-visible { position: relative; z-index: 1; }
+  .col-tag {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--dimmer);
+    letter-spacing: 0.05em;
+  }
+  select {
+    font-family: var(--mono);
+    font-size: 11.5px;
+    color: var(--text);
+    background: var(--panel-hi);
+    border: 1px solid var(--line);
+    border-radius: 5px;
+    padding: 5px 6px;
+    cursor: pointer;
+  }
+  select:focus-visible { outline: none; box-shadow: 0 0 0 2px rgba(52,211,153,0.35); }
+  .excount {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--dim);
+    font-variant-numeric: tabular-nums;
+    min-width: 54px;
+    text-align: center;
+  }
+
+  /* ── F4 additions in the controls row ────────────────────────────────── */
+  .hex-input {
+    font-family: var(--mono);
+    font-size: 11.5px;
+    color: var(--text);
+    background: var(--panel-hi);
+    border: 1px solid var(--line);
+    border-radius: 5px;
+    padding: 5px 8px;
+    width: 20ch;
+    min-height: 26px;
+    letter-spacing: 0.02em;
+    font-variant-numeric: tabular-nums;
+  }
+  .hex-input:focus-visible { outline: none; box-shadow: 0 0 0 2px rgba(52,211,153,0.35); }
+  .edit-state { align-items: center; }
+  .edit-state code { color: var(--text); }
+  .b-state {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 6px;
+    padding: 2px 8px;
+    border: 1px solid var(--line);
+    border-radius: 99px;
+    font-family: var(--mono);
+    font-size: 10.5px;
+    color: var(--dim);
+    white-space: nowrap;
+  }
+  .b-state .b-key { color: var(--accent); }
+  .b-state.is-off .b-key { color: var(--dimmer); }
+  .status-line {
+    flex: 1 0 100%;
+    margin: 0;
+    font-family: var(--sans);
+    font-size: 10.5px;
+    line-height: 1.4;
+    color: var(--dim);
+  }
+  .status-tag {
+    font-family: var(--sans);
+    font-size: 9px;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--dimmer);
+    margin-right: 6px;
+  }
+  .group.view { position: relative; }
+  /* Shown expanded in flow for review legibility; a real menu overlays. */
+  .copy-menu {
+    position: relative;
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 3px;
+    padding: 5px 7px;
+    background: var(--panel-hi);
+    border: 1px solid var(--line);
+    border-radius: 5px;
+  }
+  .copy-head {
+    margin: 0 6px 0 0;
+    font-family: var(--sans);
+    font-size: 9px;
+    font-weight: 500;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--dimmer);
+    white-space: nowrap;
+  }
+  .copy-item {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    min-width: 26px;
+    min-height: 26px;
+    padding: 4px 8px;
+    text-align: center;
+  }
+  .copy-note {
+    font-family: var(--sans);
+    font-size: 9px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--dimmer);
+  }
+  .copy-item.is-focus {
+    color: var(--accent);
+    background: rgba(52,211,153,0.10);
+    border-color: rgba(52,211,153,0.5);
+    box-shadow: 0 0 0 2px rgba(52,211,153,0.35);
+  }
+  [aria-disabled="true"] { opacity: 0.45; cursor: default; }
+
+  /* ═════════════════════ annotation markers (review layer) ══════════════ */
+  .anno { position: relative; }
+  .anno.inline { display: inline-flex; align-items: center; }
+  .mk {
+    position: absolute;
+    z-index: 5;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 15px;
+    height: 15px;
+    border: 1px dashed var(--line-hi);
+    border-radius: 50%;
+    background: var(--bg);
+    color: var(--dim);
+    font: 400 9px/1 var(--mono);
+    pointer-events: none;
+  }
+  .glabel > .mk { left: -15px; top: -5px; }
+  .pane-head > .mk { left: -18px; top: 3px; }
+  .fp-title > .mk { right: -13px; top: -9px; }
+  .nib > .mk { right: 0; top: -8px; }
+  .anno.inline > .mk { right: -8px; top: -8px; }
+  .truth > .mk { right: -9px; top: -9px; }
+  .copy-menu > .mk { right: -8px; top: -8px; }
+
+  /* ═══════════════════════════ annotation section ══════════════════════ */
+  .notes {
+    margin: 0;
+    padding: 22px var(--pad) 40px;
+    border-top: 1px dashed var(--line-hi);
+  }
+  .notes-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 6px 20px;
+  }
+  .notes h2 {
+    margin: 0;
+    font: 500 10px/1.2 var(--sans);
+    letter-spacing: .09em;
+    text-transform: uppercase;
+    color: var(--dim);
+  }
+  .notes-sub {
+    margin: 0;
+    max-width: 72ch;
+    font: 11px/1.45 var(--sans);
+    color: var(--dimmer);
+  }
+  .notes-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 14px 30px;
+    margin-top: 16px;
+  }
+  .note {
+    display: grid;
+    grid-template-columns: 21px minmax(0, 1fr);
+    gap: 10px;
+    align-items: start;
+    padding-top: 10px;
+    border-top: 1px dashed var(--line-soft);
+  }
+  .notes .note > .mk {
+    position: static;
+    width: 19px;
+    height: 19px;
+    font-size: 10px;
+  }
+  .note h3 {
+    margin: 0 0 3px;
+    font: 600 11.5px/1.3 var(--sans);
+    color: var(--text);
+  }
+  .note p {
+    margin: 0;
+    font: 11px/1.5 var(--sans);
+    color: var(--dim);
+  }
+  .note code {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    color: var(--text);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .details {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 16px;
+    margin-top: 22px;
+  }
+  .detail {
+    padding: 12px 14px 13px;
+    border: 1px dashed var(--line-hi);
+    border-radius: 5px;
+  }
+  .detail-cap {
+    margin: 0 0 10px;
+    font: 500 9px/1.2 var(--sans);
+    letter-spacing: .09em;
+    text-transform: uppercase;
+    color: var(--dimmer);
+  }
+  .mini-bar {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    border: 1px solid var(--line);
+    border-radius: 5px;
+    background: var(--panel);
+    padding: 6px 0;
+  }
+  .mini-bar .pane-head { gap: 5px; padding: 0 6px; }
+  .mini-bar .stage-expr { max-width: none; font-size: 9.5px; display: inline; }
+  .mini-bar .focus-dot { display: inline-block; }
+  .mini-row {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin: 0 0 9px;
+  }
+  .mini-row:last-of-type { margin-bottom: 0; }
+  .mini-label {
+    flex: 0 0 50px;
+    font: 500 9px/1.2 var(--sans);
+    letter-spacing: .09em;
+    text-transform: uppercase;
+    color: var(--dimmer);
+  }
+  .detail-note {
+    margin: 10px 0 0;
+    font: 10.5px/1.5 var(--sans);
+    color: var(--dim);
+  }
+  .spec-foot {
+    margin: 26px 0 0;
+    padding-top: 14px;
+    border-top: 1px dashed var(--line-hi);
+    font: 10.5px/1.6 var(--sans);
+    color: var(--dimmer);
+  }
+  .spec-foot b { font-weight: 600; color: var(--dim); }
+  .spec-note {
+    margin: 14px 0 0;
+    padding: 10px 12px;
+    border: 1px dashed var(--line-hi);
+    border-radius: 5px;
+    font: 10.5px/1.55 var(--sans);
+    color: var(--dim);
+  }
+  .spec-note b { font-weight: 600; color: var(--text); }
+
+  /* ═════════════════════════════ responsive ═════════════════════════════ */
+  @media (max-width: 720px) {
+    :root { --pad: 16px; }
+    header { flex-wrap: wrap; gap: 12px; padding-top: 12px; padding-bottom: 12px; }
+    .title p { display: none; }
+    .sizer { width: 100%; }
+    .sizer input[type="range"] { flex: 1 1 auto; width: auto; }
+    #sizeOut { min-width: 0; }
+    .controls { gap: 8px 16px; }
+    .strip::before { top: 8px; }
+    .stage-expr { display: none; }
+    .pane-head { gap: 5px; padding: 0 4px; }
+    .stage-bar { justify-content: flex-start; }
+    .stage { height: 360px; }
+    .notes-grid { grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
+    .details { grid-template-columns: minmax(0, 1fr); }
+    .mini-bar { grid-template-columns: minmax(0, 1fr); }
+    .mini-bar .pane-head + .pane-head { border-top: 1px solid var(--line-soft); margin-top: 4px; padding-top: 4px; }
+  }
+  @media (max-width: 420px) {
+    .stage { height: 300px; }
+    .frames-panel { display: none; }        /* transient overlay; omitted so the plot reads */
+    .notes-grid { grid-template-columns: minmax(0, 1fr); }
+    .review-head { padding-top: 12px; }
+    .hex-input { width: 100%; max-width: 20ch; }
+    #sizeOut { font-size: 11px; white-space: nowrap; }
+  }
+</style>
+</head>
+<body>
+
+<!-- ═════════════════════ review header — annotation, not the app ═════════ -->
+<div class="review-head">
+  <div>
+    <p class="eyebrow">BitWave · F4 · accessibility + information architecture</p>
+    <p class="review-sub">
+      Static layout mockup. The instrument below is drawn with the real DESIGN/app.css
+      tokens and breakpoints — it is not interactive. Dashed outlines and numbered
+      circles are annotations, not UI. Legend and specimens follow the instrument.
+    </p>
+  </div>
+  <span class="vp-badge" aria-hidden="true"></span>
+</div>
+
+<!-- ═══════════════════════════ instrument (proposed) ═══════════════════ -->
+<main class="app" aria-label="BitWave proposed layout — static mockup">
+
+  <!-- ── header: unchanged except the slider label ─────────────────────── -->
+  <header>
+    <div class="title">
+      <h1>BitWave</h1>
+      <p>registers as waveforms — every nibble is a sample</p>
+    </div>
+    <div class="sizer">
+      <span class="anno"><label for="size">width</label><b class="mk">1</b></span>
+      <input id="size" type="range" min="0" max="5" step="1" value="3" aria-label="Register width" />
+      <output id="sizeOut" for="size">64 bits · 16 nibbles</output>
+    </div>
+  </header>
+
+  <!-- ── stage: 2-D waveform + always-visible stage bar + navigator ────── -->
+  <section class="stage" aria-label="Wave stage, 2-D view">
+    <svg class="chart" id="wave" role="img"
+         aria-label="Waveform for lane 1, focused frame A. A is 8ADEFEDA85210125, B is FFFFFFFF00000000, Z1 is 7521012585210125 (A XOR B)."></svg>
+
+    <div class="stage-bar" id="stageBar" role="toolbar" aria-label="Stage — lane, split and expression">
+      <div class="pane-head focused">
+        <div class="seg mini" role="radiogroup" aria-label="Lane">
+          <button class="op on" type="button" role="radio" aria-checked="true" title="Lane 1 (Alt+1)">1</button>
+          <button class="op" type="button" role="radio" aria-checked="false" title="Lane 2 (Alt+2)">2</button>
+          <button class="op" type="button" role="radio" aria-checked="false" title="Lane 3 (Alt+3)">3</button>
+        </div>
+        <button class="op mini" id="framesBtn" type="button" aria-expanded="true" aria-haspopup="dialog" title="Browse frames A, Z1, B across lanes">frames</button>
+        <button class="op mini" id="splitBtn" type="button" aria-pressed="false" aria-disabled="true" title="Split is 3-D only">split</button>
+        <span class="stage-expr">LANE 1 · A ⊕ B → Z1</span>
+        <b class="mk">2</b>
+      </div>
+    </div>
+
+    <!-- frame navigator: transient aside, focus lens, global frame names -->
+    <aside class="frames-panel" aria-label="Frame navigator">
+      <div class="fp-head">
+        <h2 class="fp-title">frames<b class="mk">3</b></h2>
+        <button class="op" type="button" aria-label="Close frame navigator" title="Close (Esc)">×</button>
+      </div>
+      <div class="fp-body">
+        <button class="lane-btn" type="button" aria-expanded="true" aria-label="Lane 1, expanded">
+          <span class="lane-num">LANE 1</span>
+          <span class="lane-meta">A ⊕ B → Z1</span>
+        </button>
+
+        <div class="frame-row is-active" data-frame="a">
+          <button class="frame-btn" type="button" aria-label="Lane 1 frame A, operand, focused">
+            <span class="frame-label">
+              <span class="frame-swatch"></span>
+              <span class="frame-glyph">A</span>
+              <span class="frame-sub">operand</span>
+            </span>
+            <svg class="frame-preview a" viewBox="0 0 96 24" preserveAspectRatio="none" aria-hidden="true">
+              <polyline data-preview="a" points=""></polyline>
+            </svg>
+            <span class="frame-hex">8ADEFEDA85210125</span>
+          </button>
+          <button class="eye-btn" type="button" aria-pressed="true" aria-label="Hide frame A in the 2D view" title="Hide frame A in the 2D view">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M1.5 8C4.3 3.8 11.7 3.8 14.5 8C11.7 12.2 4.3 12.2 1.5 8Z"/><circle cx="8" cy="8" r="2.6"/></svg>
+          </button>
+        </div>
+
+        <div class="frame-row" data-frame="z">
+          <button class="frame-btn" type="button" aria-label="Lane 1 frame Z1, derived">
+            <span class="frame-label">
+              <span class="frame-swatch"></span>
+              <span class="frame-glyph">Z1</span>
+              <span class="frame-sub">derived</span>
+            </span>
+            <svg class="frame-preview z" viewBox="0 0 96 24" preserveAspectRatio="none" aria-hidden="true">
+              <polyline data-preview="z" points=""></polyline>
+            </svg>
+            <span class="frame-hex">7521012585210125</span>
+          </button>
+          <button class="eye-btn" type="button" aria-pressed="true" aria-label="Hide frame Z1 in the 2D view" title="Hide frame Z1 in the 2D view">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M1.5 8C4.3 3.8 11.7 3.8 14.5 8C11.7 12.2 4.3 12.2 1.5 8Z"/><circle cx="8" cy="8" r="2.6"/></svg>
+          </button>
+        </div>
+
+        <div class="frame-row" data-frame="b">
+          <button class="frame-btn" type="button" aria-label="Lane 1 frame B, operand">
+            <span class="frame-label">
+              <span class="frame-swatch"></span>
+              <span class="frame-glyph">B</span>
+              <span class="frame-sub">operand</span>
+            </span>
+            <svg class="frame-preview b" viewBox="0 0 96 24" preserveAspectRatio="none" aria-hidden="true">
+              <polyline data-preview="b" points=""></polyline>
+            </svg>
+            <span class="frame-hex">FFFFFFFF00000000</span>
+          </button>
+          <button class="eye-btn" type="button" aria-pressed="true" aria-label="Hide frame B in the 2D view" title="Hide frame B in the 2D view">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M1.5 8C4.3 3.8 11.7 3.8 14.5 8C11.7 12.2 4.3 12.2 1.5 8Z"/><circle cx="8" cy="8" r="2.6"/></svg>
+          </button>
+        </div>
+
+        <button class="lane-btn" type="button" aria-expanded="false" aria-label="Lane 2">
+          <span class="lane-num">LANE 2</span>
+          <span class="lane-meta">C ⊕ D → Z2</span>
+        </button>
+        <button class="lane-btn" type="button" aria-expanded="false" aria-label="Lane 3">
+          <span class="lane-num">LANE 3</span>
+          <span class="lane-meta">E ⊕ F → Z3</span>
+        </button>
+      </div>
+      <div class="fp-foot">
+        <span>A solid · Z1 glow · B dashed</span>
+        <button class="op" type="button" title="Remove operand B from this lane">unpair B</button>
+      </div>
+    </aside>
+  </section>
+
+  <!-- ── strip: focused frame label + nibble spinbuttons ───────────────── -->
+  <section class="strip" data-edit="A" aria-label="Bit strip — focused frame A, 16 nibble spinbuttons">
+    <div class="nibs" id="nibs">
+      <div class="nib" role="spinbutton" tabindex="-1" aria-valuenow="8" aria-valuemin="0" aria-valuemax="15" aria-valuetext="nibble 1, hex 8, bits 60 to 63, weight 2^60">
+        <div class="bits"><i class="bit on">1</i><i class="bit">0</i><i class="bit">0</i><i class="bit">0</i></div>
+        <div class="hex">8</div><div class="dec">8</div><div class="wt">2^60</div>
+      </div>
+      <div class="nib" role="spinbutton" tabindex="-1" aria-valuenow="10" aria-valuemin="0" aria-valuemax="15" aria-valuetext="nibble 2, hex A, bits 56 to 59, weight 2^56">
+        <div class="bits"><i class="bit on">1</i><i class="bit">0</i><i class="bit on">1</i><i class="bit">0</i></div>
+        <div class="hex">A</div><div class="dec">10</div><div class="wt">2^56</div>
+      </div>
+      <div class="nib" role="spinbutton" tabindex="-1" aria-valuenow="13" aria-valuemin="0" aria-valuemax="15" aria-valuetext="nibble 3, hex D, bits 52 to 55, weight 2^52">
+        <div class="bits"><i class="bit on">1</i><i class="bit on">1</i><i class="bit">0</i><i class="bit on">1</i></div>
+        <div class="hex">D</div><div class="dec">13</div><div class="wt">2^52</div>
+      </div>
+      <div class="nib" role="spinbutton" tabindex="-1" aria-valuenow="14" aria-valuemin="0" aria-valuemax="15" aria-valuetext="nibble 4, hex E, bits 48 to 51, weight 2^48">
+        <div class="bits"><i class="bit on">1</i><i class="bit on">1</i><i class="bit on">1</i><i class="bit">0</i></div>
+        <div class="hex">E</div><div class="dec">14</div><div class="wt">2^48</div>
+      </div>
+      <div class="nib" role="spinbutton" tabindex="-1" aria-valuenow="15" aria-valuemin="0" aria-valuemax="15" aria-valuetext="nibble 5, hex F, bits 44 to 47, weight 2^44">
+        <div class="bits"><i class="bit on">1</i><i class="bit on">1</i><i class="bit on">1</i><i class="bit on">1</i></div>
+        <div class="hex">F</div><div class="dec">15</div><div class="wt">2^44</div>
+      </div>
+      <div class="nib spin" role="spinbutton" tabindex="0" aria-valuenow="14" aria-valuemin="0" aria-valuemax="15" aria-valuetext="nibble 6, hex E, bits 40 to 43, weight 2^40">
+        <b class="mk">4</b>
+        <div class="bits"><i class="bit on">1</i><i class="bit on">1</i><i class="bit on">1</i><i class="bit">0</i></div>
+        <div class="hex">E</div><div class="dec">14</div><div class="wt">2^40</div>
+      </div>
+      <div class="nib" role="spinbutton" tabindex="-1" aria-valuenow="13" aria-valuemin="0" aria-valuemax="15" aria-valuetext="nibble 7, hex D, bits 36 to 39, weight 2^36">
+        <div class="bits"><i class="bit on">1</i><i class="bit on">1</i><i class="bit">0</i><i class="bit on">1</i></div>
+        <div class="hex">D</div><div class="dec">13</div><div class="wt">2^36</div>
+      </div>
+      <div class="nib" role="spinbutton" tabindex="-1" aria-valuenow="10" aria-valuemin="0" aria-valuemax="15" aria-valuetext="nibble 8, hex A, bits 32 to 35, weight 2^32">
+        <div class="bits"><i class="bit on">1</i><i class="bit">0</i><i class="bit on">1</i><i class="bit mid">0</i></div>
+        <div class="hex">A</div><div class="dec">10</div><div class="wt">2^32</div>
+      </div>
+      <div class="nib" role="spinbutton" tabindex="-1" aria-valuenow="8" aria-valuemin="0" aria-valuemax="15" aria-valuetext="nibble 9, hex 8, bits 28 to 31, weight 2^28">
+        <div class="bits"><i class="bit mid">1</i><i class="bit">0</i><i class="bit">0</i><i class="bit">0</i></div>
+        <div class="hex">8</div><div class="dec">8</div><div class="wt">2^28</div>
+      </div>
+      <div class="nib" role="spinbutton" tabindex="-1" aria-valuenow="5" aria-valuemin="0" aria-valuemax="15" aria-valuetext="nibble 10, hex 5, bits 24 to 27, weight 2^24">
+        <div class="bits"><i class="bit">0</i><i class="bit on">1</i><i class="bit">0</i><i class="bit on">1</i></div>
+        <div class="hex">5</div><div class="dec">5</div><div class="wt">2^24</div>
+      </div>
+      <div class="nib" role="spinbutton" tabindex="-1" aria-valuenow="2" aria-valuemin="0" aria-valuemax="15" aria-valuetext="nibble 11, hex 2, bits 20 to 23, weight 2^20">
+        <div class="bits"><i class="bit">0</i><i class="bit">0</i><i class="bit on">1</i><i class="bit">0</i></div>
+        <div class="hex">2</div><div class="dec">2</div><div class="wt">2^20</div>
+      </div>
+      <div class="nib" role="spinbutton" tabindex="-1" aria-valuenow="1" aria-valuemin="0" aria-valuemax="15" aria-valuetext="nibble 12, hex 1, bits 16 to 19, weight 2^16">
+        <div class="bits"><i class="bit">0</i><i class="bit">0</i><i class="bit">0</i><i class="bit on">1</i></div>
+        <div class="hex">1</div><div class="dec">1</div><div class="wt">2^16</div>
+      </div>
+      <div class="nib" role="spinbutton" tabindex="-1" aria-valuenow="0" aria-valuemin="0" aria-valuemax="15" aria-valuetext="nibble 13, hex 0, bits 12 to 15, weight 2^12">
+        <div class="bits"><i class="bit">0</i><i class="bit">0</i><i class="bit">0</i><i class="bit">0</i></div>
+        <div class="hex">0</div><div class="dec">0</div><div class="wt">2^12</div>
+      </div>
+      <div class="nib" role="spinbutton" tabindex="-1" aria-valuenow="1" aria-valuemin="0" aria-valuemax="15" aria-valuetext="nibble 14, hex 1, bits 8 to 11, weight 2^8">
+        <div class="bits"><i class="bit">0</i><i class="bit">0</i><i class="bit">0</i><i class="bit on">1</i></div>
+        <div class="hex">1</div><div class="dec">1</div><div class="wt">2^8</div>
+      </div>
+      <div class="nib" role="spinbutton" tabindex="-1" aria-valuenow="2" aria-valuemin="0" aria-valuemax="15" aria-valuetext="nibble 15, hex 2, bits 4 to 7, weight 2^4">
+        <div class="bits"><i class="bit">0</i><i class="bit">0</i><i class="bit on">1</i><i class="bit">0</i></div>
+        <div class="hex">2</div><div class="dec">2</div><div class="wt">2^4</div>
+      </div>
+      <div class="nib" role="spinbutton" tabindex="-1" aria-valuenow="5" aria-valuemin="0" aria-valuemax="15" aria-valuetext="nibble 16, hex 5, bits 0 to 3, weight 2^0">
+        <div class="bits"><i class="bit">0</i><i class="bit on">1</i><i class="bit">0</i><i class="bit on">1</i></div>
+        <div class="hex">5</div><div class="dec">5</div><div class="wt">2^0</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── meta: truth/carry sits with derive's data ─────────────────────── -->
+  <section class="meta" id="meta" aria-label="Readouts and truth table">
+    <div class="badge" id="trend">step-down</div>
+
+    <div class="truth anno">
+      <b class="mk">12</b>
+      <div class="truth-h">A ⊕ B → Z1</div>
+      <div class="truth-grid">
+        <span class="th">a</span><span class="th">b</span><span class="th">→</span><span class="th">n</span>
+        <span>0</span><span>0</span><span class="z">0</span><span class="ct">23</span>
+        <span>0</span><span>1</span><span class="z on">1</span><span class="ct">11</span>
+        <span>1</span><span>0</span><span class="z on">1</span><span class="ct">9</span>
+        <span>1</span><span>1</span><span class="z">0</span><span class="ct">21</span>
+      </div>
+    </div>
+
+    <div class="kv"><span>A</span><code>8ADEFEDA85210125</code></div>
+    <div class="kv"><span>B</span><code>FFFFFFFF00000000</code></div>
+    <div class="kv"><span>Z1</span><code>7521012585210125</code></div>
+    <div class="kv"><span>pop Z1</span><code>20</code></div>
+  </section>
+
+  <!-- ── controls: stable module order ─────────────────────────────────── -->
+  <section class="controls" aria-label="Controls">
+
+    <!-- 1 · source -->
+    <div class="group source">
+      <label class="glabel anno">source<b class="mk">6</b></label>
+      <button class="op" type="button" title="Import a CSV or TSV of examples">import csv</button>
+      <div class="seg" role="group" aria-label="Example stepper">
+        <button class="op" type="button" aria-label="Previous example" title="Previous example (←)">◀</button>
+        <button class="op" type="button" aria-label="Next example" title="Next example (→)">▶</button>
+      </div>
+      <span class="excount">3 / 120</span>
+      <button class="op" type="button" aria-expanded="false" aria-haspopup="dialog" title="Open the six-row input source table">sources</button>
+      <div class="seg" role="group" aria-label="Observation logger">
+        <button class="op" type="button" title="Log current observation">log</button>
+        <button class="op" type="button" title="Export observations to CSV">export</button>
+      </div>
+    </div>
+
+    <p class="status-line" role="status" aria-live="polite" aria-atomic="true">
+      <span class="status-tag">status</span>loaded 120 rows · 4 columns from sine.csv
+    </p>
+
+    <!-- 2 · width · edit -->
+    <div class="group">
+      <label class="glabel">width · edit</label>
+      <div class="kv edit-state"><span>edit</span><code>A</code></div>
+      <span class="col-tag">hex</span>
+      <span class="anno inline">
+        <input class="hex-input" id="hexEntry" type="text" value="8ADEFEDA85210125" spellcheck="false"
+               aria-label="Register hex value — enter a whole word and press Enter" />
+        <b class="mk">5</b>
+      </span>
+    </div>
+
+    <!-- 3 · operate -->
+    <div class="group operate">
+      <label class="glabel anno">operate<b class="mk">7</b></label>
+      <div class="set" role="group" aria-label="Shape presets">
+        <span class="sublabel">presets</span>
+        <button class="op" type="button" title="All zeros" aria-label="All zeros">0</button>
+        <button class="op" type="button" title="All ones (F)" aria-label="All ones">F</button>
+        <button class="op" type="button">sine</button>
+        <button class="op" type="button">cosine</button>
+        <button class="op" type="button">tri</button>
+        <button class="op" type="button">saw ↓</button>
+        <button class="op" type="button">saw ↑</button>
+        <button class="op" type="button">square</button>
+      </div>
+      <div class="set" role="group" aria-label="Unary operations">
+        <span class="sublabel">unary</span>
+        <select aria-label="Rotate / shift amount in bits">
+          <option value="1">1 bit</option>
+          <option value="2">2 bits</option>
+          <option value="4" selected>4 bits</option>
+          <option value="8">8 bits</option>
+        </select>
+        <button class="op accent" type="button">ROL ←</button>
+        <button class="op accent" type="button">ROR →</button>
+        <button class="op accent" type="button">SHL ←</button>
+        <button class="op accent" type="button">SHR →</button>
+        <button class="op accent" type="button">NOT</button>
+        <button class="op accent" type="button">FOLD</button>
+        <button class="op accent" type="button" title="Reverse byte order — endianness swap">BSWAP</button>
+      </div>
+    </div>
+
+    <!-- 4 · derive -->
+    <div class="group">
+      <label class="glabel anno">derive<b class="mk">8</b></label>
+      <span class="b-state" title="Operand B belongs to the focused lane; remove it with unpair B in the frames panel">
+        <span class="b-key">B</span> on
+      </span>
+      <div class="seg" role="radiogroup" aria-label="Binary operator">
+        <button class="op accent" type="button" role="radio" aria-checked="false">AND</button>
+        <button class="op accent" type="button" role="radio" aria-checked="false">OR</button>
+        <button class="op accent on" type="button" role="radio" aria-checked="true">XOR</button>
+        <button class="op accent" type="button" role="radio" aria-checked="false">ADD</button>
+        <button class="op accent" type="button" role="radio" aria-checked="false">SUB</button>
+      </div>
+    </div>
+
+    <!-- 5 · motion -->
+    <div class="group">
+      <label class="glabel anno">motion<b class="mk">9</b></label>
+      <button class="op" type="button" aria-pressed="false" title="Animate the registers">LFO</button>
+      <select aria-label="LFO motion">
+        <option selected>rot ↻</option>
+        <option>rot ↺</option>
+        <option>slide ⇄</option>
+        <option>step ⏭</option>
+      </select>
+      <select aria-label="LFO rate">
+        <option>1/s</option>
+        <option>2/s</option>
+        <option selected>4/s</option>
+        <option>8/s</option>
+      </select>
+      <select aria-label="B phase relative to A">
+        <option selected>b sync</option>
+        <option>b anti</option>
+        <option>b +¼</option>
+        <option>b +½</option>
+      </select>
+    </div>
+
+    <!-- 6 · view -->
+    <div class="group view">
+      <label class="glabel anno">view<b class="mk">10</b></label>
+      <button class="op" type="button" aria-pressed="false" title="Show the depth field: A at frame 1, Z1 at 128, B at 256">3D</button>
+      <button class="op" type="button" id="copyBtn" aria-haspopup="menu" aria-expanded="true"
+              title="Copy the focused lane into another lane">copy to…</button>
+      <div class="copy-menu" role="menu" aria-label="Copy lane 1 into">
+        <b class="mk">11</b>
+        <p class="copy-head">copy lane 1 →</p>
+        <button class="op copy-item" type="button" role="menuitem" aria-disabled="true">
+          <span>1</span><span class="copy-note">current</span>
+        </button>
+        <button class="op copy-item is-focus" type="button" role="menuitem"><span>2</span></button>
+        <button class="op copy-item" type="button" role="menuitem"><span>3</span></button>
+      </div>
+    </div>
+  </section>
+</main>
+
+<!-- ═══════════════════════ annotation legend + specimens ═══════════════ -->
+<section class="notes" aria-label="Annotations — dashed marks are not UI">
+  <div class="notes-head">
+    <h2>annotations — dashed outlines + numbered circles are review markup, not UI</h2>
+    <p class="notes-sub">One line per change. Adaptations from the shipped shell are flagged in the note at the foot.</p>
+  </div>
+
+  <div class="notes-grid">
+    <article class="note">
+      <span class="mk">1</span>
+      <div>
+        <h3><code>width</code>, not <code>register</code></h3>
+        <p>Header slider label only. Layout, range, and the <code>64 bits · 16 nibbles</code> readout are unchanged; the thumb is now a 24 px target.</p>
+      </div>
+    </article>
+    <article class="note">
+      <span class="mk">2</span>
+      <div>
+        <h3>Stage bar in both views</h3>
+        <p>Always visible. Lane <code>1 2 3</code>, <code>frames</code>, <code>split</code>, pane focus and the routing-aware expression (<code>LANE 1 · A ⊕ B → Z1</code>; a route would show the column, e.g. <code>sine ⊕ B → Z1</code>) live only here. In 2-D <code>split</code> stays put, <code>aria-disabled</code>; in split 3-D each pane gets its own focus dot (specimen below).</p>
+      </div>
+    </article>
+    <article class="note">
+      <span class="mk">3</span>
+      <div>
+        <h3>Frame navigator = focus lens (D16)</h3>
+        <p>Three lanes; each lane's frames use one global name set — <code>A/Z1/B</code>, <code>C/Z2/D</code>, <code>E/Z3/F</code>. Derived frames focus read-only; <code>unpair B</code> sits in this footer. Still a transient aside, not an inline mode. At 360 px it would cover the whole stage, so that shot shows it closed.</p>
+      </div>
+    </article>
+    <article class="note">
+      <span class="mk">4</span>
+      <div>
+        <h3>One spinbutton per nibble</h3>
+        <p>Each nibble is a focusable <code>role="spinbutton"</code> (0–15, arrows/Home/End/0–F, roving tabindex); the whole cell is the pointer target and the accent ring marks keyboard focus. At 720 px the strip is compact (<code>pw/n &lt; 46</code>) and drops to hex-only, but the spinbutton survives. Stage-bar <code>.op.mini</code> targets are raised to a 24 px minimum too.</p>
+      </div>
+    </article>
+    <article class="note">
+      <span class="mk">5</span>
+      <div>
+        <h3>Whole-word hex entry</h3>
+        <p>A mono field beside the edit target: type <code>DEADBEEF</code> and press Enter; left-padded (and high-bit truncated) into the register width. Closes the per-bit keyboard dead end.</p>
+      </div>
+    </article>
+    <article class="note">
+      <span class="mk">6</span>
+      <div>
+        <h3><code>source</code> is first and fixed</h3>
+        <p><code>import csv</code> / <code>◀ 3/120 ▶</code> / <code>sources</code> / <code>log</code> / <code>export</code>, then one status line immediately below the module. Nothing appears or disappears: before a load the stepper and log/export render <code>aria-disabled</code> in place (specimen). <code>sources</code> still opens the six-row transient aside (D25).</p>
+      </div>
+    </article>
+    <article class="note">
+      <span class="mk">7</span>
+      <div>
+        <h3><code>operate</code> moves before <code>derive</code></h3>
+        <p><code>amount</code> + the seven unary ops, with the eight shape presets folded in under a <code>presets</code> sub-label so they remain one module. (Was the last group, <code>bit ops</code>, plus a separate <code>shape</code> group.)</p>
+      </div>
+    </article>
+    <article class="note">
+      <span class="mk">8</span>
+      <div>
+        <h3><code>derive</code> is a real radiogroup</h3>
+        <p>Operand B is <em>stated</em>, not toggled: B is enabled by focusing a B/D/F frame or entering 3-D, and removed with <code>unpair B</code>. <code>AND OR XOR ADD SUB</code> are <code>role="radio"</code> with <code>aria-checked</code>; with no B they stay visible, <code>aria-disabled</code>, and truth/carry shows an empty state.</p>
+      </div>
+    </article>
+    <article class="note">
+      <span class="mk">9</span>
+      <div>
+        <h3><code>motion</code> keeps its slot</h3>
+        <p>LFO, mode, rate and B phase are the same controls, but they no longer move around when B appears. Stable fifth module, after <code>derive</code>.</p>
+      </div>
+    </article>
+    <article class="note">
+      <span class="mk">10</span>
+      <div>
+        <h3><code>view</code> = 2-D/3-D + <code>copy to…</code></h3>
+        <p>The duplicated lane select and <code>split</code> are removed from this row — the stage bar is their single canonical home. Nothing here changes the view's state silently.</p>
+      </div>
+    </article>
+    <article class="note">
+      <span class="mk">11</span>
+      <div>
+        <h3><code>copy to…</code> is explicit</h3>
+        <p>A <code>1 / 2 / 3</code> menu opens under the button; focus moves into it, <code>Escape</code> cancels and returns focus, and the status line (6) reports <code>copied lane 1 → lane 2</code>. No invisible armed mode, no silent rename. (Drawn expanded in flow here for legibility; it overlays in the app.)</p>
+      </div>
+    </article>
+    <article class="note">
+      <span class="mk">12</span>
+      <div>
+        <h3>Truth/carry belongs to <code>derive</code></h3>
+        <p>It stays in the meta band beside the values it explains; counts <code>23 11 9 21</code> sum to 64. The <code>n</code> column keeps its separating rule — it is data about the register, not a fifth logic cell.</p>
+      </div>
+    </article>
+  </div>
+
+  <div class="details">
+    <div class="detail">
+      <p class="detail-cap">specimen · stage bar in 3-D split</p>
+      <div class="mini-bar">
+        <div class="pane-head focused">
+          <i class="focus-dot"></i>
+          <div class="seg mini" role="radiogroup" aria-label="Lane in pane 1">
+            <button class="op on" type="button" role="radio" aria-checked="true">1</button>
+            <button class="op" type="button" role="radio" aria-checked="false">2</button>
+            <button class="op" type="button" role="radio" aria-checked="false">3</button>
+          </div>
+          <span class="stage-expr">LANE 1 · A ⊕ B → Z1</span>
+        </div>
+        <div class="pane-head">
+          <i class="focus-dot"></i>
+          <div class="seg mini" role="radiogroup" aria-label="Lane in pane 2">
+            <button class="op" type="button" role="radio" aria-checked="false">1</button>
+            <button class="op on" type="button" role="radio" aria-checked="true">2</button>
+            <button class="op" type="button" role="radio" aria-checked="false">3</button>
+          </div>
+          <span class="stage-expr">LANE 2 · C ⊕ D → Z2</span>
+          <button class="op mini on" type="button" aria-pressed="true">split</button>
+        </div>
+      </div>
+      <p class="detail-note">One bar, two pane heads. The dot marks the pane that owns the strip, controls and readouts; the other pane keeps its own lane. In 2-D the same bar is a single head and <code>split</code> is disabled in place.</p>
+    </div>
+
+    <div class="detail">
+      <p class="detail-cap">specimen · reserved space — disabled, never removed</p>
+      <div class="mini-row">
+        <span class="mini-label">no csv</span>
+        <button class="op" type="button">import csv</button>
+        <div class="seg" role="group" aria-label="Example stepper, disabled">
+          <button class="op" type="button" aria-disabled="true">◀</button>
+          <button class="op" type="button" aria-disabled="true">▶</button>
+        </div>
+        <span class="excount">— / —</span>
+        <button class="op" type="button">sources</button>
+        <div class="seg" role="group" aria-label="Observation logger, disabled">
+          <button class="op" type="button" aria-disabled="true">log</button>
+          <button class="op" type="button" aria-disabled="true">export</button>
+        </div>
+      </div>
+      <div class="mini-row">
+        <span class="mini-label">no b</span>
+        <span class="b-state is-off"><span class="b-key">B</span> —</span>
+        <div class="seg" role="radiogroup" aria-label="Binary operator, aria-disabled until B">
+          <button class="op accent" type="button" role="radio" aria-checked="false" aria-disabled="true">AND</button>
+          <button class="op accent" type="button" role="radio" aria-checked="false" aria-disabled="true">OR</button>
+          <button class="op accent" type="button" role="radio" aria-checked="false" aria-disabled="true">XOR</button>
+          <button class="op accent" type="button" role="radio" aria-checked="false" aria-disabled="true">ADD</button>
+          <button class="op accent" type="button" role="radio" aria-checked="false" aria-disabled="true">SUB</button>
+        </div>
+      </div>
+      <p class="detail-note">The row keeps its shape, so layout and tab order do not jump. <code>import csv</code> and <code>sources</code> stay live; the stepper, counts and logger stay in place, disabled.</p>
+    </div>
+  </div>
+
+  <p class="spec-note">
+    <b>Adapted to the shipped shell, not the older audit tables:</b> there is no A|B edit-target segmented pair
+    and no <code>toggleB</code> button in <code>src/index.html</code> today. The edit target is the frame navigator's
+    focus lens (D16) and is shown as the read-only <code>edit · A</code> statement; B is enabled by focusing a
+    B/D/F frame or entering 3-D and removed by <code>unpair B</code>. The <code>demo</code> button is F5 scope and
+    is deliberately absent. Lanes are <code>1 / 2 / 3</code>; letters belong only to frames and operands.
+  </p>
+
+  <p class="spec-foot">
+    <b>Not changed:</b> two hues only — accent green is data, <code>--inf</code> amber stays structural
+    (MRB, zero-crossing, ∞); mono for values, sans for labels; no onboarding, trophy or cable graphics;
+    <code>Z1/Z2/Z3</code> never editable and the 3-D field never editable; MSB-left hardware bit order;
+    <code>--pad</code> as the single gutter authority and the 0 px strip↔curve column alignment.
+    <b>Sources:</b> DESIGN.md §2–§10 · PLAN.md §5 Feature C · docs/analysis/ux-a11y.md §4–§5 · src/index.html + src/styles/app.css.
+  </p>
+</section>
+
+<script>
+/* The only script: draw the 2-D stage so the control points sit exactly over
+   the nibble columns at every width (DESIGN §5/§10). No state, no input. */
+(function () {
+  'use strict';
+
+  var SVG_NS = 'http://www.w3.org/2000/svg';
+  var A_HEX = '8ADEFEDA85210125';
+  var B_HEX = 'FFFFFFFF00000000';
+  var N = 16;
+  var FOCUS_J = 5;             /* the focused nibble in the strip (hex E) */
+
+  function nibsOf(hex) {
+    var out = [];
+    for (var i = 0; i < hex.length; i++) out.push(parseInt(hex.charAt(i), 16));
+    return out;
+  }
+  var A = nibsOf(A_HEX);
+  var B = nibsOf(B_HEX);
+  var Z = A.map(function (v, i) { return v ^ B[i]; });
+
+  /* DESIGN §6 spline: monotone cubic Hermite, Fritsch–Butland interior
+     weights, zero end tangents. It cannot overshoot [0,15]. */
+  function buildSpline(xs, ys) {
+    var n = xs.length;
+    var h = [], d = [], m = new Array(n);
+    for (var i = 0; i < n - 1; i++) {
+      h[i] = xs[i + 1] - xs[i];
+      d[i] = h[i] === 0 ? 0 : (ys[i + 1] - ys[i]) / h[i];
+    }
+    m[0] = 0;
+    m[n - 1] = 0;
+    for (var j = 1; j < n - 1; j++) {
+      if (d[j - 1] * d[j] <= 0) {
+        m[j] = 0;
+      } else {
+        var w1 = 2 * h[j] + h[j - 1];
+        var w2 = h[j] + 2 * h[j - 1];
+        m[j] = (w1 + w2) / (w1 / d[j - 1] + w2 / d[j]);
+      }
+    }
+    return { xs: xs, ys: ys, m: m, h: h, n: n };
+  }
+
+  function evalSpline(sp, x) {
+    var xs = sp.xs, ys = sp.ys, m = sp.m, h = sp.h, n = sp.n;
+    if (x <= xs[0]) return ys[0];
+    if (x >= xs[n - 1]) return ys[n - 1];
+    var i = 0;
+    while (i < n - 2 && x > xs[i + 1]) i++;
+    var t = (x - xs[i]) / h[i];
+    var t2 = t * t, t3 = t2 * t;
+    return (2 * t3 - 3 * t2 + 1) * ys[i]
+      + (t3 - 2 * t2 + t) * h[i] * m[i]
+      + (-2 * t3 + 3 * t2) * ys[i + 1]
+      + (t3 - t2) * h[i] * m[i + 1];
+  }
+
+  var svg = document.getElementById('wave');
+  var stage = document.querySelector('.stage');
+  var nibsEl = document.getElementById('nibs');
+  if (!svg || !stage || !nibsEl) return;
+
+  var mono = getComputedStyle(document.documentElement).getPropertyValue('--mono').trim()
+    || 'ui-monospace, Menlo, Consolas, monospace';
+  var measure = document.createElement('canvas').getContext('2d');
+
+  function el(tag, attrs) {
+    var node = document.createElementNS(SVG_NS, tag);
+    if (attrs) for (var k in attrs) node.setAttribute(k, attrs[k]);
+    return node;
+  }
+
+  function pathFor(sp, x0, x1) {
+    var steps = Math.max(2, Math.ceil((x1 - x0) / 2));
+    var d = '';
+    for (var s = 0; s <= steps; s++) {
+      var x = x0 + ((x1 - x0) * s) / steps;
+      var y = evalSpline(sp, x);
+      d += (s === 0 ? 'M' : 'L') + x.toFixed(2) + ' ' + y.toFixed(2);
+    }
+    return d;
+  }
+
+  function geometry(W, H) {
+    var pad = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--pad')) || 40;
+    var x0 = pad;
+    var x1 = Math.max(x0 + 10, W - pad);
+    var y0 = 34;
+    var y1 = Math.max(y0 + 10, H - 26);
+    var pw = x1 - x0;
+    var gap = Math.max(1.5, Math.min(12, (pw / N) * 0.16));
+    var w = (pw - (N - 1) * gap) / N;
+    var xs = [];
+    for (var j = 0; j < N; j++) xs.push(x0 + j * (w + gap) + w / 2);
+    return { pad: pad, x0: x0, x1: x1, y0: y0, y1: y1, pw: pw, ph: y1 - y0, gap: gap, w: w, xs: xs };
+  }
+
+  /* Legend: top-right of the visible plot. At the narrow sizes it collapses
+     to stroke samples + frame names and sits in the stage-bar row, so it
+     never lands on the curve peak or under the open navigator. */
+  function drawLegend(g, ly) {
+    var limit = g.x1;
+    var panelOpen = false;
+    var panel = document.querySelector('.frames-panel');
+    if (panel && getComputedStyle(panel).display !== 'none') {
+      var pr = panel.getBoundingClientRect();
+      var sr = stage.getBoundingClientRect();
+      if (pr.width > 0) {
+        panelOpen = true;
+        limit = Math.max(g.x0 + 120, pr.left - sr.left - 14);
+      }
+    }
+    var items = [
+      { label: 'A', width: 1.8, alpha: 0.82, dash: null },
+      { label: 'B', width: 1.8, alpha: 0.82, dash: '6 4' },
+      { label: 'Z1', width: 2.5, alpha: 1, dash: null }
+    ];
+    measure.font = '10px ' + mono;
+    var compact = g.pw < 760;
+    var eyeW = compact ? 0 : 14;
+    var lineW = compact ? 14 : 17;
+    var textGap = 4;
+    var itemGap = compact ? 10 : 14;
+    var total = 0;
+    for (var i = 0; i < items.length; i++) {
+      total += eyeW + lineW + textGap + measure.measureText(items[i].label).width + itemGap;
+    }
+    var lx = limit - total;
+    var ly2 = compact ? 18 : ly;
+    for (var j = 0; j < items.length; j++) {
+      var it = items[j];
+      if (!compact) {
+        var eye = el('g', { transform: 'translate(' + lx + ' ' + (ly2 - 8) + ') scale(0.875)' });
+        eye.appendChild(el('path', {
+          d: 'M1.5 8C4.3 3.8 11.7 3.8 14.5 8C11.7 12.2 4.3 12.2 1.5 8Z',
+          fill: 'none', stroke: 'rgba(103,114,138,0.9)', 'stroke-width': '1.15'
+        }));
+        eye.appendChild(el('circle', {
+          cx: '8', cy: '8', r: '1.7', fill: 'none',
+          stroke: 'rgba(103,114,138,0.9)', 'stroke-width': '1.15'
+        }));
+        svg.appendChild(eye);
+      }
+
+      var sample = el('line', {
+        x1: lx + eyeW, y1: ly2, x2: lx + eyeW + lineW, y2: ly2,
+        stroke: 'rgba(52,211,153,' + it.alpha + ')',
+        'stroke-width': it.width, 'stroke-linecap': 'round'
+      });
+      if (it.dash) sample.setAttribute('stroke-dasharray', it.dash);
+      svg.appendChild(sample);
+
+      var label = el('text', {
+        x: lx + eyeW + lineW + textGap, y: ly2, class: 'legend-label'
+      });
+      label.textContent = it.label;
+      svg.appendChild(label);
+
+      lx += eyeW + lineW + textGap + measure.measureText(it.label).width + itemGap;
+    }
+  }
+
+  function draw() {
+    var W = stage.clientWidth;
+    var H = stage.clientHeight;
+    if (!W || !H) return;
+
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
+    svg.setAttribute('preserveAspectRatio', 'none');
+
+    var g = geometry(W, H);
+    var yOf = function (v) { return g.y1 - (v / 15) * g.ph; };
+    var cx = (g.x0 + g.x1) / 2;
+    var cy = yOf(7.5);
+
+    var defs = el('defs');
+    var grad = el('linearGradient', {
+      id: 'zgrad', gradientUnits: 'userSpaceOnUse',
+      x1: '0', y1: g.y0, x2: '0', y2: g.y1
+    });
+    var s1 = el('stop', { offset: '0', style: 'stop-color:var(--accent-hi)' });
+    var s2 = el('stop', { offset: '1', style: 'stop-color:var(--accent-low)' });
+    grad.appendChild(s1);
+    grad.appendChild(s2);
+    defs.appendChild(grad);
+    svg.appendChild(defs);
+
+    /* value guides (F C 8 4 0), as the shipped renderer draws them */
+    [0, 4, 8, 12, 15].forEach(function (v) {
+      var y = Math.round(yOf(v)) + 0.5;
+      svg.appendChild(el('line', {
+        x1: g.x0, y1: y, x2: g.x1, y2: y,
+        stroke: 'rgba(255,255,255,0.04)', 'stroke-width': '1'
+      }));
+      var t = el('text', { x: g.x0 - 9, y: y, class: 'ruler' });
+      t.textContent = v.toString(16).toUpperCase();
+      svg.appendChild(t);
+    });
+
+    /* zero-crossing level + the ∞ axis (amber is structure only) */
+    var zc = el('line', {
+      x1: g.x0, y1: Math.round(cy) + 0.5, x2: g.x1, y2: Math.round(cy) + 0.5,
+      stroke: 'rgba(245,181,68,0.26)', 'stroke-width': '1', 'stroke-dasharray': '2 5'
+    });
+    svg.appendChild(zc);
+    svg.appendChild(el('line', {
+      x1: Math.round(cx) + 0.5, y1: g.y0, x2: Math.round(cx) + 0.5, y2: g.y1,
+      stroke: 'rgba(245,181,68,0.10)', 'stroke-width': '1'
+    }));
+
+    var xs = g.xs;
+    var spA = buildSpline(xs, A.map(yOf));
+    var spB = buildSpline(xs, B.map(yOf));
+    var spZ = buildSpline(xs, Z.map(yOf));
+
+    /* curves: edit target A solid, B dashed and quieter, Z gradient + glow */
+    svg.appendChild(el('path', {
+      d: pathFor(spA, g.x0, g.x1), fill: 'none',
+      stroke: 'rgba(52,211,153,0.82)', 'stroke-width': '1.8',
+      'stroke-linecap': 'round', 'stroke-linejoin': 'round'
+    }));
+    svg.appendChild(el('path', {
+      d: pathFor(spB, g.x0, g.x1), fill: 'none',
+      stroke: 'rgba(52,211,153,0.30)', 'stroke-width': '1.3',
+      'stroke-dasharray': '6 4', 'stroke-linecap': 'round'
+    }));
+    svg.appendChild(el('path', {
+      d: pathFor(spZ, g.x0, g.x1), fill: 'none',
+      stroke: 'rgba(52,211,153,0.14)', 'stroke-width': '9',
+      'stroke-linecap': 'round'
+    }));
+    svg.appendChild(el('path', {
+      d: pathFor(spZ, g.x0, g.x1), fill: 'none',
+      stroke: 'url(#zgrad)', 'stroke-width': '2.5',
+      'stroke-linecap': 'round', 'stroke-linejoin': 'round'
+    }));
+
+    /* handles only on the edit target (A); the focused nibble is active */
+    for (var j = 0; j < N; j++) {
+      var hx = xs[j];
+      var hy = yOf(A[j]);
+      var active = j === FOCUS_J;
+      svg.appendChild(el('circle', {
+        cx: hx, cy: hy, r: active ? 4.4 : 2.5,
+        fill: active ? 'var(--handle-hi)' : 'rgba(52,211,153,0.8)'
+      }));
+      if (active) {
+        svg.appendChild(el('circle', {
+          cx: hx, cy: hy, r: 8.4, fill: 'none',
+          stroke: 'rgba(52,211,153,0.4)', 'stroke-width': '1.5'
+        }));
+      }
+    }
+
+    /* the point at infinity */
+    svg.appendChild(el('circle', {
+      cx: cx, cy: cy, r: 7.5, fill: 'none',
+      stroke: 'rgba(245,181,68,0.45)', 'stroke-width': '1'
+    }));
+    svg.appendChild(el('circle', {
+      cx: cx, cy: cy, r: 2.6, fill: 'rgba(245,181,68,0.95)'
+    }));
+    var inf = el('text', { x: cx + 14, y: cy, class: 'inf-label' });
+    inf.textContent = '∞';
+    svg.appendChild(inf);
+
+    drawLegend(g, g.y0 + 18);
+
+    /* measure the real DOM column centres so the review can verify the
+       strip↔curve alignment (target < 1.5 px, DESIGN §11) */
+    var sr = stage.getBoundingClientRect();
+    var centers = Array.prototype.map.call(nibsEl.querySelectorAll('.nib'), function (n) {
+      var r = n.getBoundingClientRect();
+      return r.left - sr.left + r.width / 2;
+    });
+    var maxDelta = 0;
+    for (var k = 0; k < Math.min(centers.length, xs.length); k++) {
+      maxDelta = Math.max(maxDelta, Math.abs(xs[k] - centers[k]));
+    }
+    window.__mockup = {
+      width: W, height: H, pad: g.pad, xs: xs,
+      nibCenters: centers, maxDelta: maxDelta,
+      nibbleWidth: g.w, nibbleGap: g.gap
+    };
+  }
+
+  /* frame navigator mini-curves (96×24, sampled from the same spline) */
+  function previewPoints(vals) {
+    var w = 96, h = 24, p = 2;
+    var xs = vals.map(function (_, j) { return (j / (vals.length - 1)) * w; });
+    var ys = vals.map(function (v) { return h - p - (v / 15) * (h - p * 2); });
+    var sp = buildSpline(xs, ys);
+    var pts = [];
+    for (var i = 0; i <= 48; i++) {
+      var x = (i / 48) * w;
+      pts.push(x.toFixed(1) + ',' + evalSpline(sp, x).toFixed(1));
+    }
+    return pts.join(' ');
+  }
+  var previewData = { a: A, z: Z, b: B };
+  Array.prototype.forEach.call(document.querySelectorAll('polyline[data-preview]'), function (line) {
+    var key = line.getAttribute('data-preview');
+    if (previewData[key]) line.setAttribute('points', previewPoints(previewData[key]));
+  });
+
+  var pending = 0;
+  function schedule() {
+    if (pending) cancelAnimationFrame(pending);
+    pending = requestAnimationFrame(function () { pending = 0; draw(); });
+  }
+  /* Draw once synchronously so the static file is complete even before any
+     animation frame exists (headless capture, reduced-motion, printing). */
+  draw();
+  window.addEventListener('resize', schedule);
+  if (document.fonts && document.fonts.ready) {
+    document.fonts.ready.then(function () { draw(); });
+  }
+}());
+</script>
+</body>
+</html>
