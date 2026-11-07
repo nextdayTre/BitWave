@@ -28,11 +28,17 @@ no network, no dependencies — **open it directly in a browser.**
 Append **`?fresh`** to the URL for an ephemeral session that neither reads nor writes the
 autosave or share state.
 
+**Hosted install.** `npm run build:pwa` produces `dist/hosted/`, an installable
+progressive web app: serve it over HTTPS, install from the browser, and it runs fully
+offline. See [`docs/hosting.md`](docs/hosting.md). The single file stays the canonical
+artifact and never gains external references.
+
 ## Build
 
 ```bash
 npm install          # once — Vite, TypeScript, vite-plugin-singlefile
 npm run build        # src/ → dist/ → bitwave-v2.html (single self-contained file)
+npm run build:pwa    # same, then dist/hosted/ (installable offline PWA)
 npm run dev          # Vite dev server for the modular source
 npm run typecheck    # tsc --noEmit on the DOM-free core
 ```
@@ -42,11 +48,35 @@ inlines everything, and `tools/build-artifact.mjs` verifies the result has no
 external references before writing `bitwave-v2.html`. No minification, on purpose:
 the artifact stays readable.
 
+## Share and deploy
+
+Two deliverables, one instrument:
+
+- **The file** — [`bitwave-v2.html`](bitwave-v2.html), double-clickable, works over
+  `file://` with no server and no network.
+- **The URL** — `dist/hosted/` from `npm run build:pwa`: the same app plus a manifest,
+  icons and a service worker, so it can be installed and used fully offline from any static
+  HTTPS host. The single-file artifact stays untouched (no manifest/icon/SW references —
+  asserted by `npm run check:pwa`).
+
+Deploy `dist/hosted/` to GitHub Pages, Netlify, Cloudflare Pages or any static host; the
+URLs are relative so a subpath works. Full deployment, install, offline-update and privacy
+notes: [`docs/hosting.md`](docs/hosting.md).
+
+```bash
+npm run check:pwa    # serves dist/hosted/, proves worker control + a server-down offline reload
+npm run verify       # unit + typecheck + build + browser checks + hosted build + PWA check
+```
+
+Paths: `assets/pwa/` holds the committed icons (regenerate with
+`python tools/make-pwa-icons.py`); `tools/build-pwa.mjs` produces the hosted tree.
+
 ## Verify
 
 ```bash
 npm test               # DOM-free core + state + bindings + project/share: 77 tests, zero dependencies
 npm run check:browser  # 52 artifact checks in headless Chromium (53 with --shots or --compare)
+npm run check:pwa      # 7 hosted/PWA checks incl. a server-down offline reload
 npm run capture        # state screenshots → .tmp-captures/
 ```
 
@@ -101,10 +131,11 @@ and example snapshot are in [`AGENTS.md`](AGENTS.md).
 | `bitwave-v2.html` | The build: one self-contained file, generated from `src/` by `npm run build`. |
 | `index.html` | Untouched original reference build. |
 | `src/` | App source: `index.html`, `main.js` (composition + controllers), `styles/app.css`; `state/`, `render/`, `ui/`, `io/` modules and the `core/` engine. |
-| `tools/` | `browser-check.mjs` (verification + parity gate), `build-artifact.mjs` (single-file gate), the example generator. |
+| `tools/` | `browser-check.mjs` (artifact verification + parity gate), `build-artifact.mjs` (single-file gate), `build-pwa.mjs` + `check-pwa.mjs` (hosted/PWA build + offline gate), `make-pwa-icons.py`, the example generator. |
+| `assets/pwa/` | Committed PWA icons (192/512/maskable/32) generated from the palette. |
 | `testcsv.xlsx`, `examples/testcsv.csv` | The four-column import sample (`Hex 1`, `Hex 2`, `Grandma Hex`, `Bananas Hex`); the CSV twin is what the instrument imports. |
 | `vite.config.mjs`, `package.json`, `tsconfig.core.json` | Build, test and typecheck setup. |
-| `docs/`, `PLAN.md`, `DECISIONS.md`, `STATUS.md`, `tests/`, `spike/`, `examples/` | Design analysis, plan/status, core tests, housing spike and project example. |
+| `docs/`, `PLAN.md`, `DECISIONS.md`, `STATUS.md`, `tests/`, `spike/`, `examples/` | Design analysis + hosting guide, plan/status, core tests, spikes and project example. |
 
 ## Preservation
 
@@ -113,7 +144,7 @@ as a single-file bundle under `backups/` (ignored by Git), so it can be restored
 or cloned without a remote:
 
 ```bash
-git clone backups/bitwave-v2-2026-11-06-persistence.bundle bitwave-restore
+git clone backups/bitwave-v2-2026-11-06-distribution.bundle bitwave-restore
 ```
 
 Tags: `v2-checkpoint-2026-11-06` (frame navigator, eyes, wheel-step),
@@ -125,10 +156,10 @@ Tags: `v2-checkpoint-2026-11-06` (frame navigator, eyes, wheel-step),
 `v2-render-2026-11-06` (render layer split),
 `v2-ui-2026-11-06` (UI feature modules),
 `v2-source-matrix-2026-11-06` (six-row source table, frame routing, driven inputs),
-`v2-a11y-2026-11-06` (F4 accessibility floor + IA pass: reflow/zoom, keyboard editing,
-live status, reduced motion, targets, axe gate, stage bar, module order, copy menu,
-hex entry, keyboard map) and
+`v2-a11y-2026-11-06` (F4 accessibility floor + IA pass),
 `v2-persistence-2026-11-06` (F5: `.bitwave` schema 2 save/open, autosave, URL-fragment
-share, demo dataset, CSV status; `index.html.bak` removed).
+share, demo dataset, CSV status; `index.html.bak` removed) and
+`v2-distribution-2026-11-06` (F6: hosted/installable PWA build, offline gate, deployment
+docs; single-file artifact untouched; Tauri deferred).
 
 For off-machine safety, add a remote and push the `main` branch and tags.

@@ -633,6 +633,12 @@ something that looked fine until it was measured.
     dataset when the budget would overflow, updated with `replaceState` only; a shared link
     wins over autosave on boot and must stay ≤ ~2 KB at 256 bits. It works from `file://`
     (no network, no server).
+42. **Distribution never changes the instrument.** The committed single file
+    (`bitwave-v2.html`) keeps zero external references and carries no manifest or
+    service-worker registration. The installable build is a separate second output
+    (`dist/hosted/`): the same HTML plus a manifest, icons, a hash-versioned app-shell
+    service worker and registration. The worker is same-origin `GET` only; no telemetry,
+    fonts, CDNs or third-party requests. Hosted URLs are relative so a subpath deploy works.
 
 ---
 
@@ -682,6 +688,12 @@ The visual contract is measurable, so measure it rather than eyeballing:
   a shared `#bw=` link restores the same state (and wins over autosave); the link stays
   ≤ ~2 KB at 256 bits; `?fresh` writes neither. Non-token CSV files and empty files are
   refused with a status message and do not replace the current dataset.
+- **Distribution:** `npm run check:pwa` serves `dist/hosted/` on `127.0.0.1` and asserts the
+  manifest + every icon load, the worker registers/activates/controls the page, the app shell
+  is in a `bitwave-<hash>` cache, and a reload **with the origin server stopped** still boots
+  from that cache with zero console errors. It also asserts the committed single file has no
+  manifest/icon/service-worker references, and that the hosted page's only external refs are
+  the PWA shell.
 - **Automated a11y audit:** axe-core (dev-only, never in the artifact) reports **zero
   critical/serious** violations in the 2-D, A·B, 3-D and source-table states.
 
@@ -744,6 +756,12 @@ them.
   (`replaceState`, ≤ ~2 KB at 256 bits); embedded 8-row demo dataset; a visible dataset
   status line that refuses empty/non-token files; `?fresh` ephemeral sessions; the stale
   `index.html.bak` removed from the distribution folder. Palette unchanged (D10).
+- **F6 distribution** — a hosted, installable build while the single-file artifact stays
+  untouched: manifest + maskable icons, a hash-versioned app-shell service worker
+  (same-origin `GET` only, offline fallback), relative URLs for subpath hosting, a
+  `check:pwa` harness that proves install/offline against the real built output, and
+  [`docs/hosting.md`](docs/hosting.md) with deploy/install/privacy guidance. Tauri remains
+  deferred (D37).
 
 ### Next
 

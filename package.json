@@ -6,10 +6,13 @@
   "description": "BitWave core — a register you can see. DOM-free engine plus the single-file instrument.",
   "scripts": {
     "build": "vite build && node tools/build-artifact.mjs",
+    "build:pwa": "npm run build && node tools/build-pwa.mjs",
     "dev": "vite",
     "typecheck": "tsc -p tsconfig.core.json --noEmit",
     "test": "node --test --test-isolation=none --test-concurrency=1 tests/design-invariants.test.ts tests/routing.test.ts tests/io-geometry.test.ts tests/project.test.ts tests/share.test.ts tests/state.test.ts tests/actions.test.ts tests/bindings.test.ts && node --test --test-isolation=none tests/project-app.test.ts",
     "check:browser": "node tools/browser-check.mjs",
+    "check:pwa": "node tools/check-pwa.mjs",
+    "verify": "npm test && npm run typecheck && npm run build && npm run check:browser && npm run build:pwa && npm run check:pwa",
     "capture": "node tools/browser-check.mjs --shots .tmp-captures"
   },
   "engines": {

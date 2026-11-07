@@ -1,6 +1,6 @@
 # BitWave — implementation status
 
-**Updated:** 2026-11-06 · **Phase:** F0 **done**, F1 **done**, F2 spine + render + UI modules done (pointer/lane controllers still in `main.js`), F3 source table + frame routing **done**, F4 accessibility + IA **done**; frame names, focus lens and the read-only `window.BitWave` seam **shipped**. **F5 persistence & reach done** — `.bitwave` schema 2 save/open, autosave, URL-fragment share, embedded demo dataset, CSV error status; `index.html.bak` removed. **F6 (distribution) is next.**
+**Updated:** 2026-11-06 · **Phase:** F0 **done**, F1 **done**, F2 spine + render + UI modules done (pointer/lane controllers still in `main.js`), F3 source table + frame routing **done**, F4 accessibility + IA **done**, F5 persistence & reach **done**. **F6 distribution done** — installable offline PWA hosted build with the single-file artifact untouched; Tauri remains deferred (D37). The plan's funded path (F0–F6) is complete.
 **Source of truth:** [`PLAN.md`](PLAN.md) for the plan, [`DECISIONS.md`](DECISIONS.md) for choices taken, [`DESIGN.md`](DESIGN.md) for the visual contract. `index.html` is still untouched and remains the shipping instrument.
 
 ## Author decisions (2026-11-06)
@@ -37,7 +37,7 @@ cell enough? Confirm before the matrix lands in the app.
 | **F3 Source-table housing** | **Done** | Six-row `src/ui/source-table.js` (opened from the data group) over `src/state/bindings.ts`: each input reads a CSV column (`data`), a frame output (`1:1`/`z⁻¹`) or `—`. Labels carry the assignment (`A · Hex 1`, matching the import dropdown). Driven inputs are locked against local edits, CSV/LFO skip them, unplug restores the parked base, resize remaps parked bases, and a fresh import rebuilds the board. |
 | **F4 A11y + IA** | **Done** | DESIGN amended first (change protocol §13). Shipped: reflow/zoom contract, nibble spinbutton keyboard editing, landmarks/names/radiogroups, canvas alt, live status, reduced motion, 24 px targets, axe gate — then the author-approved IA pass: always-visible stage bar (lane + frames + split), module order `source | register edit | operate | derive | motion | view`, explicit `copy to…` menu, `width` rename + whole-word hex entry, reserved-space disabled placeholders, `?` keyboard map and truth-table semantics. Palette untouched (D10). |
 | **F5 Persistence & reach** | **Done** | `.bitwave` schema 2 (additive focus/frameVis, LFO mode/rate, dataset cursor) with a DOM-free app bridge; explicit `project…` menu (save/open/reset); debounced autosave + boot restore; `#bw=` URL-fragment share that wins over autosave; embedded 8-row demo dataset; visible dataset/status line that refuses empty/non-token CSVs; `?fresh` ephemeral sessions; stale `index.html.bak` deleted. Palette untouched (D10). |
-| **F6 Distribution** | Not started | PWA manifest/SW for the hosted build; Tauri 2 only if triggered. |
+| **F6 Distribution** | **Done** | Hosted/installable PWA build (`dist/hosted/`): manifest + maskable icons, hash-versioned app-shell service worker, relative URLs, offline reload. The committed single-file `bitwave-v2.html` is untouched and still has zero external references (asserted). `npm run check:pwa` proves install/offline against the real built output; deploy/install/privacy guidance in [`docs/hosting.md`](docs/hosting.md). Tauri 2 deferred (D37). |
 
 ## F4 progress (2026-11-06) — complete
 
@@ -96,6 +96,31 @@ status line, §10.39–41 persistence invariants, §11 persistence checks, §12 
   observations explains why.
 - **Cleanup (D36).** `index.html.bak` deleted (author kept it only until F5).
 
+## F6 progress (2026-11-06) — complete
+
+**DESIGN.md amended first**: §10.42 distribution invariant, §11 PWA verification, §12 roadmap.
+
+**Shipped and verified:**
+- **Two deliverables, one instrument (D38).** `npm run build:pwa` keeps
+  `bitwave-v2.html` byte-unchanged (zero external refs) and writes `dist/hosted/`:
+  `index.html` (same app + PWA shell), `manifest.webmanifest`, `sw.js`, `icons/`,
+  and a clean `bitwave-v2.html` copy for direct download.
+- **PWA shell.** Standalone manifest with 192/512 + maskable icons generated from the
+  palette (`tools/make-pwa-icons.py`, committed PNGs), relative `start_url`/`scope` so a
+  subpath deploy works, theme/background `#08090c`.
+- **Service worker.** Cache-first same-origin `GET` only, cache name
+  `bitwave-<artifact-hash10>`, `skipWaiting`+`claim`, offline navigation fallback,
+  old-cache cleanup on activate; no telemetry or third-party traffic.
+- **Verification (`npm run check:pwa`).** Serves `dist/hosted/` on `127.0.0.1` and drives
+  headless Chromium: manifest/icons load, worker registers/activates/controls, app shell
+  cached, and a reload **with the origin server stopped** boots from cache with zero console
+  errors; also asserts the single-file artifact stayed clean and the hosted page's only
+  external refs are the PWA shell. **7/7 checks.**
+- **Distribution docs.** [`docs/hosting.md`](docs/hosting.md): build, deploy (GitHub Pages /
+  Netlify / any static host), install on desktop/mobile, offline behaviour, update/cache
+  versioning, privacy, and when to send the file vs the URL. `npm run verify` runs the full
+  gate. Tauri 2 stays deferred (D37).
+
 ## Verified this session
 
 - `npm test` → **77 tests, 77 pass, 0 fail** (71 in the main run: 38 core + 10 state +
@@ -108,6 +133,14 @@ status line, §10.39–41 persistence invariants, §11 persistence checks, §12 
   `--shots`/`--compare`), including the new F5 project-menu/open/reset, demo dataset,
   CSV-refusal, autosave-reload, share-link round-trip/2 KB budget and `?fresh` groups, in
   addition to the F4 reflow/keyboard/semantics/axe groups and the §11 geometry assertion.
+- `npm run build:pwa` → **`dist/hosted/`** (index 189.7 KB, sw.js 1.6 KB, manifest 0.9 KB,
+  4 icons) with cache version `bitwave-abda27e2a1`; the committed
+  `bitwave-v2.html` was **byte-unchanged** (sha256 checked in the build itself).
+- `npm run check:pwa` → **7/7 checks pass**: hosted boot + state surface, manifest + all
+  icons, worker registers/activates/controls, hash-versioned cache holds the app shell, and
+  a reload with the origin server **stopped** still boots from cache with zero console
+  errors; the single-file artifact contains no manifest/icon/SW references.
+- `npm run verify` wires all of the above into one gate.
 - **F4 slice 1 — reflow/zoom (D27):** parity was 6/6 pixel-identical against the pre-F4
   artifact at normal viewports (measured before the IA slice, which intentionally changes the
   layout); at 640×360 and 360×225 CSS px the page scrolls, the stage stays 220 px and every
@@ -218,9 +251,14 @@ status line, §10.39–41 persistence invariants, §11 persistence checks, §12 
 | [`spike/routing-matrix.html`](spike/routing-matrix.html) | The reference housing prototype that F3 implements (360 lines) |
 | [`spike/f4-ia.html`](spike/f4-ia.html) | The author-approved F4 IA layout mockup (annotated, 1440/720/360 screenshots) |
 | [`tools/browser-check.mjs`](tools/browser-check.mjs) | Zero-dependency CDP harness: 52 checks (53 with `--shots` or `--compare`), incl. reflow/zoom, keyboard editing, IA, axe and F5 persistence |
+| [`tools/build-pwa.mjs`](tools/build-pwa.mjs) | Hosted/PWA build: `dist/hosted/` from the untouched artifact; injects manifest/SW registration, writes the hash-versioned worker |
+| [`tools/check-pwa.mjs`](tools/check-pwa.mjs) | Zero-dependency PWA gate: local static server + CDP; manifest/icons, worker control, hash cache, server-down offline reload, artifact cleanliness (7 checks) |
+| [`tools/make-pwa-icons.py`](tools/make-pwa-icons.py) | Reproducible icon set (`assets/pwa/`): 192/512/maskable/32 from the palette, Pillow only |
+| [`assets/pwa/`](assets/pwa/icon-512.png) | Committed PWA icons used by the hosted build |
+| [`docs/hosting.md`](docs/hosting.md) | Share/deploy/install/offline/privacy guidance for researchers |
 | [`tools/make-example-project.ts`](tools/make-example-project.ts) | Regenerates the example |
 | `window.BitWave` in [`bitwave-v2.html`](bitwave-v2.html) | Read-only, schema-1 state/geometry/bindings surface; contract in [`AGENTS.md`](AGENTS.md) |
-| [`DECISIONS.md`](DECISIONS.md) | D1–D36, including the author decisions above and the F4/F5 passes (D26–D36) |
+| [`DECISIONS.md`](DECISIONS.md) | D1–D38, including the author decisions and the F4–F6 passes (D26–D38) |
 
 ## Known gaps and blockers
 
@@ -233,8 +271,8 @@ status line, §10.39–41 persistence invariants, §11 persistence checks, §12 
    sampled; the §11 check asserts geometry, not raster output.
 3. **Two controllers still live in `main.js`.** Pointer input (canvas + strip) and the
    remaining lane/view orchestration (`selectSlot`, `split`, `syncViewUi`, boot) are not yet
-   `src/ui/` modules; the stage bar and copy menu now own their own DOM. They do not block
-   F5; the spine, renderers, bindings and UI feature modules are already separate.
+   `src/ui/` modules; the stage bar and copy menu own their own DOM. They do not block the
+   shipped path; the spine, renderers, bindings and UI feature modules are already separate.
 4. ~~**Routes are not persisted yet.**~~ **Resolved in F5 (D33):** schema 2 persists the six
    bindings (data columns + frame routes) and parked bases; a saved patch board reloads
    identically, and the app-bridge round-trip test covers it.
@@ -247,6 +285,16 @@ status line, §10.39–41 persistence invariants, §11 persistence checks, §12 
 7. **Project save is not browser-asserted end-to-end.** Open/apply/reset, autosave and share
    are driven in Chromium; the `save project` download path is exercised by the unit-tested
    façade but not captured by the harness (no download interception).
+8. **Tauri 2 is deferred, by design (D37).** The native shell is only worth paying for if OS
+   file associations, native menus or local file watching become real needs; the browser
+   file/download/share paths plus the installable PWA cover the current workflow.
+9. **Install/update UX is browser-native.** There is no custom install button or service-worker
+   update toast: install is the browser's affordance and a new build activates on the next
+   visit (hash cache). Acceptable for static hosting; revisit if the hosted deployment gets a
+   release process needing forced updates.
+10. **`dist/hosted/` is generated, not committed.** `npm run build:pwa` reproduces it
+    deterministically from the committed artifact + `assets/pwa/`; deployment pipelines must
+    run the build rather than copy a checked-in folder.
 
 ## Errata found
 
@@ -257,12 +305,18 @@ status line, §10.39–41 persistence invariants, §11 persistence checks, §12 
 
 ## Next actions
 
-1. **F6 distribution (next):** PWA manifest/service worker for the hosted build; Tauri 2 only
-   if the native file-dialog need triggers it. The single-file `bitwave-v2.html` path stays the
-   primary, offline, zero-dependency delivery. **Do not touch the palette** (Q8 closed).
+The funded roadmap (F0–F6) is complete. What remains is optional polish and the
+design backlog in `DESIGN.md` §12 (which is the creative content of the instrument, not
+infrastructure):
+
+1. **Teaching/musical backlog (DESIGN §12 "Next"):** arithmetic delta vs bitwise delta
+   (the borrow term `2·(¬a ∧ b)`), a BSWAP mirror affordance, two's-complement toggle,
+   fold-vs-truncate comparison, endpoint-trend net displacement, and the silent B seed.
+   Each is additive and uses the existing spine.
 2. **F2 finish (optional):** extract the pointer controller and the remaining lane/view
-   orchestration into `src/ui/`, leaving `main.js` as pure composition. No behavioural change;
-   run the browser check and a fresh `--compare` baseline.
-3. **F5 follow-ups (small):** the read-only newer-schema open path (gap 6), a browser-level
-   assertion for the save download (gap 7), and a share-link affordance in the UI (the address
-   bar already works; a `copy link` item would make it discoverable).
+   orchestration into `src/ui/`, leaving `main.js` as pure composition. No behavioural
+   change; run `npm run verify` and a fresh `--compare` baseline.
+3. **Small F5/F6 follow-ups:** read-only newer-schema open (gap 6), browser-level save
+   download assertion (gap 7), a `copy link` item next to `save project` for discoverability,
+   and Tauri only if its trigger conditions appear (D37). **Do not touch the palette**
+   (Q8 closed).
