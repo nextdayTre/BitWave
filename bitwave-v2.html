@@ -114,6 +114,32 @@ function nibblesToBits(values, N) {
 	for (let j = 0; j < n; j++) setNibAt$1(bits, N, j, values[j] ?? 0);
 	return bits;
 }
+var HEX = "0123456789ABCDEF";
+function toHex(bits, N) {
+	const n = nibCount$1(N);
+	let s = "";
+	for (let j = 0; j < n; j++) s += HEX[nibAt$1(bits, N, j)];
+	return s;
+}
+/**
+* Right-aligns a hex string into an N-bit register, zero-padding on the left;
+* overflow truncates the high bits (DESIGN §10.16). Case-insensitive, an
+* optional 0x prefix is accepted. Throws on non-hex input so import paths can
+* report a real error instead of silently showing stale data.
+*/
+function fromHex(text, N) {
+	const clean = text.trim().replace(/^0[xX]/, "");
+	if (!/^[0-9a-fA-F]*$/.test(clean)) throw new Error(`not hexadecimal: ${JSON.stringify(text)}`);
+	const bits = new Uint8Array(N);
+	const digits = clean.length;
+	for (let k = 0; k < N; k++) {
+		const digitIndex = digits - 1 - (k >> 2);
+		if (digitIndex < 0) break;
+		const v = parseInt(clean[digitIndex], 16);
+		bits[k] = v >> (k & 3) & 1;
+	}
+	return bits;
+}
 /** Copies truth into the eased/target nibble target/anim arrays. */
 function syncTarget$1(reg, N) {
 	const n = nibCount$1(N);
@@ -395,6 +421,13 @@ var TABLES = {
 	sawUp: (n, j) => clampNib(15 * (j / Math.max(1, n - 1))),
 	square: (n, j) => j < n / 2 ? 15 : 0
 };
+function tableValues(name, N) {
+	const n = nibCount$1(N);
+	const fn = TABLES[name];
+	const out = new Array(n);
+	for (let j = 0; j < n; j++) out[j] = fn(n, j);
+	return out;
+}
 // src/state/actions.ts
 /**
 * Commands — the only places the app mutates the state tree.
@@ -1562,7 +1595,7 @@ function createStageBar(deps) {
 * Alt+1/2/3 select a lane, Alt+S toggles split; arrows step the dataset.
 */
 function attachKeyboard(deps) {
-	const { frameNav, syncViewUi, selectSlot, setSplitMode, applyExample, loadCSV, copyMenu, S, DEMO } = deps;
+	const { frameNav, syncViewUi, selectSlot, setSplitMode, applyExample, loadCSV, copyMenu, onDropError, S, DEMO } = deps;
 	document.addEventListener("keydown", (e) => {
 		if (e.key === "Escape" && frameNav.isOpen()) {
 			frameNav.close(true);
@@ -1616,7 +1649,10 @@ function attachKeyboard(deps) {
 		const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
 		if (!f) return;
 		const rd = new FileReader();
-		rd.onload = () => loadCSV(String(rd.result || ""));
+		rd.onload = () => loadCSV(String(rd.result || ""), f.name);
+		rd.onerror = () => {
+			if (onDropError) onDropError(f.name);
+		};
 		rd.readAsText(f);
 	});
 }
@@ -1983,6 +2019,29 @@ function columnWidth(rows, ci) {
 	}
 	return max;
 }
+// src/state/demo-data.ts
+/**
+* Embedded demo dataset (F5) — data, not onboarding.
+*
+* Eight rows of a real table so the stepper, the source table and the split
+* view are discoverable for a first-timer with no CSV. Four columns: each row
+* is a rotation of the sine table, a ramp word, and a 16-bit mask; importing
+* it binds lane 1 to the widest column (32-bit `sine`) and lanes 2/3 to the
+* other payload columns.
+*/
+var DEMO_NAME = "demo dataset";
+var DEMO_CSV = [
+	"step,sine,ramp,mask",
+	"1,8ADEFEDA,01234567,1111000011110000",
+	"2,ADEFEDA8,12345678,0000111100001111",
+	"3,DEFEDA8A,23456789,1111000011110000",
+	"4,EFEDA8AD,3456789A,0000111100001111",
+	"5,FEDA8ADE,456789AB,1111000011110000",
+	"6,EDA8ADEF,56789ABC,0000111100001111",
+	"7,DA8ADEFE,6789ABCD,1111000011110000",
+	"8,A8ADEFED,789ABCDE,0000111100001111",
+	""
+].join("\n");
 // src/io/observations.js
 /**
 * Observation logger — capture the focused lane's state and export it as CSV.
@@ -1994,6 +2053,11 @@ var obsCount = document.getElementById("obsCount");
 var logObsBtn = document.getElementById("logObsBtn");
 var exportObsBtn = document.getElementById("exportObsBtn");
 var observations = [];
+var notify = null;
+/** Wire the visible source status line (F5); export with no rows explains why. */
+function setObservationStatus(fn) {
+	notify = fn;
+}
 function logCurrentObservation() {
 	const exName = DEMO.rows.length && DEMO.rows[DEMO.i] && DEMO.rows[DEMO.i][0] || `ex_${DEMO.i + 1}`;
 	const hexA = toHexOf(S.A);
@@ -2029,7 +2093,10 @@ function logCurrentObservation() {
 	if (obsCount) obsCount.textContent = `${observations.length} obs`;
 }
 function exportObservationsCSV() {
-	if (!observations.length) return;
+	if (!observations.length) {
+		if (notify) notify("nothing to export yet — log an observation first", true);
+		return;
+	}
 	const keys = Object.keys(observations[0]);
 	const header = keys.join(",");
 	const lines = observations.map((o) => keys.map((k) => `"${String(o[k]).replace(/"/g, "\"\"")}"`).join(","));
@@ -2052,15 +2119,19 @@ if (exportObsBtn) exportObsBtn.addEventListener("click", exportObservationsCSV);
 * bound input. Driven inputs are left to the routing engine.
 */
 function createCsvImport(deps) {
-	const { store, resizeRegister, lfoStop, frameNav, syncViewUi, renderStrip, updateReadouts, onSizeChange, onBindingsChanged } = deps;
+	const { store, resizeRegister, lfoStop, frameNav, syncViewUi, renderStrip, updateReadouts, onSizeChange, onBindingsChanged, onStatus } = deps;
 	const csvBtn = document.getElementById("csvBtn");
 	const csvFile = document.getElementById("csvFile");
+	const demoBtn = document.getElementById("demoBtn");
 	const stepSeg = document.getElementById("stepSeg");
 	const exCount = document.getElementById("exCount");
 	const prevEx = document.getElementById("prevEx");
 	const nextEx = document.getElementById("nextEx");
 	const obsSeg = document.getElementById("obsSeg");
 	const obsCount = document.getElementById("obsCount");
+	function status(text, isError = false) {
+		if (onStatus) onStatus(text, isError);
+	}
 	function writeBitsInto(reg, arr) {
 		reg.bits = alignBits(arr, S.N);
 	}
@@ -2130,24 +2201,34 @@ function createCsvImport(deps) {
 			obsCount.textContent = `${observations.length} obs`;
 		}
 	}
-	function loadCSV(text) {
+	function loadCSV(text, name = "file") {
 		const rows = parseDelimited(text).filter((r) => r.some((c) => normCell(c) !== ""));
-		if (rows.length < 1) return;
+		if (rows.length < 1) {
+			status(`could not read ${name}: no data rows`, true);
+			return;
+		}
 		const hasHeader = !isDataRow(rows[0]);
 		const cols = hasHeader ? rows[0].map((c, i) => String(c).trim() || `col${i + 1}`) : rows[0].map((_, i) => `col${i + 1}`);
 		const body = hasHeader ? rows.slice(1) : rows;
-		if (!body.length) return;
-		DEMO.cols = cols;
-		DEMO.rows = body;
-		DEMO.i = 0;
-		resetBindings();
-		const widths = cols.map((_, ci) => columnWidth(DEMO.rows, ci));
+		if (!body.length) {
+			status(`could not read ${name}: header only, no data rows`, true);
+			return;
+		}
+		const widths = cols.map((_, ci) => columnWidth(body, ci));
 		let best = -1, bestW = -1;
 		for (let ci = 0; ci < cols.length; ci++) if (widths[ci] > bestW) {
 			bestW = widths[ci];
 			best = ci;
 		}
-		const primary = bestW > 0 ? best : 0;
+		if (bestW <= 0) {
+			status(`could not read ${name}: no numeric columns (expects hex or binary tokens)`, true);
+			return;
+		}
+		const primary = best;
+		DEMO.cols = cols;
+		DEMO.rows = body;
+		DEMO.i = 0;
+		resetBindings();
 		const minPayload = Math.max(8, Math.floor(bestW / 2));
 		let payload = [];
 		for (let ci = 0; ci < cols.length; ci++) if (widths[ci] >= minPayload) payload.push(ci);
@@ -2191,13 +2272,19 @@ function createCsvImport(deps) {
 		fitToMappedColumns();
 		applyExample(0, true);
 		onBindingsChanged();
+		status(`loaded ${body.length} rows · ${cols.length} columns from ${name}`);
+	}
+	function loadDemo() {
+		loadCSV(DEMO_CSV, DEMO_NAME);
 	}
 	csvBtn.addEventListener("click", () => csvFile.click());
+	if (demoBtn) demoBtn.addEventListener("click", loadDemo);
 	csvFile.addEventListener("change", () => {
 		const f = csvFile.files && csvFile.files[0];
 		if (!f) return;
 		const rd = new FileReader();
-		rd.onload = () => loadCSV(String(rd.result || ""));
+		rd.onload = () => loadCSV(String(rd.result || ""), f.name);
+		rd.onerror = () => status(`could not read ${f.name}`, true);
 		rd.readAsText(f);
 		csvFile.value = "";
 	});
@@ -2205,6 +2292,7 @@ function createCsvImport(deps) {
 	nextEx.addEventListener("click", () => applyExample(DEMO.i + 1));
 	return {
 		loadCSV,
+		loadDemo,
 		applyExample,
 		renderUi: renderDemoUi,
 		fitColumns: fitToMappedColumns
@@ -2593,6 +2681,865 @@ function createHelpPanel(deps) {
 		toggle,
 		isOpen: () => open
 	};
+}
+// src/ui/project-menu.js
+/**
+* Project menu (F5) — save, open and reset as one explicit menu.
+*
+* Same interaction contract as the copy menu: opening moves focus into the
+* `role="menu"`, arrows/Home/End move, Enter activates, Escape or an outside
+* click closes and returns focus, and the button reports `aria-expanded`.
+*/
+function createProjectMenu(deps) {
+	const { button, items } = deps;
+	const menu = document.createElement("div");
+	menu.className = "project-menu";
+	menu.hidden = true;
+	menu.setAttribute("role", "menu");
+	menu.setAttribute("aria-label", "project document");
+	const buttons = items.map((item) => {
+		const el = document.createElement("button");
+		el.type = "button";
+		el.className = "op";
+		el.setAttribute("role", "menuitem");
+		el.setAttribute("tabindex", "-1");
+		el.textContent = item.label;
+		el.title = item.title || item.label;
+		el.addEventListener("click", () => {
+			close(false);
+			item.onSelect();
+		});
+		menu.appendChild(el);
+		return el;
+	});
+	document.body.appendChild(menu);
+	let open = false;
+	function position() {
+		menu.hidden = false;
+		const rect = button.getBoundingClientRect();
+		const width = menu.offsetWidth;
+		const height = menu.offsetHeight;
+		const left = Math.min(Math.max(8, rect.left), window.innerWidth - width - 8);
+		let top = rect.bottom + 4;
+		if (top + height > window.innerHeight - 8) top = Math.max(8, rect.top - height - 4);
+		menu.style.left = `${left}px`;
+		menu.style.top = `${top}px`;
+	}
+	function focusItem(index) {
+		const n = buttons.length;
+		buttons[(index % n + n) % n].focus();
+	}
+	function openMenu() {
+		if (open) return;
+		open = true;
+		position();
+		button.setAttribute("aria-expanded", "true");
+		button.classList.add("on");
+		focusItem(0);
+		document.addEventListener("pointerdown", onOutside, true);
+		window.addEventListener("resize", onResize);
+	}
+	function close(refocus = true) {
+		if (!open) return;
+		open = false;
+		menu.hidden = true;
+		button.setAttribute("aria-expanded", "false");
+		button.classList.remove("on");
+		document.removeEventListener("pointerdown", onOutside, true);
+		window.removeEventListener("resize", onResize);
+		if (refocus) button.focus();
+	}
+	function onOutside(event) {
+		if (event.target === button || menu.contains(event.target)) return;
+		close(false);
+	}
+	function onResize() {
+		close(false);
+	}
+	menu.addEventListener("keydown", (event) => {
+		const index = buttons.indexOf(document.activeElement);
+		if (event.key === "ArrowDown") {
+			event.preventDefault();
+			focusItem(index + 1);
+		} else if (event.key === "ArrowUp") {
+			event.preventDefault();
+			focusItem(index - 1);
+		} else if (event.key === "Home") {
+			event.preventDefault();
+			focusItem(0);
+		} else if (event.key === "End") {
+			event.preventDefault();
+			focusItem(buttons.length - 1);
+		} else if (event.key === "Escape") {
+			event.preventDefault();
+			event.stopPropagation();
+			close(true);
+		} else if (event.key === "Tab") close(false);
+	});
+	button.addEventListener("click", () => open ? close(true) : openMenu());
+	return {
+		open: openMenu,
+		close,
+		isOpen: () => open
+	};
+}
+// src/core/lanes.ts
+function makeLane(key, N, binop = "xor") {
+	const empty = () => ({
+		bits: new Uint8Array(N),
+		anim: new Array(nibCount$1(N)).fill(0),
+		target: new Array(nibCount$1(N)).fill(0)
+	});
+	return {
+		key,
+		A: empty(),
+		B: empty(),
+		Z: empty(),
+		showB: false,
+		binop,
+		edit: "a",
+		seededB: false,
+		lfoB: "0",
+		colA: -1,
+		colB: -1
+	};
+}
+function seed(lane, N, a, b) {
+	lane.A.bits = nibblesToBits(a, N);
+	lane.B.bits = nibblesToBits(b, N);
+	syncTarget$1(lane.A, N);
+	syncTarget$1(lane.B, N);
+	lane.Z.bits = computeZ(lane.A.bits, lane.B.bits, N, lane.binop);
+	syncTarget$1(lane.Z, N);
+}
+/**
+* Boot values, matching index.html: Lane 1 sine + square, Lane 2 cosine +
+* triangle, Lane 3 saw-up + sine (AND). Pinned by the golden vectors.
+*/
+function makeBootLanes(N = 64) {
+	const one = makeLane("1", N, "xor");
+	seed(one, N, tableValues("sine", N), tableValues("square", N));
+	const two = makeLane("2", N, "xor");
+	seed(two, N, tableValues("cosine", N), tableValues("triangle", N));
+	two.seededB = true;
+	const three = makeLane("3", N, "and");
+	seed(three, N, tableValues("sawUp", N), tableValues("sine", N));
+	three.seededB = true;
+	return {
+		"1": one,
+		"2": two,
+		"3": three
+	};
+}
+var PROJECT_APP = "bitwave";
+var ProjectError = class extends Error {
+	code;
+	constructor(code, message) {
+		super(message);
+		this.name = "ProjectError";
+		this.code = code;
+	}
+};
+var BINOPS = [
+	"and",
+	"or",
+	"xor",
+	"add",
+	"sub"
+];
+var MIXES = [
+	"set",
+	"add",
+	"xor"
+];
+/** Schema-2 defaults, used whenever a document omits (or corrupts) a new field. */
+var DEFAULT_FOCUS = "a";
+var LFO_DEFAULT_MODE = "rotcw";
+var LFO_DEFAULT_RATE = 4;
+/** The modes the instrument's motion control offers; anything else is ignored. */
+var LFO_MODES = [
+	"rotcw",
+	"rotccw",
+	"slide",
+	"csvStep"
+];
+function lenientFocus(value) {
+	return value === "a" || value === "b" || value === "z" ? value : DEFAULT_FOCUS;
+}
+function lenientFrameVis(value) {
+	const raw = typeof value === "object" && value !== null ? value : {};
+	return {
+		a: raw.a !== false,
+		b: raw.b !== false,
+		z: raw.z !== false
+	};
+}
+function lenientLfoMode(value) {
+	return typeof value === "string" && LFO_MODES.includes(value) ? value : LFO_DEFAULT_MODE;
+}
+function lenientLfoRate(value) {
+	return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : LFO_DEFAULT_RATE;
+}
+/**
+* The `dataset` field. Schema 2 adds `index` (the CSV cursor). A valid
+* non-negative integer is kept; a missing/malformed one is OMITTED rather than
+* zeroed, so a schema-1 document round-trips unchanged and callers can keep
+* treating "no index" as cursor 0.
+*/
+function lenientDataset(value) {
+	if (typeof value !== "object" || value === null) return null;
+	const raw = value;
+	if (!Array.isArray(raw.cols) || !Array.isArray(raw.rows)) return null;
+	const dataset = {
+		cols: raw.cols,
+		rows: raw.rows
+	};
+	if (typeof raw.index === "number" && Number.isInteger(raw.index) && raw.index >= 0) dataset.index = raw.index;
+	return dataset;
+}
+var portString = (lane, frame) => `${lane}.${frame}`;
+function parsePort(text, allowZ) {
+	const m = /^([123])\.([abz])$/.exec(text);
+	if (!m) throw new ProjectError("malformed", `bad port reference: ${JSON.stringify(text)}`);
+	const lane = m[1];
+	const frame = m[2];
+	if (!allowZ && frame === "z") throw new ProjectError("malformed", `Z cannot be a destination: ${text}`);
+	return {
+		lane,
+		frame
+	};
+}
+function serializeProject(lanes, routing, N, view, dataset = null, now = (/* @__PURE__ */ new Date()).toISOString(), extras = {}) {
+	const laneDocs = {};
+	for (const key of LANE_KEYS) {
+		const lane = lanes[key];
+		const laneDoc = {
+			a: toHex(lane.A.bits, N),
+			b: toHex(lane.B.bits, N),
+			showB: lane.showB,
+			binop: lane.binop,
+			edit: lane.edit,
+			seededB: lane.seededB,
+			lfoB: lane.lfoB,
+			colA: lane.colA,
+			colB: lane.colB
+		};
+		const focus = extras.focus?.[key];
+		if (focus !== void 0) laneDoc.focus = focus;
+		const frameVis = extras.frameVis?.[key];
+		if (frameVis !== void 0) laneDoc.frameVis = { ...frameVis };
+		laneDocs[key] = laneDoc;
+	}
+	const parked = {};
+	for (const [key, bits] of routing.parked) {
+		const [lane, frame] = key.split(":");
+		parked[portString(lane, frame)] = toHex(bits, N);
+	}
+	const viewDoc = {
+		lane: view.lane,
+		view3d: view.view3d,
+		split3d: view.split3d,
+		splitPair: view.splitPair,
+		activePane: view.activePane
+	};
+	const lfoMode = extras.lfoMode ?? view.lfoMode;
+	const lfoRate = extras.lfoRate ?? view.lfoRate;
+	if (lfoMode !== void 0) viewDoc.lfoMode = lfoMode;
+	if (lfoRate !== void 0) viewDoc.lfoRate = lfoRate;
+	const doc = {
+		schema: 2,
+		app: PROJECT_APP,
+		savedAt: now,
+		N,
+		view: viewDoc,
+		lanes: laneDocs,
+		routes: routing.routes.map((r) => ({
+			from: portString(r.from.lane, r.from.frame),
+			to: portString(r.to.lane, r.to.frame),
+			mix: r.mix
+		})),
+		parked
+	};
+	if (dataset) doc.dataset = dataset;
+	return doc;
+}
+function requireHex(value, N, where) {
+	if (typeof value !== "string") throw new ProjectError("malformed", `${where} must be a hex string`);
+	try {
+		return fromHex(value, N);
+	} catch {
+		throw new ProjectError("malformed", `${where} is not hexadecimal: ${JSON.stringify(value)}`);
+	}
+}
+function requireBool(value, where) {
+	if (typeof value !== "boolean") throw new ProjectError("malformed", `${where} must be a boolean`);
+	return value;
+}
+function requireIndex(value, where) {
+	if (typeof value !== "number" || !Number.isInteger(value)) throw new ProjectError("malformed", `${where} must be an integer`);
+	return value;
+}
+/**
+* Validate and materialize a document. Recomputes Z and delay flags, so the
+* returned engine state is immediately consistent. Throws ProjectError.
+*
+* `extras` is always fully populated: schema-1 documents (or corrupt additive
+* fields) load with the v2 defaults. The schema-1 fields keep their existing
+* strict validation.
+*/
+function deserializeProject(doc) {
+	if (typeof doc !== "object" || doc === null) throw new ProjectError("malformed", "project must be an object");
+	const d = doc;
+	if (d.app !== "bitwave") throw new ProjectError("unsupported-app", `not a BitWave project`);
+	if (typeof d.schema !== "number") throw new ProjectError("malformed", "missing schema version");
+	if (d.schema > 2) throw new ProjectError("newer-schema", `project schema ${d.schema} is newer than supported 2; open it read-only`);
+	const N = requireIndex(d.N, "N");
+	if (!(N >= 8 && N <= 256 && N % 8 === 0)) throw new ProjectError("malformed", `unsupported width: ${N}`);
+	if (typeof d.lanes !== "object" || d.lanes === null) throw new ProjectError("malformed", "missing lanes");
+	const lanes = makeBootLanes(N);
+	const focus = {};
+	const frameVis = {};
+	for (const key of LANE_KEYS) {
+		const s = d.lanes[key];
+		if (!s) throw new ProjectError("malformed", `missing lane ${key}`);
+		const lane = lanes[key];
+		lane.A.bits = requireHex(s.a, N, `lanes.${key}.a`);
+		lane.B.bits = requireHex(s.b, N, `lanes.${key}.b`);
+		lane.showB = requireBool(s.showB, `lanes.${key}.showB`);
+		if (!BINOPS.includes(s.binop)) throw new ProjectError("malformed", `lanes.${key}.binop`);
+		lane.binop = s.binop;
+		lane.edit = s.edit === "b" ? "b" : "a";
+		lane.seededB = s.seededB === true;
+		lane.lfoB = typeof s.lfoB === "string" ? s.lfoB : "0";
+		lane.colA = requireIndex(s.colA, `lanes.${key}.colA`);
+		lane.colB = requireIndex(s.colB, `lanes.${key}.colB`);
+		focus[key] = lenientFocus(s.focus);
+		frameVis[key] = lenientFrameVis(s.frameVis);
+	}
+	const routing = createRouting();
+	const rawRoutes = Array.isArray(d.routes) ? d.routes : [];
+	for (const raw of rawRoutes) {
+		const r = raw;
+		if (typeof r.from !== "string" || typeof r.to !== "string") throw new ProjectError("malformed", "route must have from/to port strings");
+		const from = parsePort(r.from, true);
+		const to = parsePort(r.to, false);
+		const mix = MIXES.includes(r.mix) ? r.mix : "set";
+		const route = {
+			id: `${from.lane}.${from.frame}>${to.lane}.${to.frame}`,
+			from: {
+				lane: from.lane,
+				frame: from.frame
+			},
+			to: {
+				lane: to.lane,
+				frame: to.frame
+			},
+			delay: false,
+			mix
+		};
+		if (routing.routes.some((x) => x.to.lane === route.to.lane && x.to.frame === route.to.frame)) throw new ProjectError("malformed", `two routes drive ${r.to}`);
+		routing.routes.push(route);
+	}
+	for (const [key, value] of Object.entries(d.parked ?? {})) {
+		const port = parsePort(key, false);
+		if (!routing.routes.some((r) => r.to.lane === port.lane && r.to.frame === port.frame)) throw new ProjectError("malformed", `parked base for an unpatched input: ${key}`);
+		routing.parked.set(`${port.lane}:${port.frame}`, requireHex(value, N, `parked.${key}`));
+	}
+	const view = {
+		lane: d.view && LANE_KEYS.includes(d.view.lane) ? d.view.lane : "1",
+		view3d: d.view?.view3d === true,
+		split3d: d.view?.split3d === true,
+		splitPair: d.view?.splitPair && Array.isArray(d.view.splitPair) && d.view.splitPair.length === 2 ? [d.view.splitPair[0], d.view.splitPair[1]] : ["1", "2"],
+		activePane: d.view?.activePane === 1 ? 1 : 0
+	};
+	markDelays(routing);
+	evaluateAll(routing, lanes, N);
+	return {
+		lanes,
+		routing,
+		N,
+		view,
+		dataset: lenientDataset(d.dataset),
+		extras: {
+			focus,
+			frameVis,
+			lfoMode: lenientLfoMode(d.view?.lfoMode),
+			lfoRate: lenientLfoRate(d.view?.lfoRate)
+		}
+	};
+}
+/** Convenience: engine state -> pretty JSON text. */
+var stringifyProject = (doc) => JSON.stringify(doc, null, 2);
+// src/state/project-bridge.ts
+/**
+* App <-> `.bitwave` bridge (F5).
+*
+* The core owns the document schema (`src/core/project.ts`); this module maps
+* the app's live tree (`S`, the routing singleton, `DEMO`) to and from a
+* `ProjectDoc`. It is DOM-free so the round trip is testable in Node and the
+* desktop shell can reuse it.
+*
+* Unknown top-level fields from a loaded document are remembered and merged
+* back on the next capture, so a file written by a newer build survives a
+* load/save cycle in this one.
+*/
+var SLOT_OF = {
+	"1": "A",
+	"2": "B",
+	"3": "C"
+};
+var LANE_OF = {
+	A: "1",
+	B: "2",
+	C: "3"
+};
+var KNOWN_TOP_LEVEL = /* @__PURE__ */ new Set([
+	"schema",
+	"app",
+	"savedAt",
+	"N",
+	"view",
+	"lanes",
+	"routes",
+	"parked",
+	"dataset"
+]);
+var unknownFields = {};
+/** Keep top-level fields this build does not understand, for the next save. */
+function rememberUnknownFields(raw) {
+	unknownFields = {};
+	if (typeof raw !== "object" || raw === null) return;
+	for (const [key, value] of Object.entries(raw)) if (!KNOWN_TOP_LEVEL.has(key)) unknownFields[key] = value;
+}
+/** Snapshot the live instrument as a versioned project document. */
+function captureProject(now = (/* @__PURE__ */ new Date()).toISOString()) {
+	const view = {
+		lane: LANE_OF[S.slot],
+		view3d: S.view3d,
+		split3d: S.split3d,
+		splitPair: [LANE_OF[S.splitPair[0]], LANE_OF[S.splitPair[1]]],
+		activePane: S.activePane === 1 ? 1 : 0
+	};
+	const focus = {};
+	const frameVis = {};
+	for (const key of SLOT_KEYS) {
+		const lane = LANE_OF[key];
+		focus[lane] = S.slots[key].focus;
+		frameVis[lane] = { ...S.slots[key].frameVis };
+	}
+	const dataset = DEMO.rows.length ? {
+		cols: DEMO.cols.slice(),
+		rows: DEMO.rows.map((row) => row.slice()),
+		index: DEMO.i
+	} : null;
+	const doc = serializeProject(coreLanes(), routing, S.N, view, dataset, now, {
+		focus,
+		frameVis,
+		lfoMode: S.lfo.mode,
+		lfoRate: S.lfo.rate
+	});
+	return {
+		...unknownFields,
+		...doc
+	};
+}
+function clampIndex(value, length) {
+	if (length === 0) return 0;
+	const n = typeof value === "number" && Number.isInteger(value) ? value : 0;
+	return Math.max(0, Math.min(length - 1, n));
+}
+/**
+* Materialize a project document into the live tree. Mutates only state (no
+* DOM); the caller re-renders and runs one transaction notification.
+*/
+function applyProject(raw) {
+	const rawN = typeof raw === "object" && raw !== null ? raw.N : void 0;
+	if (typeof rawN === "number" && !SIZES.includes(rawN)) return {
+		ok: false,
+		code: "malformed",
+		message: `unsupported register width ${rawN}; this build offers ${SIZES.join("/")} bits`,
+		dataset: false
+	};
+	let loaded;
+	try {
+		loaded = deserializeProject(raw);
+	} catch (error) {
+		if (error instanceof ProjectError) return {
+			ok: false,
+			code: error.code,
+			message: error.message,
+			dataset: false
+		};
+		return {
+			ok: false,
+			code: "malformed",
+			message: String(error),
+			dataset: false
+		};
+	}
+	const { lanes, routing: loadedRouting, N, view, dataset, extras } = loaded;
+	S.N = N;
+	for (const laneKey of [
+		"1",
+		"2",
+		"3"
+	]) {
+		const sl = S.slots[SLOT_OF[laneKey]];
+		const src = lanes[laneKey];
+		sl.A = makeReg(N);
+		sl.B = makeReg(N);
+		sl.Z = makeReg(N);
+		sl.A.bits.set(src.A.bits);
+		sl.B.bits.set(src.B.bits);
+		sl.showB = src.showB;
+		sl.binop = src.binop;
+		sl.edit = src.edit;
+		sl.seededB = src.seededB;
+		sl.lfoB = src.lfoB;
+		sl.colA = src.colA;
+		sl.colB = src.colB;
+		sl.focus = extras.focus[laneKey] ?? "a";
+		sl.frameVis = { ...extras.frameVis[laneKey] };
+		syncTarget(sl.A, true);
+		syncTarget(sl.B, true);
+	}
+	routing.routes = loadedRouting.routes;
+	routing.parked = loadedRouting.parked;
+	S.slot = SLOT_OF[view.lane];
+	S.view3d = view.view3d;
+	S.split3d = view.split3d;
+	S.splitPair = [SLOT_OF[view.splitPair[0]], SLOT_OF[view.splitPair[1]]];
+	S.activePane = view.activePane === 1 ? 1 : 0;
+	S.copyArmed = false;
+	S.drag = -1;
+	S.hoverReg = null;
+	S.hoverJ = -1;
+	S.lfo = {
+		on: false,
+		mode: extras.lfoMode,
+		rate: extras.lfoRate,
+		t: 0,
+		base: null
+	};
+	S.lfoAcc = 0;
+	if (dataset) {
+		DEMO.cols = dataset.cols.slice();
+		DEMO.rows = dataset.rows.map((row) => row.slice());
+		DEMO.i = clampIndex(dataset.index, DEMO.rows.length);
+	} else {
+		DEMO.cols = [];
+		DEMO.rows = [];
+		DEMO.i = 0;
+	}
+	evaluate(true);
+	return {
+		ok: true,
+		dataset: Boolean(dataset)
+	};
+}
+// src/io/autosave.js
+/**
+* Autosave (F5) — the work survives a reload.
+*
+* One debounced `localStorage` write per settled transaction burst. The LFO
+* ticks every 125 ms and a drag commits per pointermove, so a plain timer that
+* resets on each transaction naturally writes only when the instrument settles
+* (DESIGN §10.19/§10.20 in spirit). Storage failures (private mode, a browser
+* that blocks `file://` storage) are non-fatal: the instrument keeps working,
+* just without persistence.
+*/
+var AUTOSAVE_KEY = "bitwave.autosave.v2";
+var DEBOUNCE_MS$1 = 650;
+function createAutosave(store, { enabled = true } = {}) {
+	let timer = 0;
+	let available = true;
+	let active = enabled;
+	function saveNow() {
+		clearTimeout(timer);
+		timer = 0;
+		if (!active) return false;
+		try {
+			localStorage.setItem(AUTOSAVE_KEY, stringifyProject(captureProject()));
+			available = true;
+			return true;
+		} catch {
+			available = false;
+			return false;
+		}
+	}
+	function schedule() {
+		clearTimeout(timer);
+		if (!active) return;
+		timer = setTimeout(saveNow, DEBOUNCE_MS$1);
+	}
+	/** Returns the raw parsed document, or null when nothing usable is stored. */
+	function load() {
+		if (!active) return null;
+		try {
+			const text = localStorage.getItem(AUTOSAVE_KEY);
+			return text ? JSON.parse(text) : null;
+		} catch {
+			return null;
+		}
+	}
+	function clear() {
+		clearTimeout(timer);
+		timer = 0;
+		try {
+			localStorage.removeItem(AUTOSAVE_KEY);
+		} catch {}
+	}
+	function setEnabled(value) {
+		active = value;
+		if (!active) clearTimeout(timer);
+	}
+	store.subscribe(schedule);
+	window.addEventListener("beforeunload", saveNow);
+	return {
+		load,
+		saveNow,
+		schedule,
+		clear,
+		setEnabled,
+		isEnabled: () => active,
+		isAvailable: () => available
+	};
+}
+/**
+* Budget for the encoded payload, i.e. the characters after `bw=` (no prefix,
+* no leading `#`). A 256-bit document without a dataset is well under this;
+* a full CSV dataset is what can overflow it.
+*/
+var SHARE_MAX_CHARS = 2e3;
+var ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+/** UTF-8 bytes for a string. JSON.stringify never emits lone surrogates. */
+function toUtf8(text) {
+	const bytes = [];
+	for (let i = 0; i < text.length; i++) {
+		let cp = text.charCodeAt(i);
+		if (cp >= 55296 && cp <= 56319 && i + 1 < text.length) {
+			const low = text.charCodeAt(i + 1);
+			if (low >= 56320 && low <= 57343) {
+				cp = 65536 + (cp - 55296 << 10) + (low - 56320);
+				i++;
+			}
+		}
+		if (cp < 128) bytes.push(cp);
+		else if (cp < 2048) bytes.push(192 | cp >> 6, 128 | cp & 63);
+		else if (cp < 65536) bytes.push(224 | cp >> 12, 128 | cp >> 6 & 63, 128 | cp & 63);
+		else bytes.push(240 | cp >> 18, 128 | cp >> 12 & 63, 128 | cp >> 6 & 63, 128 | cp & 63);
+	}
+	return new Uint8Array(bytes);
+}
+/** Strict UTF-8 decode: invalid/overlong/truncated input is a malformed share. */
+function fromUtf8(bytes) {
+	const fail = (at) => {
+		throw new ProjectError("malformed", `share payload is not valid UTF-8 at byte ${at}`);
+	};
+	let out = "";
+	let i = 0;
+	while (i < bytes.length) {
+		const lead = bytes[i];
+		if (lead < 128) {
+			out += String.fromCharCode(lead);
+			i += 1;
+			continue;
+		}
+		let need = 0;
+		let cp = 0;
+		let min = 0;
+		if ((lead & 224) === 192) {
+			need = 1;
+			cp = lead & 31;
+			min = 128;
+		} else if ((lead & 240) === 224) {
+			need = 2;
+			cp = lead & 15;
+			min = 2048;
+		} else if ((lead & 248) === 240) {
+			need = 3;
+			cp = lead & 7;
+			min = 65536;
+		} else fail(i);
+		if (i + need >= bytes.length) fail(i);
+		for (let k = 1; k <= need; k++) {
+			const next = bytes[i + k];
+			if ((next & 192) !== 128) fail(i + k);
+			cp = cp << 6 | next & 63;
+		}
+		if (cp < min || cp > 1114111) fail(i);
+		if (cp >= 55296 && cp <= 57343) fail(i);
+		i += need + 1;
+		if (cp < 65536) out += String.fromCharCode(cp);
+		else {
+			const rest = cp - 65536;
+			out += String.fromCharCode(55296 + (rest >> 10), 56320 + (rest & 1023));
+		}
+	}
+	return out;
+}
+/** Base64url, no padding: 4 chars per 3 bytes. */
+function toBase64Url(bytes) {
+	let out = "";
+	for (let i = 0; i < bytes.length; i += 3) {
+		const b0 = bytes[i];
+		const has1 = i + 1 < bytes.length;
+		const has2 = i + 2 < bytes.length;
+		const b1 = has1 ? bytes[i + 1] : 0;
+		const b2 = has2 ? bytes[i + 2] : 0;
+		out += ALPHABET[b0 >> 2];
+		out += ALPHABET[(b0 & 3) << 4 | b1 >> 4];
+		if (has1) out += ALPHABET[(b1 & 15) << 2 | b2 >> 6];
+		if (has2) out += ALPHABET[b2 & 63];
+	}
+	return out;
+}
+/** Reverse of toBase64Url. Throws ProjectError("malformed") on bad input. */
+function fromBase64Url(payload) {
+	if (payload.length % 4 === 1) throw new ProjectError("malformed", "share payload has an impossible base64url length");
+	const bytes = new Uint8Array(Math.floor(payload.length * 3 / 4));
+	let acc = 0;
+	let bits = 0;
+	let written = 0;
+	for (let i = 0; i < payload.length; i++) {
+		const value = ALPHABET.indexOf(payload[i]);
+		if (value < 0) throw new ProjectError("malformed", `share payload is not base64url at index ${i}`);
+		acc = acc << 6 | value;
+		bits += 6;
+		if (bits >= 8) {
+			bits -= 8;
+			bytes[written++] = acc >> bits & 255;
+		}
+	}
+	return bytes;
+}
+/** JSON document -> unpadded base64url payload. */
+function encodeShare(doc) {
+	const json = JSON.stringify(doc);
+	if (typeof json !== "string") throw new ProjectError("malformed", "share document is not JSON-serializable");
+	return toBase64Url(toUtf8(json));
+}
+/** Unpadded base64url payload -> JSON document. Throws ProjectError. */
+function decodeShare(payload) {
+	const text = fromUtf8(fromBase64Url(payload));
+	let doc;
+	try {
+		doc = JSON.parse(text);
+	} catch {
+		throw new ProjectError("malformed", "share payload is not JSON");
+	}
+	return doc;
+}
+/** `#bw=<payload>` for `history.replaceState`. */
+function shareFragment(doc) {
+	return "#bw=" + encodeShare(doc);
+}
+/**
+* Read a shared document from a `location.hash`, accepting either the full
+* fragment (`#bw=...`) or the bare payload form (`bw=...`). Returns null when
+* the hash carries no share (empty, a different fragment, or `bw=` with no
+* payload); a present-but-corrupt payload throws ProjectError.
+*/
+function parseShareHash(hash) {
+	const text = hash.startsWith("#") ? hash.slice(1) : hash;
+	if (!text.startsWith("bw=")) return null;
+	const payload = text.slice(3);
+	if (payload === "") return null;
+	return decodeShare(payload);
+}
+// src/io/share-url.js
+/**
+* URL-fragment sharing (F5) — the address bar is the share link.
+*
+* The current document (minus the dataset when it would overflow the budget)
+* is encoded into `#bw=...` on every settled change with `replaceState`, so a
+* teacher can copy the URL and hand a student the exact state. Reading a link
+* wins over the autosave. Works from `file://` because only the fragment is
+* used — no network, no server.
+*/
+var MAX_FRAGMENT = SHARE_MAX_CHARS + 1;
+var DEBOUNCE_MS = 550;
+function createShareUrl({ allow = true } = {}) {
+	let timer = 0;
+	let enabled = false;
+	function encodeCurrent() {
+		const doc = captureProject();
+		let fragment = shareFragment(doc);
+		if (fragment.length > MAX_FRAGMENT && doc.dataset) {
+			const { dataset, ...rest } = doc;
+			fragment = shareFragment(rest);
+		}
+		return fragment.length <= MAX_FRAGMENT ? fragment : null;
+	}
+	function update() {
+		if (!enabled || !allow) return;
+		const fragment = encodeCurrent();
+		if (!fragment || fragment === location.hash) return;
+		try {
+			history.replaceState(null, "", fragment);
+		} catch {}
+	}
+	function schedule() {
+		clearTimeout(timer);
+		if (!allow) return;
+		timer = setTimeout(update, DEBOUNCE_MS);
+	}
+	function start() {
+		if (!allow) return;
+		enabled = true;
+		schedule();
+	}
+	/** The raw shared document, or null when the URL carries no (valid) state. */
+	function read() {
+		return parseShareHash(location.hash);
+	}
+	function clear() {
+		enabled = false;
+		clearTimeout(timer);
+		try {
+			history.replaceState(null, "", location.pathname + location.search);
+		} catch {}
+	}
+	return {
+		read,
+		schedule,
+		start,
+		clear,
+		update
+	};
+}
+// src/io/project-file.js
+/**
+* `.bitwave` project file — download the current document, read a chosen file.
+*
+* I/O only (Blob + FileReader); the state mapping lives in
+* `src/state/project-bridge.ts` and the schema in `src/core/project.ts`.
+*/
+function stamp(date) {
+	const pad = (n) => String(n).padStart(2, "0");
+	return `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}-${pad(date.getHours())}${pad(date.getMinutes())}`;
+}
+/** Captures the instrument and triggers a `.bitwave` download. Returns the name. */
+function downloadProject(date = /* @__PURE__ */ new Date()) {
+	const filename = `bitwave-project-${stamp(date)}.bitwave`;
+	const text = stringifyProject(captureProject(date.toISOString()));
+	const blob = new Blob([text], { type: "application/json;charset=utf-8" });
+	const url = URL.createObjectURL(blob);
+	const anchor = document.createElement("a");
+	anchor.href = url;
+	anchor.download = filename;
+	anchor.click();
+	URL.revokeObjectURL(url);
+	return filename;
+}
+/** Reads a user-chosen project file as text. Rejects on read errors. */
+function readProjectFile(file) {
+	return new Promise((resolve, reject) => {
+		const reader = new FileReader();
+		reader.onload = () => resolve(String(reader.result || ""));
+		reader.onerror = () => reject(reader.error || /* @__PURE__ */ new Error("could not read the file"));
+		reader.readAsText(file);
+	});
 }
 // src/render/canvas.js
 /**
@@ -3045,6 +3992,16 @@ var getPad = () => PAD;
 	const store = createStore(S);
 	const prefersReducedMotion = () => window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 	const liveStatus = createLiveStatus(store);
+	const freshSession = new URLSearchParams(location.search).has("fresh");
+	const autosave = createAutosave(store, { enabled: !freshSession });
+	const share = createShareUrl({ allow: !freshSession });
+	let bootProjectDoc = null;
+	const csvStatusEl = document.getElementById("csvStatus");
+	function setSourceStatus(text, isError = false) {
+		if (!csvStatusEl) return;
+		csvStatusEl.textContent = text;
+		csvStatusEl.classList.toggle("is-error", Boolean(isError));
+	}
 	createHelpPanel({
 		panel: document.getElementById("helpPanel"),
 		button: document.getElementById("helpBtn"),
@@ -3416,6 +4373,47 @@ var getPad = () => PAD;
 		}
 	});
 	const hintEl = document.getElementById("hint");
+	createProjectMenu({
+		button: document.getElementById("projectBtn"),
+		items: [
+			{
+				label: "save project",
+				title: "Download this instrument as a .bitwave file",
+				onSelect: () => saveProjectFile()
+			},
+			{
+				label: "open project…",
+				title: "Open a .bitwave project file",
+				onSelect: () => openProjectFile()
+			},
+			{
+				label: "reset instrument",
+				title: "Clear autosave and share link and return to the boot state",
+				onSelect: () => resetInstrument()
+			}
+		]
+	});
+	const projectFileInput = document.getElementById("projectFile");
+	projectFileInput.addEventListener("change", async () => {
+		const file = projectFileInput.files && projectFileInput.files[0];
+		if (!file) return;
+		projectFileInput.value = "";
+		let text;
+		try {
+			text = await readProjectFile(file);
+		} catch {
+			setSourceStatus(`could not read ${file.name}`, true);
+			return;
+		}
+		let raw;
+		try {
+			raw = JSON.parse(text);
+		} catch {
+			setSourceStatus(`could not open ${file.name}: not a JSON document`, true);
+			return;
+		}
+		if (applyLoadedProject(raw, file.name)) share.start();
+	});
 	function slotExprText(sl, withViewPrefix) {
 		const hasCsv = DEMO.rows.length > 0;
 		const lhs = hasCsv && sl.colA >= 0 && DEMO.cols[sl.colA] ? shortCol(DEMO.cols[sl.colA], 14) : frameName(sl.key, "a");
@@ -3539,8 +4537,10 @@ var getPad = () => PAD;
 		renderStrip,
 		updateReadouts,
 		onSizeChange: (...args) => controls.setSize(...args),
-		onBindingsChanged: () => sources.render()
+		onBindingsChanged: () => sources.render(),
+		onStatus: (text, isError) => setSourceStatus(text, isError)
 	});
+	setObservationStatus(setSourceStatus);
 	const sources = createSourceTable({
 		store,
 		evaluate,
@@ -3558,6 +4558,7 @@ var getPad = () => PAD;
 		selectSlot,
 		setSplitMode,
 		copyMenu,
+		onDropError: (name) => setSourceStatus(`could not read ${name}`, true),
 		S,
 		DEMO
 	});
@@ -3605,6 +4606,82 @@ var getPad = () => PAD;
 		draw();
 		requestAnimationFrame(loop);
 	}
+	/** Re-render every surface after a whole-tree replacement. */
+	function refreshAfterLoad() {
+		S.hoverReg = null;
+		S.hoverJ = -1;
+		S.drag = -1;
+		controls.setSize(SIZES.indexOf(S.N));
+		controls.syncEditUi();
+		syncViewUi();
+		csv.renderUi();
+		if (frameNav.isOpen()) frameNav.render(S.slot);
+		else frameNav.close(false);
+		sources.render();
+		renderStrip();
+		updateReadouts();
+		fitCanvas();
+	}
+	/** Apply a document through one transaction, then refresh every surface. */
+	function applyLoadedProject(raw, name, { quiet = false } = {}) {
+		rememberUnknownFields(raw);
+		let result;
+		store.patch(() => {
+			result = applyProject(raw);
+		});
+		if (!result || !result.ok) {
+			setSourceStatus(`could not open ${name}: ${result ? result.message : "invalid document"}`, true);
+			return false;
+		}
+		refreshAfterLoad();
+		if (!quiet) setSourceStatus(`opened ${name}${result.dataset ? ` · ${DEMO.rows.length} rows · ${DEMO.cols.length} columns` : " · no dataset"}`);
+		return true;
+	}
+	function saveProjectFile() {
+		const name = downloadProject();
+		if (autosave.isEnabled()) autosave.saveNow();
+		setSourceStatus(`saved ${name}`);
+	}
+	function openProjectFile() {
+		projectFileInput.click();
+	}
+	function resetInstrument() {
+		if (!bootProjectDoc) return;
+		autosave.clear();
+		share.clear();
+		if (applyLoadedProject(bootProjectDoc, "boot state", { quiet: true })) {
+			setSourceStatus("reset to the boot state");
+			share.start();
+		}
+	}
+	/** Boot priority: shared link, then autosave, then the boot defaults. */
+	function restoreSession() {
+		if (freshSession) {
+			setSourceStatus("fresh session — autosave and sharing are off");
+			return;
+		}
+		let shared = null;
+		try {
+			shared = share.read();
+		} catch {
+			setSourceStatus("could not read the shared link", true);
+		}
+		if (shared) {
+			if (applyLoadedProject(shared, "shared link", { quiet: true })) {
+				setSourceStatus("restored from the shared link");
+				return;
+			}
+		}
+		const saved = autosave.load();
+		if (saved) {
+			if (applyLoadedProject(saved, "autosave", { quiet: true })) {
+				setSourceStatus("restored from autosave");
+				return;
+			}
+			autosave.clear();
+		}
+		setSourceStatus("no dataset loaded");
+	}
 	function boot() {
 		applyPreset(S.slots.A.A, "sine");
 		applyPreset(S.slots.A.B, "square");
@@ -3629,6 +4706,9 @@ var getPad = () => PAD;
 		updateReadouts();
 		new ResizeObserver(() => fitCanvas()).observe(canvas);
 		fitCanvas();
+		bootProjectDoc = captureProject();
+		restoreSession();
+		share.start();
 		requestAnimationFrame(loop);
 	}
 	function deepFreeze(value) {
@@ -4700,8 +5780,9 @@ var getPad = () => PAD;
     min-width: 34px;
   }
 
-  /* Explicit copy menu — overlays, focus moves in, Esc cancels. */
-  .copy-menu {
+  /* Explicit copy/project menus — overlays, focus moves in, Esc cancels. */
+  .copy-menu,
+  .project-menu {
     position: fixed;
     z-index: 20;
     min-width: 110px;
@@ -4712,7 +5793,8 @@ var getPad = () => PAD;
     box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
   }
 
-  .copy-menu .op {
+  .copy-menu .op,
+  .project-menu .op {
     display: block;
     width: 100%;
     text-align: left;
@@ -4721,7 +5803,21 @@ var getPad = () => PAD;
   }
 
   .copy-menu .op:hover,
-  .copy-menu .op:focus-visible { background: var(--panel-hover); }
+  .copy-menu .op:focus-visible,
+  .project-menu .op:hover,
+  .project-menu .op:focus-visible { background: var(--panel-hover); }
+
+  /* Dataset / project status line (F5) — visible feedback under source. */
+  .src-status {
+    flex: 1 1 100%;
+    margin-top: 2px;
+    font-family: var(--sans);
+    font-size: 10px;
+    letter-spacing: 0.03em;
+    color: var(--dim);
+  }
+
+  .src-status.is-error { color: var(--inf); }
 
   /* Keyboard map — a utility panel, not onboarding. */
   .help-panel {
@@ -4880,6 +5976,9 @@ var getPad = () => PAD;
     <label>source</label>
     <button class="op" id="csvBtn" title="Import a CSV or TSV of examples">import csv</button>
     <input type="file" id="csvFile" accept=".csv,.tsv,text/csv,text/plain" hidden />
+    <button class="op" id="demoBtn" title="Load the embedded 8-row demo dataset">demo</button>
+    <button class="op" id="projectBtn" aria-haspopup="menu" aria-expanded="false" title="Save, open or reset the project document">project…</button>
+    <input type="file" id="projectFile" accept=".bitwave,.json,application/json" hidden />
     <div class="seg" id="stepSeg" role="group" aria-label="example stepper">
       <button class="op" id="prevEx" title="Previous example (←)" aria-label="◀ previous example">◀</button>
       <button class="op" id="nextEx" title="Next example (→)" aria-label="▶ next example">▶</button>
@@ -4891,6 +5990,7 @@ var getPad = () => PAD;
       <button class="op" id="exportObsBtn" title="Export observations to CSV">export</button>
     </div>
     <span class="excount" id="obsCount">0 obs</span>
+    <span id="csvStatus" class="src-status" role="status" aria-live="polite" aria-atomic="true">no dataset loaded</span>
   </div>
 
   <div class="group" role="group" aria-label="register edit">

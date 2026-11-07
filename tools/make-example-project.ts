@@ -35,6 +35,7 @@ const dataset = {
     ["2", "852101258ADEFEDA", "FFFF0000FFFF0000"],
     ["3", "FEDA852101257ADE", "0F0F0F0F0F0F0F0F"],
   ],
+  index: 1,
 };
 
 const doc = serializeProject(
@@ -44,6 +45,16 @@ const doc = serializeProject(
   { lane: "1", view3d: false, split3d: false, splitPair: ["1", "2"], activePane: 0 },
   dataset,
   "2026-11-05T00:00:00.000Z",
+  {
+    focus: { "1": "z", "2": "a", "3": "b" },
+    frameVis: {
+      "1": { a: true, b: true, z: true },
+      "2": { a: true, b: true, z: true },
+      "3": { a: true, b: false, z: true },
+    },
+    lfoMode: "rotcw",
+    lfoRate: 4,
+  },
 );
 
 const out = join(import.meta.dirname, "..", "examples", "demo.bitwave.json");

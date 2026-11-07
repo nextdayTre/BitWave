@@ -386,8 +386,8 @@ The easing constant is deliberately high (`0.24`) — fast enough to feel like t
   `—`. It is a **transient panel, not a mode**: Esc or an outside click closes it, and
   the stage view is unchanged. A fresh import rebuilds the board; driven inputs are
   locked and unplugging restores the parked base (D2).
-- **Example stepper** (`data` group) — `import csv`, `◀ n/total ▶`, `sources`, and
-  an **Observation Logger** (`log` and `export`).
+- **Example stepper** (`data` group) — `import csv`, `demo`, `project…`, `◀ n/total ▶`,
+  `sources`, and an **Observation Logger** (`log` and `export`).
   Stepping writes the row's cells into A (and B if mapped) for **undriven** inputs.
   Arrow keys step when focus is not in a control and not in the strip (the strip owns
   `←/→` for nibble focus); a file dropped anywhere loads. The
@@ -395,6 +395,20 @@ The easing constant is deliberately high (`0.24`) — fast enough to feel like t
   Z hex, Pop-Z, truth table counts, timestamp) and downloads them directly as
   `bitwave_observations.csv`. This is the daily-use path, so it is the first group in
   the controls row.
+- **Demo dataset** (`demo`) — an embedded eight-row, four-column table (rotated sine,
+  ramp, 16-bit mask). It goes through the same parser/typing/binding path as a CSV
+  import, so it is data, not onboarding; the status line names it.
+- **Project menu** (`project…`) — `role="menu"` with `save project`, `open project…` and
+  `reset instrument`; focus moves in, Esc/outside closes and returns focus (same contract
+  as the copy menu). Save downloads a `.bitwave` JSON document; open reads one and applies
+  it through one transaction; reset clears autosave + share link and returns to the boot
+  state. A newer schema is refused with a readable reason (read-only open is not built).
+- **Dataset status line** (`#csvStatus`, `source` group) — one visible polite `role="status"`
+  row: `loaded N rows · M columns from <name>`, `restored from autosave`,
+  `restored from the shared link`, `reset to the boot state`, or a refusal
+  (`could not read <name>: no numeric columns`, `newer than supported`). Error text uses the
+  existing `--inf` warmth; no third hue. It complements — not replaces — the sr-only
+  committed-change region.
 - **Segmented control** (`.seg`) — a joined set of `button.op` (currently the lane set
   `1 | 2 | 3`, the stepper's `◀ ▶`, and per-pane focus). **Mutually exclusive sets are
   `role="radiogroup"` with `role="radio"` + `aria-checked` and a roving `tabindex`**;
@@ -606,6 +620,19 @@ something that looked fine until it was measured.
 38. **Accessibility work does not change the palette.** Tokens, alphas and the dim
     hierarchy are hands-off (D10 / Q8); accessibility is carried by roles, names, keys,
     targets, reflow and motion only.
+39. **Persistence is versioned and derived-safe.** `.bitwave` schema 2 is additive over
+    schema 1 (focus/frameVis, LFO mode/rate, dataset cursor); A/B hexes persist, **Z never**
+    does; routes and parked bases persist so a saved patch board re-opens identically.
+    Top-level unknown fields are preserved across load/save. A newer schema is refused,
+    never half-applied. Register widths outside `[8,16,32,64,128,256]` are refused at the
+    app boundary even though the core accepts other multiples of 8.
+40. **Autosave captures settled state only.** One debounced write per transaction burst;
+    transient interaction state (copy menu, drag, hover, LFO snapshot) is never stored.
+    `?fresh` opens an ephemeral session that neither reads nor writes autosave/share state.
+41. **The share link is the fragment, not the page.** `#bw=` carries the document minus the
+    dataset when the budget would overflow, updated with `replaceState` only; a shared link
+    wins over autosave on boot and must stay ≤ ~2 KB at 256 bits. It works from `file://`
+    (no network, no server).
 
 ---
 
@@ -648,6 +675,13 @@ The visual contract is measurable, so measure it rather than eyeballing:
   load; starting it caps at 4/s and commits without easing; the hint does not fade.
 - **Targets:** `.op.mini` ≥24 px tall, `width` thumb ≥24 px, and the nibble semantic target
   covers the whole nibble.
+- **Persistence:** `save project` downloads a schema-2 document; `open project…` applies one
+  (lanes, routes/parked bases, focus/frameVis, LFO mode/rate, dataset cursor) and a refresh
+  shows the restored width/lane/view; `reset instrument` returns to the boot state. A
+  document with a newer schema is refused with a readable error. Autosave survives a reload;
+  a shared `#bw=` link restores the same state (and wins over autosave); the link stays
+  ≤ ~2 KB at 256 bits; `?fresh` writes neither. Non-token CSV files and empty files are
+  refused with a status message and do not replace the current dataset.
 - **Automated a11y audit:** axe-core (dev-only, never in the artifact) reports **zero
   critical/serious** violations in the 2-D, A·B, 3-D and source-table states.
 
@@ -704,6 +738,12 @@ them.
   view); an explicit copy menu; `width` + whole-word hex entry; reserved-space disabled
   states; the `?` keyboard map and real table semantics for the truth table. Palette
   unchanged (D10).
+- **F5 persistence & reach** — `.bitwave` schema 2 (additive focus/frameVis, LFO mode/rate,
+  dataset cursor) with a DOM-free app bridge; explicit project menu (save/open/reset);
+  debounced autosave with a boot restore; shareable state in the URL fragment
+  (`replaceState`, ≤ ~2 KB at 256 bits); embedded 8-row demo dataset; a visible dataset
+  status line that refuses empty/non-token files; `?fresh` ephemeral sessions; the stale
+  `index.html.bak` removed from the distribution folder. Palette unchanged (D10).
 
 ### Next
 
@@ -721,8 +761,6 @@ them.
 - **Fold vs. truncate comparison.** Two curves from one register: refolded (wavefolder
   semantics) against truncated (real register overflow). The distinction is the most
   valuable single lesson in fixed-width arithmetic and deserves its own view.
-- **Shareable state.** Encode register size + bits + B + binop in the URL fragment so a
-  teacher can hand students an exact starting state.
 - **Endpoint-trend badge is coarse.** `step-down` compares first and last nibble, so a
   full sine reports `step-down`. Fine for the saw/skew cases it was built for; wrong for
   closed waves. Fix by reporting *net displacement* or by recognising a closed cycle.

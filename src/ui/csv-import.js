@@ -17,6 +17,7 @@ import {
 } from "../core/csv.ts";
 import { S, SLOT_KEYS, SIZES, syncTarget } from "../state/instrument.ts";
 import { DEMO } from "../state/dataset.ts";
+import { DEMO_CSV, DEMO_NAME } from "../state/demo-data.ts";
 import { isInputDriven, resetBindings } from "../state/bindings.ts";
 import { evaluate } from "../state/routing.ts";
 import { observations } from "../io/observations.js";
@@ -32,16 +33,22 @@ export function createCsvImport(deps) {
     updateReadouts,
     onSizeChange,
     onBindingsChanged,
+    onStatus,
   } = deps;
 
   const csvBtn = document.getElementById("csvBtn");
   const csvFile = document.getElementById("csvFile");
+  const demoBtn = document.getElementById("demoBtn");
   const stepSeg = document.getElementById("stepSeg");
   const exCount = document.getElementById("exCount");
   const prevEx = document.getElementById("prevEx");
   const nextEx = document.getElementById("nextEx");
   const obsSeg = document.getElementById("obsSeg");
   const obsCount = document.getElementById("obsCount");
+
+  function status(text, isError = false) {
+    if (onStatus) onStatus(text, isError);
+  }
 
   function writeBitsInto(reg, arr) {
     reg.bits = alignBits(arr, S.N);
@@ -117,16 +124,35 @@ export function createCsvImport(deps) {
     }
   }
 
-  function loadCSV(text) {
+  function loadCSV(text, name = "file") {
     const rows = parseDelimited(text).filter((r) => r.some((c) => normCell(c) !== ""));
-    if (rows.length < 1) return;
+    if (rows.length < 1) {
+      status(`could not read ${name}: no data rows`, true);
+      return;
+    }
 
     const hasHeader = !isDataRow(rows[0]);
     const cols = hasHeader
       ? rows[0].map((c, i) => String(c).trim() || `col${i + 1}`)
       : rows[0].map((_, i) => `col${i + 1}`);
     const body = hasHeader ? rows.slice(1) : rows;
-    if (!body.length) return;
+    if (!body.length) {
+      status(`could not read ${name}: header only, no data rows`, true);
+      return;
+    }
+
+    /* Validate before touching the live board: a file whose columns hold no
+       tokens at all must not leave stale data looking loaded (audit §2.9). */
+    const widths = cols.map((_, ci) => columnWidth(body, ci));
+    let best = -1, bestW = -1;
+    for (let ci = 0; ci < cols.length; ci++) {
+      if (widths[ci] > bestW) { bestW = widths[ci]; best = ci; }
+    }
+    if (bestW <= 0) {
+      status(`could not read ${name}: no numeric columns (expects hex or binary tokens)`, true);
+      return;
+    }
+    const primary = best;
 
     DEMO.cols = cols;
     DEMO.rows = body;
@@ -135,15 +161,6 @@ export function createCsvImport(deps) {
     /* A fresh import replaces the binding board: frame routes are dropped and
        the six rows are filled from the imported columns (D11). */
     resetBindings();
-
-    /* Default to the WIDEST token column, not the first: id/label columns
-       are often present and the payload is what you want to see. */
-    const widths = cols.map((_, ci) => columnWidth(DEMO.rows, ci));
-    let best = -1, bestW = -1;
-    for (let ci = 0; ci < cols.length; ci++) {
-      if (widths[ci] > bestW) { bestW = widths[ci]; best = ci; }
-    }
-    const primary = bestW > 0 ? best : 0;
 
     /* Collect payload-grade columns so lanes 2 & 3 pre-route extra columns
        automatically for instant multi-column / side-by-side comparison. */
@@ -195,15 +212,22 @@ export function createCsvImport(deps) {
     fitToMappedColumns();
     applyExample(0, true);
     onBindingsChanged();
+    status(`loaded ${body.length} rows · ${cols.length} columns from ${name}`);
+  }
+
+  function loadDemo() {
+    loadCSV(DEMO_CSV, DEMO_NAME);
   }
 
   csvBtn.addEventListener("click", () => csvFile.click());
+  if (demoBtn) demoBtn.addEventListener("click", loadDemo);
 
   csvFile.addEventListener("change", () => {
     const f = csvFile.files && csvFile.files[0];
     if (!f) return;
     const rd = new FileReader();
-    rd.onload = () => loadCSV(String(rd.result || ""));
+    rd.onload = () => loadCSV(String(rd.result || ""), f.name);
+    rd.onerror = () => status(`could not read ${f.name}`, true);
     rd.readAsText(f);
     csvFile.value = "";
   });
@@ -211,5 +235,5 @@ export function createCsvImport(deps) {
   prevEx.addEventListener("click", () => applyExample(DEMO.i - 1));
   nextEx.addEventListener("click", () => applyExample(DEMO.i + 1));
 
-  return { loadCSV, applyExample, renderUi: renderDemoUi, fitColumns: fitToMappedColumns };
+  return { loadCSV, loadDemo, applyExample, renderUi: renderDemoUi, fitColumns: fitToMappedColumns };
 }

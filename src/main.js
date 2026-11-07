@@ -2,6 +2,7 @@ import {
   FRAME_NAMES,
   OPSYM,
   S,
+  SIZES,
   SLOT_KEYS,
   curSlot,
   editKey,
@@ -48,6 +49,12 @@ import { createSourceTable } from "./ui/source-table.js";
 import { createLiveStatus } from "./ui/live-status.js";
 import { createCopyMenu } from "./ui/copy-menu.js";
 import { createHelpPanel } from "./ui/help.js";
+import { createProjectMenu } from "./ui/project-menu.js";
+import { setObservationStatus } from "./io/observations.js";
+import { createAutosave } from "./io/autosave.js";
+import { createShareUrl } from "./io/share-url.js";
+import { downloadProject, readProjectFile } from "./io/project-file.js";
+import { applyProject, captureProject, rememberUnknownFields } from "./state/project-bridge.ts";
 import { evalSpline } from "./core/spline.ts";
 import { G, canvasEl as canvas, draw, fitCanvas, getPad, shortCol } from "./render/canvas.js";
 import { focusNibble, nibsEl, patchNibble, renderStrip, syncHoverClasses } from "./render/strip.js";
@@ -73,6 +80,20 @@ import { toHexOf, updateReadouts } from "./render/readouts.js";
 
   /* One polite, atomic live region for committed changes (DESIGN §8/§10.34). */
   const liveStatus = createLiveStatus(store);
+
+  /* F5 — persistence & reach. `?fresh` opens an ephemeral instrument: it never
+     reads or writes the autosave/share state (a throwaway session or a check). */
+  const freshSession = new URLSearchParams(location.search).has("fresh");
+  const autosave = createAutosave(store, { enabled: !freshSession });
+  const share = createShareUrl({ allow: !freshSession });
+  let bootProjectDoc = null;
+
+  const csvStatusEl = document.getElementById("csvStatus");
+  function setSourceStatus(text, isError = false) {
+    if (!csvStatusEl) return;
+    csvStatusEl.textContent = text;
+    csvStatusEl.classList.toggle("is-error", Boolean(isError));
+  }
 
   /* Keyboard map panel — the one declared shortcut surface (F4 IA). */
   const help = createHelpPanel({
@@ -534,7 +555,49 @@ import { toHexOf, updateReadouts } from "./render/readouts.js";
   });
   const hintEl = document.getElementById("hint");
 
+  /* F5 — project document menu: save, open, reset (explicit, focus-in menu). */
+  const projectMenu = createProjectMenu({
+    button: document.getElementById("projectBtn"),
+    items: [
+      {
+        label: "save project",
+        title: "Download this instrument as a .bitwave file",
+        onSelect: () => saveProjectFile(),
+      },
+      {
+        label: "open project…",
+        title: "Open a .bitwave project file",
+        onSelect: () => openProjectFile(),
+      },
+      {
+        label: "reset instrument",
+        title: "Clear autosave and share link and return to the boot state",
+        onSelect: () => resetInstrument(),
+      },
+    ],
+  });
 
+  const projectFileInput = document.getElementById("projectFile");
+  projectFileInput.addEventListener("change", async () => {
+    const file = projectFileInput.files && projectFileInput.files[0];
+    if (!file) return;
+    projectFileInput.value = "";
+    let text;
+    try {
+      text = await readProjectFile(file);
+    } catch {
+      setSourceStatus(`could not read ${file.name}`, true);
+      return;
+    }
+    let raw;
+    try {
+      raw = JSON.parse(text);
+    } catch {
+      setSourceStatus(`could not open ${file.name}: not a JSON document`, true);
+      return;
+    }
+    if (applyLoadedProject(raw, file.name)) share.start();
+  });
 
   function slotExprText(sl, withViewPrefix) {
     const hasCsv = DEMO.rows.length > 0;
@@ -687,7 +750,9 @@ import { toHexOf, updateReadouts } from "./render/readouts.js";
     updateReadouts,
     onSizeChange: (...args) => controls.setSize(...args),
     onBindingsChanged: () => sources.render(),
+    onStatus: (text, isError) => setSourceStatus(text, isError),
   });
+  setObservationStatus(setSourceStatus);
 
   const sources = createSourceTable({
     store,
@@ -709,6 +774,7 @@ import { toHexOf, updateReadouts } from "./render/readouts.js";
     selectSlot,
     setSplitMode,
     copyMenu,
+    onDropError: (name) => setSourceStatus(`could not read ${name}`, true),
     S,
     DEMO,
   });
@@ -769,6 +835,91 @@ import { toHexOf, updateReadouts } from "./render/readouts.js";
   }
 
   /* ══════════════════════════════════════════════════════════
+     PERSISTENCE & REACH (F5) — project file, autosave, share link
+     ══════════════════════════════════════════════════════════ */
+
+  /** Re-render every surface after a whole-tree replacement. */
+  function refreshAfterLoad() {
+    S.hoverReg = null;
+    S.hoverJ = -1;
+    S.drag = -1;
+    controls.setSize(SIZES.indexOf(S.N));
+    controls.syncEditUi();
+    syncViewUi();
+    csv.renderUi();
+    if (frameNav.isOpen()) frameNav.render(S.slot);
+    else frameNav.close(false);
+    sources.render();
+    renderStrip();
+    updateReadouts();
+    fitCanvas();
+  }
+
+  /** Apply a document through one transaction, then refresh every surface. */
+  function applyLoadedProject(raw, name, { quiet = false } = {}) {
+    rememberUnknownFields(raw);
+    let result;
+    store.patch(() => { result = applyProject(raw); });
+    if (!result || !result.ok) {
+      setSourceStatus(`could not open ${name}: ${result ? result.message : "invalid document"}`, true);
+      return false;
+    }
+    refreshAfterLoad();
+    if (!quiet) {
+      const dataset = result.dataset
+        ? ` · ${DEMO.rows.length} rows · ${DEMO.cols.length} columns`
+        : " · no dataset";
+      setSourceStatus(`opened ${name}${dataset}`);
+    }
+    return true;
+  }
+
+  function saveProjectFile() {
+    const name = downloadProject();
+    if (autosave.isEnabled()) autosave.saveNow();
+    setSourceStatus(`saved ${name}`);
+  }
+
+  function openProjectFile() {
+    projectFileInput.click();
+  }
+
+  function resetInstrument() {
+    if (!bootProjectDoc) return;
+    autosave.clear();
+    share.clear();
+    if (applyLoadedProject(bootProjectDoc, "boot state", { quiet: true })) {
+      setSourceStatus("reset to the boot state");
+      share.start();
+    }
+  }
+
+  /** Boot priority: shared link, then autosave, then the boot defaults. */
+  function restoreSession() {
+    if (freshSession) {
+      setSourceStatus("fresh session — autosave and sharing are off");
+      return;
+    }
+    let shared = null;
+    try { shared = share.read(); } catch { setSourceStatus("could not read the shared link", true); }
+    if (shared) {
+      if (applyLoadedProject(shared, "shared link", { quiet: true })) {
+        setSourceStatus("restored from the shared link");
+        return;
+      }
+    }
+    const saved = autosave.load();
+    if (saved) {
+      if (applyLoadedProject(saved, "autosave", { quiet: true })) {
+        setSourceStatus("restored from autosave");
+        return;
+      }
+      autosave.clear();
+    }
+    setSourceStatus("no dataset loaded");
+  }
+
+  /* ══════════════════════════════════════════════════════════
      BOOT
      ══════════════════════════════════════════════════════════ */
 
@@ -805,6 +956,11 @@ import { toHexOf, updateReadouts } from "./render/readouts.js";
     const ro = new ResizeObserver(() => fitCanvas());
     ro.observe(canvas);
     fitCanvas();
+
+    /* F5: remember the boot state for Reset, then restore the session. */
+    bootProjectDoc = captureProject();
+    restoreSession();
+    share.start();
 
     requestAnimationFrame(loop);
   }

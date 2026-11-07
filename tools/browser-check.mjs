@@ -282,7 +282,21 @@ async function waitFor(expression, label, timeout = 5000) {
   throw new Error(`timed out waiting for ${label} (last: ${String(last).slice(0, 160)})`);
 }
 
-async function loadPage(url, { width = 1440, height = 900, settle = 300 } = {}) {
+let loadCounter = 0;
+
+function withQuery(url, parts) {
+  const query = parts.filter(Boolean).join("&");
+  if (!query) return url;
+  const hashAt = url.indexOf("#");
+  const base = hashAt === -1 ? url : url.slice(0, hashAt);
+  const hash = hashAt === -1 ? "" : url.slice(hashAt);
+  return `${base}${base.includes("?") ? "&" : "?"}${query}${hash}`;
+}
+
+async function loadPage(url, { width = 1440, height = 900, settle = 300, query = "" } = {}) {
+  /* A unique query makes every load a real document load even when only the
+     fragment differs (the share link lives in the fragment). */
+  const target = withQuery(url, [query, `chk=${++loadCounter}`]);
   consoleErrors.length = 0;
   await cdp.send('Emulation.setDeviceMetricsOverride', {
     width,
@@ -290,7 +304,7 @@ async function loadPage(url, { width = 1440, height = 900, settle = 300 } = {}) 
     deviceScaleFactor: 1,
     mobile: false,
   });
-  await cdp.send('Page.navigate', { url });
+  await cdp.send('Page.navigate', { url: target });
   await waitFor(`document.readyState === 'complete'`, 'document ready');
   await waitFor(
     `['hex', 'sizeOut', 'wave', 'nibs'].every((id) => document.getElementById(id))`,
@@ -453,6 +467,13 @@ try {
   await cdp.send('Page.enable');
   await cdp.send('Runtime.enable');
   await cdp.send('Log.enable');
+
+  /* Autosave (F5) persists state between loads on the same origin. Clear it at
+     the start of every document unless the URL carries `keep`, so each check
+     starts from the boot instrument and the persistence checks can opt in. */
+  await cdp.send('Page.addScriptToEvaluateOnNewDocument', {
+    source: `try { if (!location.search.includes("keep")) localStorage.clear(); } catch (e) {}`,
+  });
 
   cdp.on('Runtime.exceptionThrown', (params) => {
     const details = params.exceptionDetails;
@@ -1375,6 +1396,219 @@ try {
     assert(table.headers === 4, `truth column headers: ${table.headers}`);
     assert(table.cells === 16, `truth cells: ${table.cells}`);
     return 'role=table · 5 rows · 4 column headers · 16 cells';
+  });
+
+  /* 5f. F5 — persistence & reach ---------------------------------------- */
+  await runCheck('f5 · project menu: focus-in, Esc, open applies a document, reset returns to boot', async () => {
+    await loadApp();
+    await click('#projectBtn');
+    let menu = JSON.parse(await evaluate(`JSON.stringify({
+      open: !document.querySelector('.project-menu').hidden,
+      items: [...document.querySelectorAll('.project-menu [role="menuitem"]')].map((b) => b.textContent.trim()),
+      expanded: document.getElementById('projectBtn').getAttribute('aria-expanded'),
+      focused: document.activeElement.getAttribute('role')
+    })`));
+    assert(menu.open && menu.expanded === 'true', 'project menu did not open');
+    assert(
+      JSON.stringify(menu.items) === JSON.stringify(['save project', 'open project…', 'reset instrument']),
+      `project menu items: ${JSON.stringify(menu.items)}`
+    );
+    assert(menu.focused === 'menuitem', `focus not in the project menu: ${menu.focused}`);
+
+    await keydown('Escape');
+    menu = JSON.parse(await evaluate(`JSON.stringify({
+      open: !document.querySelector('.project-menu').hidden,
+      focused: document.activeElement.id
+    })`));
+    assert(menu.open === false && menu.focused === 'projectBtn', `Esc did not close cleanly: ${JSON.stringify(menu)}`);
+
+    const projectDoc = {
+      schema: 2, app: 'bitwave', savedAt: '2026-11-06T00:00:00.000Z', N: 16,
+      view: {
+        lane: '2', view3d: false, split3d: false, splitPair: ['1', '2'], activePane: 0,
+        lfoMode: 'slide', lfoRate: 8,
+      },
+      lanes: {
+        '1': { a: 'DEAD', b: 'BEEF', showB: true, binop: 'and', edit: 'b', seededB: true, lfoB: 'opp', colA: 0, colB: 2, focus: 'b', frameVis: { a: false, b: true, z: true } },
+        '2': { a: '0123', b: '4567', showB: false, binop: 'xor', edit: 'a', seededB: false, lfoB: '0', colA: -1, colB: -1, focus: 'a', frameVis: { a: true, b: true, z: true } },
+        '3': { a: '89AB', b: 'CDEF', showB: true, binop: 'add', edit: 'a', seededB: true, lfoB: 'q', colA: 1, colB: -1, focus: 'z', frameVis: { a: true, b: false, z: true } },
+      },
+      routes: [{ from: '1.z', to: '3.a', mix: 'set' }],
+      parked: { '3.a': '89AB' },
+    };
+    await evaluate(`(() => {
+      const doc = ${JSON.stringify(projectDoc)};
+      const transfer = new DataTransfer();
+      transfer.items.add(new File([JSON.stringify(doc)], 'roundtrip.bitwave', { type: 'application/json' }));
+      const input = document.getElementById('projectFile');
+      input.files = transfer.files;
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+      return true;
+    })()`);
+    await sleep(450);
+    const loaded = JSON.parse(await evaluate(`JSON.stringify({
+      size: document.getElementById('sizeOut').textContent.trim(),
+      lane: window.BitWave.state().lane,
+      a: window.BitWave.state().lanes['1'].frames.A,
+      focus: window.BitWave.state().lanes['1'].focus,
+      status: document.getElementById('csvStatus').textContent.trim()
+    })`));
+    assert(loaded.size === '16 bits · 4 nibbles', `opened width: ${loaded.size}`);
+    assert(loaded.a === 'DEAD', `opened lane 1 A: ${loaded.a}`);
+    assert(loaded.lane === 2, `opened lane: ${loaded.lane}`);
+    assert(loaded.focus === 'B', `opened focus: ${loaded.focus}`);
+    assert(/opened roundtrip\.bitwave/.test(loaded.status), `open status: ${loaded.status}`);
+
+    await click('#projectBtn');
+    await click('.project-menu [role="menuitem"]:last-child');
+    await sleep(350);
+    const reset = JSON.parse(await evaluate(`JSON.stringify({
+      hex: document.getElementById('hex').textContent.trim(),
+      size: document.getElementById('sizeOut').textContent.trim(),
+      status: document.getElementById('csvStatus').textContent.trim()
+    })`));
+    assert(
+      reset.hex === '8ADEFEDA85210125' && reset.size === '64 bits · 16 nibbles',
+      `reset state: ${JSON.stringify(reset)}`
+    );
+    assert(/reset to the boot state/.test(reset.status), `reset status: ${reset.status}`);
+
+    /* A newer schema is refused with a distinct, visible reason. */
+    await evaluate(`(() => {
+      const doc = { schema: 99, app: 'bitwave', N: 64, view: {}, lanes: {} };
+      const transfer = new DataTransfer();
+      transfer.items.add(new File([JSON.stringify(doc)], 'future.bitwave', { type: 'application/json' }));
+      const input = document.getElementById('projectFile');
+      input.files = transfer.files;
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+      return true;
+    })()`);
+    await sleep(300);
+    const future = JSON.parse(await evaluate(`JSON.stringify({
+      status: document.getElementById('csvStatus').textContent.trim(),
+      error: document.getElementById('csvStatus').classList.contains('is-error')
+    })`));
+    assert(future.error === true && /newer than supported/.test(future.status), `future schema status: ${future.status}`);
+    return 'menu focus-in/Esc · open applies a v2 document · reset returns to boot · newer schema refused';
+  });
+
+  await runCheck('f5 · demo dataset loads eight rows and binds the board', async () => {
+    await loadApp();
+    await click('#demoBtn');
+    await sleep(450);
+    const demo = JSON.parse(await evaluate(`JSON.stringify({
+      step: document.getElementById('exCount').textContent.trim(),
+      status: document.getElementById('csvStatus').textContent.trim(),
+      size: document.getElementById('sizeOut').textContent.trim(),
+      dataset: window.BitWave.state().dataset
+    })`));
+    assert(demo.step === '1 / 8', `demo stepper: ${demo.step}`);
+    assert(/loaded 8 rows · 4 columns from demo dataset/.test(demo.status), `demo status: ${demo.status}`);
+    assert(demo.size === '32 bits · 8 nibbles', `demo width: ${demo.size}`);
+    assert(
+      demo.dataset && demo.dataset.rows === 8 && demo.dataset.columns.length === 4,
+      `demo dataset: ${JSON.stringify(demo.dataset)}`
+    );
+    return '8 rows · 4 columns · 32-bit register · status line reports it';
+  });
+
+  await runCheck('f5 · CSV errors are surfaced and stale data is kept', async () => {
+    await loadApp();
+    const before = await evaluate(`document.getElementById('hex').textContent.trim()`);
+    const importText = async (text, name) => {
+      await evaluate(`(() => {
+        const transfer = new DataTransfer();
+        transfer.items.add(new File([${JSON.stringify(text)}], ${JSON.stringify(name)}, { type: 'text/csv' }));
+        const input = document.getElementById('csvFile');
+        input.files = transfer.files;
+        input.dispatchEvent(new Event('change', { bubbles: true }));
+        return true;
+      })()`);
+      await sleep(400);
+      return JSON.parse(await evaluate(`JSON.stringify({
+        status: document.getElementById('csvStatus').textContent.trim(),
+        error: document.getElementById('csvStatus').classList.contains('is-error'),
+        hex: document.getElementById('hex').textContent.trim()
+      })`));
+    };
+
+    let state = await importText('label,region\nnorth,east\nsouth,west\n', 'labels.csv');
+    assert(state.error === true && /no numeric columns/.test(state.status), `non-token status: ${state.status}`);
+    assert(state.hex === before, 'a non-token file replaced the register');
+
+    state = await importText('', 'empty.csv');
+    assert(state.error === true && /no data rows/.test(state.status), `empty-file status: ${state.status}`);
+    return 'non-token file refused · empty file refused · register untouched';
+  });
+
+  await runCheck('f5 · autosave survives a reload', async () => {
+    await loadApp({ query: 'keep' });
+    await click('[data-preset="square"]');
+    await sleep(850);
+    const saved = JSON.parse(await evaluate(`JSON.stringify({
+      raw: localStorage.getItem('bitwave.autosave.v2'),
+      hex: document.getElementById('hex').textContent.trim()
+    })`));
+    assert(saved.raw, 'autosave key was not written');
+    const parsed = JSON.parse(saved.raw);
+    assert(parsed.schema === 2 && parsed.lanes['1'].a === saved.hex, `autosave schema/state: ${parsed.schema}`);
+
+    await loadApp({ query: 'keep' });
+    const restored = JSON.parse(await evaluate(`JSON.stringify({
+      hex: document.getElementById('hex').textContent.trim(),
+      status: document.getElementById('csvStatus').textContent.trim()
+    })`));
+    assert(restored.hex === saved.hex, `reload did not restore: ${restored.hex} vs ${saved.hex}`);
+    assert(/restored from autosave/.test(restored.status), `restore status: ${restored.status}`);
+    return `restored ${saved.hex} from autosave after a reload`;
+  });
+
+  await runCheck('f5 · URL fragment shares the state and restores it', async () => {
+    await loadApp();
+    await click('[data-preset="max"]');
+    await sleep(950);
+    const shared = JSON.parse(await evaluate(`JSON.stringify({
+      hash: location.hash,
+      hex: document.getElementById('hex').textContent.trim()
+    })`));
+    assert(/^#bw=/.test(shared.hash), `share fragment missing: ${shared.hash.slice(0, 40)}`);
+    assert(shared.hash.length <= 2001, `share fragment too long: ${shared.hash.length}`);
+
+    await loadPage(artifactUrl + shared.hash);
+    const restored = JSON.parse(await evaluate(`JSON.stringify({
+      hex: document.getElementById('hex').textContent.trim(),
+      status: document.getElementById('csvStatus').textContent.trim()
+    })`));
+    assert(restored.hex === shared.hex, `share restore: ${restored.hex} vs ${shared.hex}`);
+    assert(/restored from the shared link/.test(restored.status), `share status: ${restored.status}`);
+
+    /* 256 bits is the worst case for the ~2 KB budget. */
+    await loadApp();
+    await evaluate(`(() => {
+      const input = document.getElementById('size');
+      input.value = '5';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      return true;
+    })()`);
+    await sleep(1100);
+    const longHash = await evaluate(`location.hash.length`);
+    assert(longHash > 0 && longHash <= 2001, `256-bit share fragment: ${longHash}`);
+    return `share link ≤ 2001 chars · round-trips · 256-bit ${longHash} chars`;
+  });
+
+  await runCheck('f5 · ?fresh is an ephemeral session', async () => {
+    await loadApp({ query: 'fresh' });
+    await click('[data-preset="square"]');
+    await sleep(900);
+    const ephemeral = JSON.parse(await evaluate(`JSON.stringify({
+      status: document.getElementById('csvStatus').textContent.trim(),
+      saved: localStorage.getItem('bitwave.autosave.v2'),
+      hash: location.hash
+    })`));
+    assert(/fresh session/.test(ephemeral.status), `fresh status: ${ephemeral.status}`);
+    assert(ephemeral.saved === null, 'fresh session wrote an autosave');
+    assert(ephemeral.hash === '', `fresh session wrote a share fragment: ${ephemeral.hash}`);
+    return '?fresh: no autosave write, no share fragment';
   });
 
 

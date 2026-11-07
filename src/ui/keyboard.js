@@ -6,7 +6,7 @@
  */
 
 export function attachKeyboard(deps) {
-  const { frameNav, syncViewUi, selectSlot, setSplitMode, applyExample, loadCSV, copyMenu, S, DEMO } = deps;
+  const { frameNav, syncViewUi, selectSlot, setSplitMode, applyExample, loadCSV, copyMenu, onDropError, S, DEMO } = deps;
 
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape" && frameNav.isOpen()) {
@@ -44,7 +44,8 @@ export function attachKeyboard(deps) {
     const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
     if (!f) return;
     const rd = new FileReader();
-    rd.onload = () => loadCSV(String(rd.result || ""));
+    rd.onload = () => loadCSV(String(rd.result || ""), f.name);
+    rd.onerror = () => { if (onDropError) onDropError(f.name); };
     rd.readAsText(f);
   });
 }

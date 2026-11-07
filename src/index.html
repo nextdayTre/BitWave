@@ -113,6 +113,9 @@
     <label>source</label>
     <button class="op" id="csvBtn" title="Import a CSV or TSV of examples">import csv</button>
     <input type="file" id="csvFile" accept=".csv,.tsv,text/csv,text/plain" hidden />
+    <button class="op" id="demoBtn" title="Load the embedded 8-row demo dataset">demo</button>
+    <button class="op" id="projectBtn" aria-haspopup="menu" aria-expanded="false" title="Save, open or reset the project document">project…</button>
+    <input type="file" id="projectFile" accept=".bitwave,.json,application/json" hidden />
     <div class="seg" id="stepSeg" role="group" aria-label="example stepper">
       <button class="op" id="prevEx" title="Previous example (←)" aria-label="◀ previous example">◀</button>
       <button class="op" id="nextEx" title="Next example (→)" aria-label="▶ next example">▶</button>
@@ -124,6 +127,7 @@
       <button class="op" id="exportObsBtn" title="Export observations to CSV">export</button>
     </div>
     <span class="excount" id="obsCount">0 obs</span>
+    <span id="csvStatus" class="src-status" role="status" aria-live="polite" aria-atomic="true">no dataset loaded</span>
   </div>
 
   <div class="group" role="group" aria-label="register edit">

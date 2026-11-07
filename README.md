@@ -18,8 +18,15 @@ no network, no dependencies — **open it directly in a browser.**
   **source table** (CSV columns or frame outputs, with driven inputs locked), wheel-to-adjust
   hex, an explicit copy-to-lane menu, a whole-word hex entry, CSV stepper, observation CSV
   export, LFO, split 3-D, and a keyboard-editable strip (every nibble is a spinbutton).
+  Work is **persisted**: `.bitwave` save/open, autosave across reloads, and the state is
+  shareable through the URL fragment. A `demo` button loads an embedded 8-row dataset.
 - **`index.html`** — untouched original reference build.
-- `index.html.bak` — an older snapshot, kept only as history.
+
+**Persistence at a glance.** The address bar always carries the current state as
+`#bw=…`, so copying the URL shares the instrument; a reload restores your last session.
+`project…` saves/opens a versioned `.bitwave` JSON file and resets the instrument.
+Append **`?fresh`** to the URL for an ephemeral session that neither reads nor writes the
+autosave or share state.
 
 ## Build
 
@@ -38,8 +45,8 @@ the artifact stays readable.
 ## Verify
 
 ```bash
-npm test               # DOM-free core + state + bindings: 61 tests, zero dependencies
-npm run check:browser  # 46 artifact checks in headless Chromium (47 with --shots or --compare)
+npm test               # DOM-free core + state + bindings + project/share: 77 tests, zero dependencies
+npm run check:browser  # 52 artifact checks in headless Chromium (53 with --shots or --compare)
 npm run capture        # state screenshots → .tmp-captures/
 ```
 
@@ -53,7 +60,9 @@ DESIGN §5 strip geometry, the 2-D/3-D states, the frame navigator and focus len
 the 3-D truth table, CSV import, the source table, the §11 operation vectors, the
 agent surface, the F4 reflow (200 %/400 %), keyboard editing, roles/live status,
 reduced motion, targets, the IA pass (stage bar, module order, copy menu, hex entry,
-keyboard map) and an axe-core audit (dev-only; zero critical/serious).
+keyboard map), the F5 persistence paths (project open/reset, autosave reload, share
+link round-trip and budget, `?fresh`) and an axe-core audit (dev-only; zero
+critical/serious).
 **Keyboard editing:** Tab into the strip, then ↑/↓ adjust a nibble, ←/→ move
 between nibbles, Home/End jump, 0–F set the digit; `?` opens the keyboard map and
 Esc closes a menu or panel.
@@ -104,7 +113,7 @@ as a single-file bundle under `backups/` (ignored by Git), so it can be restored
 or cloned without a remote:
 
 ```bash
-git clone backups/bitwave-v2-2026-11-06-a11y.bundle bitwave-restore
+git clone backups/bitwave-v2-2026-11-06-persistence.bundle bitwave-restore
 ```
 
 Tags: `v2-checkpoint-2026-11-06` (frame navigator, eyes, wheel-step),
@@ -115,9 +124,11 @@ Tags: `v2-checkpoint-2026-11-06` (frame navigator, eyes, wheel-step),
 `v2-transaction-2026-11-06` (actions, core `evaluateAll` in the transaction),
 `v2-render-2026-11-06` (render layer split),
 `v2-ui-2026-11-06` (UI feature modules),
-`v2-source-matrix-2026-11-06` (six-row source table, frame routing, driven inputs) and
+`v2-source-matrix-2026-11-06` (six-row source table, frame routing, driven inputs),
 `v2-a11y-2026-11-06` (F4 accessibility floor + IA pass: reflow/zoom, keyboard editing,
 live status, reduced motion, targets, axe gate, stage bar, module order, copy menu,
-hex entry, keyboard map).
+hex entry, keyboard map) and
+`v2-persistence-2026-11-06` (F5: `.bitwave` schema 2 save/open, autosave, URL-fragment
+share, demo dataset, CSV status; `index.html.bak` removed).
 
 For off-machine safety, add a remote and push the `main` branch and tags.

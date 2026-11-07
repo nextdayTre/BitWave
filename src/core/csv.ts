@@ -14,6 +14,8 @@ export type ColumnMode = "bin" | "hex";
 export interface Dataset {
   cols: string[];
   rows: string[][];
+  /** Current row cursor (schema 2); absent means row 0. */
+  index?: number;
 }
 
 /** Minimal RFC4180 reader: quoted fields, doubled quotes, CRLF. */

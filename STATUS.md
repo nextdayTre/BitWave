@@ -1,6 +1,6 @@
 # BitWave — implementation status
 
-**Updated:** 2026-11-06 · **Phase:** F0 **done**, F1 **done**, F2 spine + render + UI modules done (pointer/lane controllers still in `main.js`), F3 source table + frame routing **done**; frame names, focus lens and the read-only `window.BitWave` seam **shipped**. **F4 accessibility + IA done** — reflow/zoom, keyboard editing, semantics/live status/reduced motion/targets, axe gate, and the author-approved IA pass (stage bar, module order, copy menu, `width` + hex entry).
+**Updated:** 2026-11-06 · **Phase:** F0 **done**, F1 **done**, F2 spine + render + UI modules done (pointer/lane controllers still in `main.js`), F3 source table + frame routing **done**, F4 accessibility + IA **done**; frame names, focus lens and the read-only `window.BitWave` seam **shipped**. **F5 persistence & reach done** — `.bitwave` schema 2 save/open, autosave, URL-fragment share, embedded demo dataset, CSV error status; `index.html.bak` removed. **F6 (distribution) is next.**
 **Source of truth:** [`PLAN.md`](PLAN.md) for the plan, [`DECISIONS.md`](DECISIONS.md) for choices taken, [`DESIGN.md`](DESIGN.md) for the visual contract. `index.html` is still untouched and remains the shipping instrument.
 
 ## Author decisions (2026-11-06)
@@ -31,12 +31,13 @@ cell enough? Confirm before the matrix lands in the app.
 
 | Phase | Status | Notes |
 |---|---|---|
-| **F0 Baseline** | **Done** | Git; Vite 8.3.6 + TypeScript 7 + `vite-plugin-singlefile` installed; `npm run build` emits the single-file `bitwave-v2.html` from `src/`; unit suite (61), typecheck and the browser harness (now 46 checks) all green; rebuild parity is a gate (`--compare`) for refactor-only changes. |
+| **F0 Baseline** | **Done** | Git; Vite 8.3.6 + TypeScript 7 + `vite-plugin-singlefile` installed; `npm run build` emits the single-file `bitwave-v2.html` from `src/`; unit suite (77), typecheck and the browser harness (now 52 checks) all green; rebuild parity is a gate (`--compare`) for refactor-only changes. |
 | **F1 Core + routing engine** | **Done** | 11 DOM-free modules; lanes 1/2/3; 38 core tests green. |
-| **F2 State spine + renderers** | **Mostly done** | DOM-free tree, transaction store, `actions.ts`, core `evaluateAll()`; render layer; UI feature modules; every writer inside `store.patch`. `main.js` is ~860 lines of composition, pointer input, lane/view controllers, loop/boot and the agent surface. Remaining: extract pointer + lane/view controllers. |
+| **F2 State spine + renderers** | **Mostly done** | DOM-free tree, transaction store, `actions.ts`, core `evaluateAll()`; render layer; UI feature modules; every writer inside `store.patch`. `main.js` is ~1,000 lines of composition, pointer input, lane/view controllers, persistence wiring, loop/boot and the agent surface. Remaining: extract pointer + lane/view controllers. |
 | **F3 Source-table housing** | **Done** | Six-row `src/ui/source-table.js` (opened from the data group) over `src/state/bindings.ts`: each input reads a CSV column (`data`), a frame output (`1:1`/`z⁻¹`) or `—`. Labels carry the assignment (`A · Hex 1`, matching the import dropdown). Driven inputs are locked against local edits, CSV/LFO skip them, unplug restores the parked base, resize remaps parked bases, and a fresh import rebuilds the board. |
 | **F4 A11y + IA** | **Done** | DESIGN amended first (change protocol §13). Shipped: reflow/zoom contract, nibble spinbutton keyboard editing, landmarks/names/radiogroups, canvas alt, live status, reduced motion, 24 px targets, axe gate — then the author-approved IA pass: always-visible stage bar (lane + frames + split), module order `source | register edit | operate | derive | motion | view`, explicit `copy to…` menu, `width` rename + whole-word hex entry, reserved-space disabled placeholders, `?` keyboard map and truth-table semantics. Palette untouched (D10). |
-| **F5–F6** | Not started | Persistence UI, distribution. |
+| **F5 Persistence & reach** | **Done** | `.bitwave` schema 2 (additive focus/frameVis, LFO mode/rate, dataset cursor) with a DOM-free app bridge; explicit `project…` menu (save/open/reset); debounced autosave + boot restore; `#bw=` URL-fragment share that wins over autosave; embedded 8-row demo dataset; visible dataset/status line that refuses empty/non-token CSVs; `?fresh` ephemeral sessions; stale `index.html.bak` deleted. Palette untouched (D10). |
+| **F6 Distribution** | Not started | PWA manifest/SW for the hosted build; Tauri 2 only if triggered. |
 
 ## F4 progress (2026-11-06) — complete
 
@@ -74,17 +75,39 @@ targets/IA/axe checks, §12 roadmap, §13 new-control rule.
   are a radiogroup with arrow selection; inapplicable controls are reserved-space
   `aria-disabled`; `?` opens the keyboard map; the truth table is a real ARIA table.
 
+## F5 progress (2026-11-06) — complete
+
+**DESIGN.md amended first** (change protocol §13): §8 demo dataset / project menu / dataset
+status line, §10.39–41 persistence invariants, §11 persistence checks, §12 roadmap.
+
+**Shipped and verified:**
+- **`.bitwave` schema 2 + bridge (D33).** Core schema gains additive `focus`/`frameVis`,
+  view `lfoMode`/`lfoRate` and dataset `index`; schema 1 still loads with defaults; Z is
+  never stored; routes/parked bases persist; top-level unknown fields are preserved across
+  load/save; schema >2 and widths outside the slider set are refused with codes.
+  `src/state/project-bridge.ts` captures/applies the live tree in one transaction.
+- **Autosave + share (D34).** Debounced `localStorage` autosave (650 ms after the last
+  transaction), boot order shared link → autosave → boot defaults. `#bw=` fragment refreshed
+  with `replaceState`; measured 64-bit payload **1230 chars**, 256-bit **1743 chars**
+  (budget 2000; dataset dropped only if needed). `?fresh` runs ephemeral.
+- **Project surface (D35).** `project…` focus-in menu (save/open/reset), embedded 8-row demo
+  dataset through the normal import path, and a visible polite `#csvStatus` line. Empty and
+  all-non-token CSVs are refused without replacing the current dataset; export with no
+  observations explains why.
+- **Cleanup (D36).** `index.html.bak` deleted (author kept it only until F5).
+
 ## Verified this session
 
-- `npm test` → **61 tests, 61 pass, 0 fail** (38 core + 10 state + 7 actions/routing + 6 bindings);
+- `npm test` → **77 tests, 77 pass, 0 fail** (71 in the main run: 38 core + 10 state +
+  7 actions/routing + 6 bindings + 5 share + 5 project; plus 6 app-bridge tests in a
+  separate process because they replace the live singletons);
   `npm run typecheck` → **clean**.
-- `npm run build` → **`bitwave-v2.html`, 151.6 KB, single file**, no external references
+- `npm run build` → **`bitwave-v2.html`, 184.7 KB, single file**, no external references
   (`tools/build-artifact.mjs` gate).
-- `npm run check:browser` → **46/46 checks pass** on the built `bitwave-v2.html` (47 with
-  `--shots`/`--compare`), including the new reflow (200 %/400 %), keyboard-editing,
-  semantics/live-status/radiogroup/target, reduced-motion, **axe** (zero critical/serious in
-  four states) and **IA** groups (stage bar, module order, reserved space, copy menu, hex
-  entry, `?` map, truth semantics) plus the §11 geometry assertion (0.00 px).
+- `npm run check:browser` → **52/52 checks pass** on the built `bitwave-v2.html` (53 with
+  `--shots`/`--compare`), including the new F5 project-menu/open/reset, demo dataset,
+  CSV-refusal, autosave-reload, share-link round-trip/2 KB budget and `?fresh` groups, in
+  addition to the F4 reflow/keyboard/semantics/axe groups and the §11 geometry assertion.
 - **F4 slice 1 — reflow/zoom (D27):** parity was 6/6 pixel-identical against the pre-F4
   artifact at normal viewports (measured before the IA slice, which intentionally changes the
   layout); at 640×360 and 360×225 CSS px the page scrolls, the stage stays 220 px and every
@@ -134,8 +157,8 @@ targets/IA/axe checks, §12 roadmap, §13 new-control rule.
 - **F2 slice 2 — commands + real evaluation:** `src/state/actions.ts` and
   `src/state/routing.ts` (core `LaneMap` adapter + `evaluate()` running
   `evaluateAll()`). `recomputeZ` is gone from the app.
-- `npm run check:browser` → **27/27 checks pass** (28/28 with `--shots` or
-  `--compare`) on the built `bitwave-v2.html`:
+- `npm run check:browser` → **27/27 checks pass at the time** (now 52/52 — see above)
+  on the built `bitwave-v2.html`:
   zero console errors; no overflow or clipped controls at 360/420/720/1440;
   `canvas.width` = viewport; `--pad` 40/16 and compact mode per DESIGN §5/§9;
   strip gap/nibble width follow the §5 formula (1440: gap 12.00, nibble 73.75);
@@ -171,31 +194,33 @@ targets/IA/axe checks, §12 roadmap, §13 new-control rule.
 
 | Artifact | Purpose |
 |---|---|
-| [`src/`](src/index.html) | App source: `index.html` template, `main.js` (~850-line composition + controllers), `styles/app.css` |
+| [`src/`](src/index.html) | App source: `index.html` template, `main.js` (~1,000-line composition + controllers), `styles/app.css` |
 | [`src/state/instrument.ts`](src/state/instrument.ts) | DOM-free state tree, frame names, factories and selection helpers |
 | [`src/state/store.ts`](src/state/store.ts) | Transaction boundary: `get`/`patch`/`subscribe`, nested patches collapse |
-| [`src/state/actions.ts`](src/state/actions.ts) | Commands: core unary ops/presets, focus/binop/visibility/bit/nibble/copy/unpair |
+| [`src/state/actions.ts`](src/state/actions.ts) | Commands: core unary ops/presets, focus/binop/visibility/bit/nibble/hex/copy/unpair |
 | [`src/state/bindings.ts`](src/state/bindings.ts) | Six input bindings, data/frame/none sources, driven + parked-base helpers |
 | [`src/state/routing.ts`](src/state/routing.ts) | Core `LaneMap` adapter + `evaluate()` running `src/core/routing.ts` |
+| [`src/state/project-bridge.ts`](src/state/project-bridge.ts) | App ↔ `.bitwave` schema-2 bridge: capture/apply, unknown-field preservation |
 | [`src/state/dataset.ts`](src/state/dataset.ts) | Dataset state (columns, rows, cursor) shared by the shell and canvas code |
 | [`src/render/`](src/render/canvas.js) | Canvas + 3-D field, strip, readouts; the only DOM/canvas renderers |
 | [`src/ui/source-table.js`](src/ui/source-table.js) | The six-row matrix panel: data/frame/none source, B-style labels, state chips |
-| [`src/ui/`](src/ui/frame-navigator.js) | Frame navigator, stage bar (lane/frames/split), copy menu, keyboard map + map panel, CSV stepper, controls + LFO, committed-change live status |
+| [`src/ui/`](src/ui/frame-navigator.js) | Frame navigator, stage bar (lane/frames/split), copy menu, project menu, keyboard map + map panel, CSV stepper, controls + LFO, committed-change live status |
 | [`src/ui/copy-menu.js`](src/ui/copy-menu.js) | Explicit `copy to…` menu: focus-in, arrow nav, Esc, spoken copy confirmation |
+| [`src/ui/project-menu.js`](src/ui/project-menu.js) | `project…` menu: save/open/reset with the same focus contract |
 | [`src/ui/help.js`](src/ui/help.js) | `?` keyboard-map panel — the one declared shortcut surface |
-| [`src/io/`](src/io/observations.js) | Observation logger and CSV export |
+| [`src/io/`](src/io/observations.js) | Observation logger/CSV export, `.bitwave` download/read, autosave, URL share |
 | [`testcsv.xlsx`](testcsv.xlsx), [`examples/testcsv.csv`](examples/testcsv.csv) | The four-column layout sample; CSV twin for the importer |
 | [`vite.config.mjs`](vite.config.mjs) | Vite 8 build: `src/` → `dist/index.html`, no minification |
 | [`tools/build-artifact.mjs`](tools/build-artifact.mjs) | Single-file gate: verifies no external refs, writes `bitwave-v2.html` |
-| [`src/core/`](src/core/index.ts) | DOM-free engine (11 modules, ~1,350 lines), lanes 1/2/3 |
-| [`tests/`](tests/design-invariants.test.ts) | 7 test files, 61 vectors + properties (bindings.test.ts is new) |
+| [`src/core/`](src/core/index.ts) | DOM-free engine (13 modules, ~1,700 lines), lanes 1/2/3, project schema + share codec |
+| [`tests/`](tests/design-invariants.test.ts) | 9 test files, 77 vectors + properties (share + app-bridge are new) |
 | [`examples/demo.bitwave.json`](examples/demo.bitwave.json) | Versioned project document (lanes 1/2/3; routes + parked bases; dataset) |
 | [`spike/routing-matrix.html`](spike/routing-matrix.html) | The reference housing prototype that F3 implements (360 lines) |
 | [`spike/f4-ia.html`](spike/f4-ia.html) | The author-approved F4 IA layout mockup (annotated, 1440/720/360 screenshots) |
-| [`tools/browser-check.mjs`](tools/browser-check.mjs) | Zero-dependency CDP harness: 46 checks (47 with `--shots` or `--compare`), incl. reflow/zoom, keyboard editing, IA and axe |
+| [`tools/browser-check.mjs`](tools/browser-check.mjs) | Zero-dependency CDP harness: 52 checks (53 with `--shots` or `--compare`), incl. reflow/zoom, keyboard editing, IA, axe and F5 persistence |
 | [`tools/make-example-project.ts`](tools/make-example-project.ts) | Regenerates the example |
 | `window.BitWave` in [`bitwave-v2.html`](bitwave-v2.html) | Read-only, schema-1 state/geometry/bindings surface; contract in [`AGENTS.md`](AGENTS.md) |
-| [`DECISIONS.md`](DECISIONS.md) | D1–D32, including the author decisions above and the F4 floor + IA pass (D26–D32) |
+| [`DECISIONS.md`](DECISIONS.md) | D1–D36, including the author decisions above and the F4/F5 passes (D26–D36) |
 
 ## Known gaps and blockers
 
@@ -210,11 +235,18 @@ targets/IA/axe checks, §12 roadmap, §13 new-control rule.
    remaining lane/view orchestration (`selectSlot`, `split`, `syncViewUi`, boot) are not yet
    `src/ui/` modules; the stage bar and copy menu now own their own DOM. They do not block
    F5; the spine, renderers, bindings and UI feature modules are already separate.
-4. **Routes are not persisted yet.** `.bitwave` (schema 1) stores lanes/registers/
-   dataset but not the app's route table; save/reload of a patched rack is F5.
+4. ~~**Routes are not persisted yet.**~~ **Resolved in F5 (D33):** schema 2 persists the six
+   bindings (data columns + frame routes) and parked bases; a saved patch board reloads
+   identically, and the app-bridge round-trip test covers it.
 5. **Parked-base resize is core-tested but not browser-tested.** The app calls
    `remapParkedBases()` around a resize; the core test covers the mapping, the
    app path is not yet driven by the browser check.
+6. **A newer `.bitwave` schema is refused, not opened read-only.** The plan's "open read-only"
+   path for a future schema is not built; the UI reports a clear error and leaves the current
+   instrument untouched. Low risk while schema 2 is the only shipped format.
+7. **Project save is not browser-asserted end-to-end.** Open/apply/reset, autosave and share
+   are driven in Chromium; the `save project` download path is exercised by the unit-tested
+   façade but not captured by the harness (no download interception).
 
 ## Errata found
 
@@ -225,11 +257,12 @@ targets/IA/axe checks, §12 roadmap, §13 new-control rule.
 
 ## Next actions
 
-1. **F5 persistence & reach (next):** `.bitwave` schema 2 (or additive fields) for the six
-   bindings/routes + parked bases, autosave, URL share, embedded demo dataset, CSV error
-   status (the visible CSV status line is the one piece of the IA mockup deliberately left
-   for F5). **Do not touch the palette** (Q8 closed).
-2. **F2 finish (optional before F5):** extract the pointer controller and the remaining
-   lane/view orchestration into `src/ui/`, leaving `main.js` as pure composition. No
-   behavioural change; run the browser check and a fresh `--compare` baseline.
-3. **F6 distribution:** PWA manifest/SW for the hosted build; Tauri 2 only if triggered.
+1. **F6 distribution (next):** PWA manifest/service worker for the hosted build; Tauri 2 only
+   if the native file-dialog need triggers it. The single-file `bitwave-v2.html` path stays the
+   primary, offline, zero-dependency delivery. **Do not touch the palette** (Q8 closed).
+2. **F2 finish (optional):** extract the pointer controller and the remaining lane/view
+   orchestration into `src/ui/`, leaving `main.js` as pure composition. No behavioural change;
+   run the browser check and a fresh `--compare` baseline.
+3. **F5 follow-ups (small):** the read-only newer-schema open path (gap 6), a browser-level
+   assertion for the save download (gap 7), and a share-link affordance in the UI (the address
+   bar already works; a `copy link` item would make it discoverable).

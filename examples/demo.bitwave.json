@@ -1,5 +1,5 @@
 {
-  "schema": 1,
+  "schema": 2,
   "app": "bitwave",
   "savedAt": "2026-11-05T00:00:00.000Z",
   "N": 64,
@@ -11,7 +11,9 @@
       "1",
       "2"
     ],
-    "activePane": 0
+    "activePane": 0,
+    "lfoMode": "rotcw",
+    "lfoRate": 4
   },
   "lanes": {
     "1": {
@@ -23,7 +25,13 @@
       "seededB": false,
       "lfoB": "0",
       "colA": -1,
-      "colB": -1
+      "colB": -1,
+      "focus": "z",
+      "frameVis": {
+        "a": true,
+        "b": true,
+        "z": true
+      }
     },
     "2": {
       "a": "FFFDBBBD81210125",
@@ -34,7 +42,13 @@
       "seededB": true,
       "lfoB": "0",
       "colA": -1,
-      "colB": -1
+      "colB": -1,
+      "focus": "a",
+      "frameVis": {
+        "a": true,
+        "b": true,
+        "z": true
+      }
     },
     "3": {
       "a": "0123456789ABCDEF",
@@ -45,7 +59,13 @@
       "seededB": true,
       "lfoB": "0",
       "colA": -1,
-      "colB": -1
+      "colB": -1,
+      "focus": "b",
+      "frameVis": {
+        "a": true,
+        "b": false,
+        "z": true
+      }
     }
   },
   "routes": [
@@ -86,6 +106,7 @@
         "FEDA852101257ADE",
         "0F0F0F0F0F0F0F0F"
       ]
-    ]
+    ],
+    "index": 1
   }
 }

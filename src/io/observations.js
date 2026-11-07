@@ -14,6 +14,12 @@ const logObsBtn = document.getElementById("logObsBtn");
 const exportObsBtn = document.getElementById("exportObsBtn");
 
 const observations = [];
+let notify = null;
+
+/** Wire the visible source status line (F5); export with no rows explains why. */
+export function setObservationStatus(fn) {
+  notify = fn;
+}
 
   function logCurrentObservation() {
     const exName = (DEMO.rows.length && DEMO.rows[DEMO.i] && DEMO.rows[DEMO.i][0]) || `ex_${DEMO.i + 1}`;
@@ -58,7 +64,10 @@ const observations = [];
   }
 
   function exportObservationsCSV() {
-    if (!observations.length) return;
+    if (!observations.length) {
+      if (notify) notify("nothing to export yet — log an observation first", true);
+      return;
+    }
     const keys = Object.keys(observations[0]);
     const header = keys.join(",");
     const lines = observations.map(o => keys.map(k => `"${String(o[k]).replace(/"/g, '""')}"`).join(","));

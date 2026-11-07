@@ -15,3 +15,4 @@ export * from "./routing.ts";
 export * from "./csv.ts";
 export * from "./geometry.ts";
 export * from "./project.ts";
+export * from "./share.ts";
