@@ -28,6 +28,8 @@ export function attachKeyboard(deps) {
     }
     if (!DEMO.rows.length) return;
     if (/^(INPUT|SELECT|TEXTAREA)$/.test((e.target && e.target.tagName) || "")) return;
+    /* The strip owns ←/→ for nibble focus (DESIGN §6); never also step CSV. */
+    if (e.target && e.target.closest && e.target.closest("#nibs")) return;
     if (e.key === "ArrowRight") { applyExample(DEMO.i + 1); e.preventDefault(); }
     else if (e.key === "ArrowLeft") { applyExample(DEMO.i - 1); e.preventDefault(); }
   });

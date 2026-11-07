@@ -1,6 +1,6 @@
 # BitWave — implementation status
 
-**Updated:** 2026-11-06 · **Phase:** F0 **done**, F1 **done**, **F2 spine + render + UI modules done** (pointer/lane controllers still in `main.js`), **F3 source table + frame routing done**; frame names, focus lens and the read-only `window.BitWave` seam **shipped**.
+**Updated:** 2026-11-06 · **Phase:** F0 **done**, F1 **done**, F2 spine + render + UI modules done (pointer/lane controllers still in `main.js`), F3 source table + frame routing **done**; frame names, focus lens and the read-only `window.BitWave` seam **shipped**. **F4 in flight:** DESIGN amended, reflow/zoom + keyboard editing + a11y semantics/live status/reduced motion/targets + axe gate **landed and verified**; the IA layout waits on author sign-off of `spike/f4-ia.html`.
 **Source of truth:** [`PLAN.md`](PLAN.md) for the plan, [`DECISIONS.md`](DECISIONS.md) for choices taken, [`DESIGN.md`](DESIGN.md) for the visual contract. `index.html` is still untouched and remains the shipping instrument.
 
 ## Author decisions (2026-11-06)
@@ -35,14 +35,63 @@ cell enough? Confirm before the matrix lands in the app.
 | **F1 Core + routing engine** | **Done** | 11 DOM-free modules; lanes 1/2/3; 38 core tests green. |
 | **F2 State spine + renderers** | **Mostly done** | DOM-free tree, transaction store, `actions.ts`, core `evaluateAll()`; render layer; UI feature modules; every writer inside `store.patch`. `main.js` is ~860 lines of composition, pointer input, lane/view controllers, loop/boot and the agent surface. Remaining: extract pointer + lane/view controllers. |
 | **F3 Source-table housing** | **Done** | Six-row `src/ui/source-table.js` (opened from the data group) over `src/state/bindings.ts`: each input reads a CSV column (`data`), a frame output (`1:1`/`z⁻¹`) or `—`. Labels carry the assignment (`A · Hex 1`, matching the import dropdown). Driven inputs are locked against local edits, CSV/LFO skip them, unplug restores the parked base, resize remaps parked bases, and a fresh import rebuilds the board. |
-| **F4–F6** | Not started | A11y/IA (no palette changes), persistence UI, distribution. |
+| **F4 A11y + IA** | **In flight** | DESIGN amended first (change protocol §13). Landed: reflow/zoom contract, nibble spinbutton keyboard editing, landmarks/names/radiogroups, canvas alt, live status, reduced motion, 24 px targets, axe gate. **Waiting on the author: `spike/f4-ia.html` layout mockup** (module order, always-visible stage bar, `copy to…` menu, `width`/hex-entry row). Palette untouched (D10). |
+| **F5–F6** | Not started | Persistence UI, distribution. |
+
+## F4 progress (2026-11-06)
+
+**DESIGN.md amended first** (change protocol §13): §5 reflow/zoom + 24 px targets, §6 keyboard
+editing model, §7 reduced motion, §8 nibble spinbutton / hex entry / canvas alt / live status /
+radiogroups / landmarks, §9 reserve space + zoom, §10.32–38 invariants, §11 keyboard/roles/
+zoom/motion/targets/axe checks, §13 new-control rule.
+
+**Shipped and verified:**
+- **Reflow/zoom (D27).** `body` min-height + page scroll, `main` carries the grid, stage floor
+  `clamp(220px,44dvh,620px)`. Normal viewports stay pixel-identical (6/6 parity states); at
+  640×360 and 360×225 CSS px the page scrolls, the stage is 220 px and no control is
+  unreachable.
+- **Keyboard editing (D26).** Every operand nibble is a roving `role="spinbutton"`
+  (aria-valuenow/valuetext; ↑/↓ ±1, ←/→ focus, Home/End, 0–F); Tab enters the strip and
+  focus survives re-renders; bit clicks return focus; arrows never also step the CSV;
+  derived/driven strips are read-only with no tab stop.
+- **Semantics (D31).** One `<main>` + named groups, canvas `role="img"` with a commit-updated
+  text alternative, lane sets are radiogroups with arrow selection, glyph/preset/navigator
+  names satisfy SC 2.5.3, 24 px targets for the stage-bar controls and the width slider.
+- **Live status (D29).** One polite atomic region, transaction-driven, 150 ms debounce, quiet
+  during drag and LFO ticks, immediate on pointer-up.
+- **Reduced motion (D28).** Transitions removed, commits instant, LFO rate capped 4/s; 1:1
+  drag unchanged.
+- **Automated gate (D30).** `axe-core` 4.14 as a dev dependency, injected over CDP: zero
+  critical/serious in 2-D, A·B 3-D, source-table and frame-navigator states
+  (`color-contrast` disabled per D10/Q8; Label-in-Name enabled).
+
+**Next in F4 (after mockup sign-off):** the IA slice — module order
+`source | width·edit | operate | derive | motion | view`, always-visible stage bar owning
+lane + split, explicit `copy to…` menu with Esc, `width` rename, hex entry beside the edit
+target, disabled placeholders instead of hidden controls, and the `?` keyboard-map panel.
+Also queued: binop set → radiogroup (inside the new derive module) and truth-table semantics.
 
 ## Verified this session
 
 - `npm test` → **61 tests, 61 pass, 0 fail** (38 core + 10 state + 7 actions/routing + 6 bindings);
   `npm run typecheck` → **clean**.
-- `npm run build` → **`bitwave-v2.html`, 128.0 KB, single file**, no external references
+- `npm run build` → **`bitwave-v2.html`, 138.2 KB, single file**, no external references
   (`tools/build-artifact.mjs` gate).
+- `npm run check:browser` → **40/40 checks pass** on the built `bitwave-v2.html` (41 with
+  `--shots`/`--compare`), including the new reflow (200 %/400 %), keyboard-editing,
+  semantics/live-status/radiogroup/target, reduced-motion and **axe** groups (zero
+  critical/serious in four states) plus the §11 geometry assertion (0.00 px).
+- **F4 slice 1 — reflow/zoom (D27):** normal-viewport parity is 6/6 pixel-identical against
+  the pre-F4 artifact; at 640×360 and 360×225 CSS px the page scrolls, the stage stays
+  220 px and every control is reachable.
+- **F4 slice 2 — keyboard editing (D26):** 16 spinbuttons, one roving tab stop, Tab enters
+  from the width slider, ↑/↓/Home/End/0–F edit, focus survives a commit re-render, bit clicks
+  focus the nibble, derived strips expose read-only spinbuttons with no tab stop.
+- **F4 slice 3 — semantics + a11y gate (D29–D31):** one `<main>` and seven named groups;
+  canvas `role="img"` with a live alt; lane sets are radiogroups; one polite atomic live
+  region announces committed changes and stays quiet during drag/LFO; reduced motion removes
+  transitions and caps the LFO; stage-bar minis and the width slider are ≥24 px; axe-core
+  reports zero critical/serious in 2-D, A·B 3-D, source-table and frame-navigator states.
 - **F3 shipped — source table + frame routing:** `src/state/bindings.ts`
   (six bindings, data/frame/none sources, `z⁻¹` detection, driven helpers,
   parked-base handling) and `src/ui/source-table.js` (panel, six rows, B-style
@@ -119,7 +168,7 @@ cell enough? Confirm before the matrix lands in the app.
 | [`src/state/dataset.ts`](src/state/dataset.ts) | Dataset state (columns, rows, cursor) shared by the shell and canvas code |
 | [`src/render/`](src/render/canvas.js) | Canvas + 3-D field, strip, readouts; the only DOM/canvas renderers |
 | [`src/ui/source-table.js`](src/ui/source-table.js) | The six-row matrix panel: data/frame/none source, B-style labels, state chips |
-| [`src/ui/`](src/ui/frame-navigator.js) | Frame navigator, stage bar, CSV stepper, keyboard map and controls + LFO |
+| [`src/ui/`](src/ui/frame-navigator.js) | Frame navigator, stage bar, CSV stepper, keyboard map, controls + LFO, committed-change live status |
 | [`src/io/`](src/io/observations.js) | Observation logger and CSV export |
 | [`testcsv.xlsx`](testcsv.xlsx), [`examples/testcsv.csv`](examples/testcsv.csv) | The four-column layout sample; CSV twin for the importer |
 | [`vite.config.mjs`](vite.config.mjs) | Vite 8 build: `src/` → `dist/index.html`, no minification |
@@ -128,17 +177,16 @@ cell enough? Confirm before the matrix lands in the app.
 | [`tests/`](tests/design-invariants.test.ts) | 7 test files, 61 vectors + properties (bindings.test.ts is new) |
 | [`examples/demo.bitwave.json`](examples/demo.bitwave.json) | Versioned project document (lanes 1/2/3; routes + parked bases; dataset) |
 | [`spike/routing-matrix.html`](spike/routing-matrix.html) | The reference housing prototype that F3 implements (360 lines) |
-| [`tools/browser-check.mjs`](tools/browser-check.mjs) | Zero-dependency CDP harness: 27 checks (28 with `--shots` or `--compare`) |
+| [`tools/browser-check.mjs`](tools/browser-check.mjs) | Zero-dependency CDP harness: 40 checks (41 with `--shots` or `--compare`), incl. reflow/zoom, keyboard editing and axe |
 | [`tools/make-example-project.ts`](tools/make-example-project.ts) | Regenerates the example |
 | `window.BitWave` in [`bitwave-v2.html`](bitwave-v2.html) | Read-only, schema-1 state/geometry/bindings surface; contract in [`AGENTS.md`](AGENTS.md) |
-| [`DECISIONS.md`](DECISIONS.md) | D1–D24, including the author decisions above |
+| [`DECISIONS.md`](DECISIONS.md) | D1–D31, including the author decisions above and the F4 a11y floor (D26–D31) |
 
 ## Known gaps and blockers
 
-1. **Reflow/zoom clips controls.** At 400 % zoom (360×225 CSS px) 26 controls are
-   unreachable; the fixed `100dvh` + `overflow:hidden` body cannot scroll. F4
-   must allow page scroll at zoom while keeping the instrument fixed at normal
-   viewports. Measured, reproducible in `npm run check:browser`'s width matrix.
+1. ~~**Reflow/zoom clips controls.**~~ **Resolved in F4 (D27):** the page scrolls at zoom, the
+   stage keeps a 220 px floor and normal viewports stay pixel-identical; asserted at 200 % and
+   400 % in `npm run check:browser`.
 2. **Canvas curve sampling is still not pixel-tested.** `BitWave.geometry()` now
    proves the canvas control points and the DOM nibble centres agree (worst
    offset 0.00 px, §11 limit 1.5 px), but the drawn spline's own pixels are not
@@ -162,9 +210,10 @@ cell enough? Confirm before the matrix lands in the app.
 
 ## Next actions
 
-1. **F4 accessibility + IA (next):** roles/keyboard/targets/reduced motion/reflow,
-   including the measured zoom clipping; the source table adds one more keyboard
-   surface to cover. **Do not touch the palette** (Q8 closed).
+1. **F4 finish (next):** author sign-off on `spike/f4-ia.html`, then the IA slice
+   (module order, always-visible stage bar, `copy to…`, `width` + hex entry, disabled
+   placeholders, `?` map), binop radiogroup and truth-table semantics. The rest of F4 is
+   shipped and gated. **Do not touch the palette** (Q8 closed).
 2. **F5 persistence & reach:** `.bitwave` schema 2 (or additive fields) for the six
    bindings/routes + parked bases, autosave, URL share, embedded demo dataset,
    CSV error status.

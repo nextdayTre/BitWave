@@ -136,9 +136,9 @@ export function createFrameNavigator(deps) {
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className = "frame-btn";
-    const focused = active ? ", focused" : "";
-    btn.setAttribute("aria-label", `Lane ${laneLabel(laneKey)} frame ${name}, ${frameSub(frame)}${focused}`);
-    btn.title = `Lane ${laneLabel(laneKey)} · ${name} (${frameSub(frame)})`;
+    /* Name comes from the visible content (frame glyph, kind, hex) so
+       voice-control can match what the user reads (SC 2.5.3). */
+    btn.title = `Lane ${laneLabel(laneKey)} · ${name} (${frameSub(frame)})${active ? " — focused" : ""}`;
 
     const label = document.createElement("span");
     label.className = "frame-label";
@@ -174,7 +174,7 @@ export function createFrameNavigator(deps) {
     btn.className = "lane-btn";
     btn.dataset.lane = laneKey;
     btn.setAttribute("aria-expanded", String(expanded));
-    btn.setAttribute("aria-label", `Lane ${laneLabel(laneKey)}${expanded ? ", expanded" : ""}`);
+    btn.title = `Lane ${laneLabel(laneKey)}${expanded ? " · expanded" : ""}`;
     const num = document.createElement("span");
     num.className = "lane-num";
     num.textContent = `LANE ${laneLabel(laneKey)}`;

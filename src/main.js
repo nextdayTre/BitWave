@@ -45,9 +45,10 @@ import { attachKeyboard } from "./ui/keyboard.js";
 import { createControls } from "./ui/controls.js";
 import { createCsvImport } from "./ui/csv-import.js";
 import { createSourceTable } from "./ui/source-table.js";
+import { createLiveStatus } from "./ui/live-status.js";
 import { evalSpline } from "./core/spline.ts";
 import { G, canvasEl as canvas, draw, fitCanvas, getPad, shortCol } from "./render/canvas.js";
-import { nibsEl, patchNibble, renderStrip, syncHoverClasses } from "./render/strip.js";
+import { focusNibble, nibsEl, patchNibble, renderStrip, syncHoverClasses } from "./render/strip.js";
 import { toHexOf, updateReadouts } from "./render/readouts.js";
 
 (() => {
@@ -61,6 +62,15 @@ import { toHexOf, updateReadouts } from "./render/readouts.js";
      ══════════════════════════════════════════════════════════ */
 
   const store = createStore(S);
+
+  /* DESIGN §7: under `prefers-reduced-motion: reduce` commits are instant and
+     the LFO is capped. The preference is read live so a change applies without
+     a reload. */
+  const prefersReducedMotion = () =>
+    window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  /* One polite, atomic live region for committed changes (DESIGN §8/§10.34). */
+  const liveStatus = createLiveStatus(store);
 
   const controls = createControls({
     store,
@@ -140,7 +150,9 @@ import { toHexOf, updateReadouts } from "./render/readouts.js";
 
   function commit(instant = false) {
     /* One transaction boundary: base writes, then the clocked evaluation
-       (routes in dependency order, then every lane's Z), then renderers. */
+       (routes in dependency order, then every lane's Z), then renderers.
+       Reduced motion makes every eased transition instant. */
+    if (prefersReducedMotion()) instant = true;
     store.patch(() => {
       syncTarget(S.A, instant);
       syncTarget(S.B, instant);
@@ -272,6 +284,7 @@ import { toHexOf, updateReadouts } from "./render/readouts.js";
     S.drag = -1;
     canvas.classList.remove("grabbing");
     updateReadouts(true);
+    liveStatus.announceNow();            // one announcement per drag, not per move
     if (e && canvas.hasPointerCapture(e.pointerId)) canvas.releasePointerCapture(e.pointerId);
   }
 
@@ -286,15 +299,66 @@ import { toHexOf, updateReadouts } from "./render/readouts.js";
     }
   });
 
-  /* bit strip: click a bit to flip it, hover to highlight the nibble */
+  /* bit strip: click a bit to flip it, click the nibble body to focus its
+     spinbutton (which also keeps focus out of <body> — DESIGN §10.33). */
   nibsEl.addEventListener("click", (e) => {
+    const nib = e.target.closest(".nib");
     const bit = e.target.closest(".bit");
-    if (!bit) return;
+    if (!bit) {
+      if (nib && focusEditable() && !isFocusDriven()) nib.focus();
+      return;
+    }
     if (!focusEditable()) return;   // Z is derived — never editable
     if (isFocusDriven()) return;    // a routed input has no local edit
     controls.lfoStop();
     store.patch(() => {
       const j = toggleBit(editReg(), Number(bit.dataset.b));
+      evaluate();
+      patchNibble(j);
+      updateReadouts();
+    });
+    if (nib) nib.focus();
+  });
+
+  /* Keyboard editing (DESIGN §6): the strip is the semantic editor.
+     ↑/↓ ±1 · ←/→ move nibble focus · Home/End first/last · 0–F set the digit.
+     Handled keys stop propagation so the global ←/→ CSV stepper does not also
+     fire; a manual edit also yields the LFO snapshot (DESIGN §10.19). */
+  nibsEl.addEventListener("keydown", (e) => {
+    if (!focusEditable() || isFocusDriven()) return;
+    const nib = e.target.closest(".nib");
+    if (!nib) return;
+    const j = Number(nib.dataset.j);
+    if (!Number.isInteger(j)) return;
+    if (e.altKey || e.ctrlKey || e.metaKey) return;
+
+    if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+      e.preventDefault();
+      e.stopPropagation();
+      focusNibble(j + (e.key === "ArrowRight" ? 1 : -1));
+      return;
+    }
+    if (e.key === "Home" || e.key === "End") {
+      e.preventDefault();
+      e.stopPropagation();
+      focusNibble(e.key === "Home" ? 0 : nibCount() - 1);
+      return;
+    }
+
+    let next = null;
+    if (e.key === "ArrowUp") next = nibValue(editReg(), j) + 1;
+    else if (e.key === "ArrowDown") next = nibValue(editReg(), j) - 1;
+    else if (/^[0-9a-f]$/i.test(e.key)) next = parseInt(e.key, 16);
+    if (next === null) return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (next < 0 || next > 15) return;          // clamped 0–F, no wrap
+
+    const reg = editReg();
+    if (nibValue(reg, j) === next) return;
+    controls.lfoStop();
+    store.patch(() => {
+      setNibble(reg, j, next);
       evaluate();
       patchNibble(j);
       updateReadouts();
@@ -560,7 +624,8 @@ import { toHexOf, updateReadouts } from "./render/readouts.js";
     slotSeg.querySelectorAll("[data-slot]").forEach((b) => {
       const active = b.dataset.slot === S.slot;
       b.classList.toggle("on", active);
-      b.setAttribute("aria-pressed", String(active));
+      b.setAttribute("aria-checked", String(active));
+      b.setAttribute("tabindex", active ? "0" : "-1");
       b.textContent = laneLabel(b.dataset.slot);
     });
     const isSplit = S.view3d && S.split3d;
@@ -593,6 +658,23 @@ import { toHexOf, updateReadouts } from "./render/readouts.js";
 
   slotSeg.querySelectorAll("[data-slot]").forEach((b) => {
     b.addEventListener("click", () => selectSlot(b.dataset.slot));
+  });
+
+  /* Radiogroup keyboard model for the lane set (DESIGN §8): arrows move the
+     selection itself, Home/End jump to the ends, and the roving tabindex means
+     the set is one Tab stop. */
+  slotSeg.addEventListener("keydown", (e) => {
+    const idx = SLOT_KEYS.indexOf(S.slot);
+    let next = idx;
+    if (e.key === "ArrowLeft" || e.key === "ArrowUp") next = (idx + SLOT_KEYS.length - 1) % SLOT_KEYS.length;
+    else if (e.key === "ArrowRight" || e.key === "ArrowDown") next = (idx + 1) % SLOT_KEYS.length;
+    else if (e.key === "Home") next = 0;
+    else if (e.key === "End") next = SLOT_KEYS.length - 1;
+    else return;
+    e.preventDefault();
+    e.stopPropagation();
+    selectSlot(SLOT_KEYS[next]);
+    slotSeg.querySelector(`[data-slot="${SLOT_KEYS[next]}"]`)?.focus();
   });
 
   splitBtn.addEventListener("click", () => setSplitMode(!(S.view3d && S.split3d)));
@@ -667,9 +749,12 @@ import { toHexOf, updateReadouts } from "./render/readouts.js";
 
     /* Clamped dt and a bounded catch-up loop: a backgrounded tab must not
        fire hundreds of ticks the moment it is refocused. */
+    const reduce = prefersReducedMotion();
     if (S.lfo.on) {
       S.lfoAcc += dt;
-      const interval = 1000 / S.lfo.rate;
+      /* Reduced motion caps the LFO rather than removing it (DESIGN §7). */
+      const rate = reduce ? Math.min(4, S.lfo.rate) : S.lfo.rate;
+      const interval = 1000 / rate;
       let guard = 0;
       while (S.lfoAcc >= interval && guard++ < 6) {
         S.lfoAcc -= interval;
@@ -679,8 +764,17 @@ import { toHexOf, updateReadouts } from "./render/readouts.js";
 
     for (const k of SLOT_KEYS) {
       const sl = S.slots[k];
-      easeReg(sl.A);
-      if (sl.showB) { easeReg(sl.B); easeReg(sl.Z); }
+      if (reduce) {
+        /* No easing: the wave snaps to its committed state. */
+        sl.A.anim = sl.A.target.slice();
+        if (sl.showB) {
+          sl.B.anim = sl.B.target.slice();
+          sl.Z.anim = sl.Z.target.slice();
+        }
+      } else {
+        easeReg(sl.A);
+        if (sl.showB) { easeReg(sl.B); easeReg(sl.Z); }
+      }
     }
     draw();
     requestAnimationFrame(loop);

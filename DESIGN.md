@@ -147,6 +147,27 @@ x(j)  = x0 + j * (w + gap) + w / 2          // control point == nibble centre
 This formula is the contract. If either side changes, both change — or the curve and
 the bits desync.
 
+**Reflow and zoom.** The instrument is viewport-height at normal sizes, but it must never
+clip itself to *fake* that. The page is allowed to scroll when chrome + controls exceed the
+viewport (browser zoom, short viewports, large text):
+
+```
+body { min-height: 100dvh; height: auto; overflow: visible; }
+grid-template-rows: auto minmax(clamp(220px, 44dvh, 620px), 1fr) auto auto auto;
+```
+
+At a normal viewport the `min-height` reproduces the current 100 d(v)h instrument exactly;
+when `zoom × viewport` leaves less room, the stage keeps a `220–620px` floor and the page
+scrolls instead of the bottom controls falling outside an `overflow:hidden` body. The zoom
+budget is part of §11: at 1280×720 @ **200 %** (640×360 CSS px) and 1440×900 @ **400 %**
+(360×225 CSS px) every control must remain reachable by scrolling, the stage must stay
+≥ 220 px, and horizontal overflow must stay 0.
+
+**Target size.** Every interactive target is ≥ **24×24 CSS px** (SC 2.5.8). Density makes a
+per-bit target impossible (16 nibbles × 4 bits), so the semantic target is the whole nibble
+(§8 nibble spinbutton) and the bit glyphs are that control's visual — never separate
+targets. The `width` range thumb is ≥24 px.
+
 ---
 
 ## 6. The canvas contract
@@ -185,6 +206,30 @@ instrument must never make you hunt for a knob.
 
 `Z1`/`Z2`/`Z3` are recomputed on every change and eased like a real register, so the
 result *moves* into place rather than snapping.
+
+### Keyboard editing
+
+Every **operand** nibble is a focusable `role="spinbutton"` control; derived frames are
+read-only. The hex cell is that control's value display and the four bit glyphs are its
+visual, not separate targets.
+
+| Key | Action |
+|---|---|
+| `Tab` / `Shift+Tab` | enter/leave the strip at the last-focused nibble (one tab stop, roving `tabindex`) |
+| `←` / `→` | move focus to the previous/next nibble |
+| `↑` / `↓` | value ±1, clamped `0…F` |
+| `Home` / `End` | move focus to the first/last nibble |
+| `0–9`, `a–f` | set the focused nibble to that hex digit |
+| `Esc` | cancel an armed mode and return focus to the focused frame's label |
+
+- `aria-valuenow` is the nibble value `0–15`; `aria-valuetext` names position, bits and
+  weight using §6 addressing and §5 place-value maths — e.g. nibble index 5 of 16 in a
+  64-bit register reads `"nibble 6 of 16, hex D, bits 40–43, weight 2^40"`.
+- The roving `tabindex` lives on the last-focused nibble; a strip re-render must restore it
+  (§10.33).
+- A whole-word **hex entry** field accepts `1…nibbleCount` hex digits: `Enter` commits
+  (right-aligned and zero-padded exactly like CSV, §10.16), `Esc` reverts, invalid input is
+  refused with a status message. It is disabled for derived or driven frames.
 
 ### The truth table is data, not a reference card
 The `n` column counts how many bit positions in A and B actually hold each input pair.
@@ -272,6 +317,13 @@ view for seeing quantisation.
 The easing constant is deliberately high (`0.24`) — fast enough to feel like the wave
 *snaps* into the new shape while still showing you how it got there.
 
+**Reduced motion.** Under `prefers-reduced-motion: reduce`:
+
+- the LFO starts **off** and is not auto-started; if the user starts it, commits are
+  instant (no easing) and the rate is capped at **4/s**;
+- the 220 ms hint fade is removed (the hint appears/disappears immediately);
+- 1:1 pointer drag is unchanged — drag is direct manipulation, not decoration.
+
 ---
 
 ## 8. Components
@@ -286,7 +338,27 @@ The easing constant is deliberately high (`0.24`) — fast enough to feel like t
 - **Nib group** (`.nib`) — `flex: 1 1 0`, `min-width: 0`. Contains the bit cell (if mode
   allows) and the hex cell.
 - **Bit cell** (`.bit`) — 1/4 of a capped-width grid. `--dimmer` off, `--accent` on.
-  `.mid` adds the amber underline. Clickable.
+  `.mid` adds the amber underline. A bit click toggles that bit, but the bit is **not**
+  a separate target: the whole nibble is one semantic control (§8 nibble spinbutton), so
+  the four glyphs are its visual and its `aria-valuetext`, not four focus stops.
+- **Nibble spinbutton** (`.nib`) — the strip's semantic editor. One focusable
+  `role="spinbutton"` per operand nibble (`aria-valuenow` 0–15, `aria-valuemin`/`max`,
+  `aria-valuetext` per §6). Focus rings the **whole nibble** (`outline: 2px solid
+  var(--accent)`), not one glyph, because the nibble is the target. Pointer: clicking a
+  bit toggles it, clicking the nibble body focuses the spinbutton, drag is unchanged. In
+  compact mode the hex cell remains the control; the bits are hidden visually only.
+- **Hex entry** (`.hex-entry`) — mono, right-aligned text input beside `width`. Accepts a
+  whole word (`1…nibbleCount` digits), `Enter` commits, `Esc` reverts, `aria-describedby`
+  names the target frame. Disabled with a visible reason when the focused frame is derived
+  or driven.
+- **Canvas accessibility** — the canvas is `role="img"` with a live text alternative
+  (`aria-label` or `aria-describedby`) updated on commit: edit target, frame values and the
+  Z popcount. It exposes **no** keyboard editing path — the strip is the editor (§10.32).
+- **Live status** (`#liveStatus`, `role="status"`, `aria-live="polite"`, `aria-atomic="true"`) —
+  one region in the controls band. Announces **committed** changes only, in one short
+  sentence (`lane 2 · A = DEADBEEF · Z popcount 32`), debounced ≈150 ms. Quiet during
+  pointer drag and per LFO tick; announced on pointerup, activation, LFO start/stop/mode
+  change, CSV load/step and source change.
 - **Canvas handles** — `r 2.5`, active `r 4.4` + accent ring. Hidden entirely when
   `n > 32` unless active, to avoid a dotted mess. Only ever drawn on the edit target.
 - **Curve emphasis** — with three curves on screen, hierarchy is carried by **weight,
@@ -317,16 +389,26 @@ The easing constant is deliberately high (`0.24`) — fast enough to feel like t
 - **Example stepper** (`data` group) — `import csv`, `◀ n/total ▶`, `sources`, and
   an **Observation Logger** (`log` and `export`).
   Stepping writes the row's cells into A (and B if mapped) for **undriven** inputs.
-  Arrow keys step when focus is not in a control; a file dropped anywhere loads. The
+  Arrow keys step when focus is not in a control and not in the strip (the strip owns
+  `←/→` for nibble focus); a file dropped anywhere loads. The
   observation logger records live waveform snapshots (example name, A hex, B hex, Op,
   Z hex, Pop-Z, truth table counts, timestamp) and downloads them directly as
   `bitwave_observations.csv`. This is the daily-use path, so it is the first group in
   the controls row.
-- **Segmented control** (`.seg`) — joined `A | B` pair for the edit target.
-  `button.op.on` / `[aria-pressed="true"]` is the shared "this is active" state.
+- **Segmented control** (`.seg`) — a joined set of `button.op` (currently the lane set
+  `1 | 2 | 3`, the stepper's `◀ ▶`, and per-pane focus). **Mutually exclusive sets are
+  `role="radiogroup"` with `role="radio"` + `aria-checked` and a roving `tabindex`**;
+  true toggles keep `aria-pressed`. Visual `.on` may remain, but state is programmatic —
+  a selected segment must never be colour-only (SC 1.4.1).
 - **Truth table** (`.truth`) — mono 10.5px, 4 columns `a b → n`. The `n` column is
   separated by a 1px rule: it is data *about* the register, not part of the algebra, and
-  must not read as a fifth logic cell.
+  must not read as a fifth logic cell. It carries table semantics (`role="table"` with
+  row/cell roles or a real `<table>`) so a screen reader hears `a 1, b 0, n 9` as rows,
+  not as a run of spans.
+- **Group and landmark semantics** — one `<main>` around stage + strip + meta + controls;
+  every control group is a named `role="group"` (or `fieldset`/`legend`); the orphan
+  `<label>` headers become real group names; glyph/symbol buttons (`◀ ▶ × split 0 F`) get
+  accessible names instead of relying on `title`.
 - **Strip label** (`strip::before`, `data-edit`) — a 9px frame name (`A`, `D`, `Z2`, …)
   in the left gutter naming the frame the strip is showing. Derived frames are
   read-only, and the label says which one. Without it, A·B mode has no way to tell.
@@ -378,6 +460,19 @@ One breakpoint: **720px**.
   below ~46px per nibble, so the strip drops to hex-only. This is driven by *available
   width* in `draw()`, not by nibble count. At 16 nibbles a 420px phone engages compact;
   the same 16 nibbles on a 1440px desktop do not.
+
+**Zoom and reflow** (with §5): at 200 %/400 % browser zoom the viewport is small, so the
+page scrolls and the stage keeps its `220–620px` floor. The responsive rules above still
+apply at every zoom level; no control may be removed from the DOM to fit.
+
+**Reserve space, never hide.** Controls that do not apply yet (binops before B, the CSV
+stepper before a load, the LFO's B-phase before B) are rendered **disabled with a visible
+reason** — `aria-disabled` and a title/status — instead of `hidden`. Tab order and module
+height stay stable across mode changes (audit §4 "moving targets").
+
+**Targets.** Every interactive target is ≥24×24 CSS px; `.op.mini` gets `min-height: 24px`
+and the `width` range thumb is ≥24 px. Dense glyphs are the visual of a larger semantic
+target, never the target itself.
 
 Body grid must stay `grid-template-columns: minmax(0, 1fr)` — see §10.
 
@@ -480,6 +575,23 @@ something that looked fine until it was measured.
 31. **A fresh CSV import rebuilds the board.** Import clears routes and refills the
     six rows from the imported columns (widest column first), keeping per-column
     typing, right-alignment and truncation exactly as before.
+32. **The strip is the semantic editor; the canvas is a lens.** Every operand nibble is
+    a `role="spinbutton"` in the tab order; derived frames expose no edit path, keyboard
+    or pointer. A keyboard-only user must be able to set any operand value.
+33. **Focus survives a strip re-render.** LFO ticks and commits replace the strip's
+    contents; the focused nibble (or the control that caused the commit) must be restored,
+    never dropped to `<body>`. A click on a bit leaves focus in the strip, not on `<body>`.
+34. **The live region announces committed changes only** — never per `pointermove` and
+    never per LFO tick; one `role="status"` region, debounced, atomic.
+35. **No control is removed from the DOM to change mode** (§9 reserve space). Inapplicable
+    controls are disabled with a reason; module order and tab order never reflow.
+36. **The instrument never clips to fake a viewport.** At zoom the page scrolls and the
+    stage keeps its floor (§5); `overflow:hidden` on the body must not swallow controls.
+37. **Reduced motion caps the instrument, it does not remove features.** LFO starts off,
+    no easing, rate ≤4/s; drag stays 1:1.
+38. **Accessibility work does not change the palette.** Tokens, alphas and the dim
+    hierarchy are hands-off (D10 / Q8); accessibility is carried by roles, names, keys,
+    targets, reflow and motion only.
 
 ---
 
@@ -509,6 +621,21 @@ The visual contract is measurable, so measure it rather than eyeballing:
   a frame binding reads `1:1` (or `z⁻¹` for same-lane Z) and drives the register;
   unplug restores the parked base byte-identically; a driven input's strip is read-only
   and a bit click cannot change it; a fresh import fills the board from the columns.
+- **Keyboard-only task:** from boot, Tab reaches the strip; the focused nibble is set by
+  `↑/↓`, `Home`/`End` and `0–F`; `←/→` moves between nibbles; a hex word commits; a preset,
+  a unary op and a CSV step all work without a pointer; focus is never lost to `<body>`.
+- **Roles, names, state:** the canvas has `role="img"` and a current text alternative;
+  every `.seg` exclusive set is a `radiogroup`/`radio` with `aria-checked`; every symbol or
+  glyph button has an accessible name; the truth table has table semantics; the live region
+  announces commit results and stays quiet during drag and LFO ticks.
+- **Zoom/reflow:** at 1280×720 @200 % (640×360 CSS px) and 1440×900 @400 % (360×225 CSS px)
+  every control is reachable by scrolling, the stage is ≥220 px, and horizontal overflow is 0.
+- **Reduced motion:** with `prefers-reduced-motion: reduce` emulated, the LFO is off after
+  load; starting it caps at 4/s and commits without easing; the hint does not fade.
+- **Targets:** `.op.mini` ≥24 px tall, `width` thumb ≥24 px, and the nibble semantic target
+  covers the whole nibble.
+- **Automated a11y audit:** axe-core (dev-only, never in the artifact) reports **zero
+  critical/serious** violations in the 2-D, A·B, 3-D and source-table states.
 
 A headless-Chrome CDP pass drives these in seconds: `npm run check:browser`
 ([`tools/browser-check.mjs`](tools/browser-check.mjs), zero dependencies) asserts
@@ -587,3 +714,5 @@ them.
    `npm run build` from `src/`; prove a rebuild with
    `node tools/browser-check.mjs --compare <old-artifact>` (six states, pixel-identical).
    `index.html` stays untouched as the reference build.
+6. **Any new control must declare its keyboard path and accessible name in §8** and
+   implement it before shipping. A control a keyboard-only user cannot reach is not done.

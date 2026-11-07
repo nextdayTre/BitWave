@@ -28,6 +28,7 @@ import { stripEl } from "./strip.js";
   const hexZEl = document.getElementById("hexZ");
   const popEl = document.getElementById("pop");
   const trendEl = document.getElementById("trend");
+  const canvasEl = document.getElementById("wave");
 
   function toHexOf(r) {
     const n = nibCount();
@@ -127,6 +128,24 @@ import { stripEl } from "./strip.js";
     const diff = r.target[n - 1] - r.target[0];
     trendEl.classList.toggle("flat", diff === 0);
     trendEl.textContent = diff < 0 ? "step-down" : diff > 0 ? "step-up" : "level";
+
+    /* DESIGN §8: the canvas is a lens, not a control — it is an image with a
+       live text alternative, updated on every commit (never per animation
+       frame; the curve is the visual, the words are the data). */
+    let pop = 0;
+    for (let i = 0; i < S.N; i++) pop += S.Z.bits[i];
+    const alt = [
+      S.view3d ? "3-D depth field" : "2-D waveform",
+      `lane ${laneLabel(S.slot)}`,
+      `${frameName(S.slot, "a")} ${toHexOf(S.A)}`,
+    ];
+    if (S.showB) {
+      alt.push(`${frameName(S.slot, "b")} ${toHexOf(S.B)}`);
+      alt.push(`${frameName(S.slot, "z")} ${toHexOf(S.Z)}`);
+      alt.push(`popcount ${pop}`);
+    }
+    alt.push(`editing ${frameLabel()}`);
+    canvasEl.setAttribute("aria-label", alt.join(" · "));
   }
 
 export { toHexOf, updateReadouts };

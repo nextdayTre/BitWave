@@ -929,21 +929,46 @@ function evalSpline(sp, x) {
 *
 * Moved out of main.js in F2. Reads the state tree; writes only the strip DOM.
 * The strip label (data-edit), compact mode and read-only class are DESIGN §8.
+*
+* F4: every operand nibble is a focusable `role="spinbutton"` (DESIGN §6/§8).
+* The roving tabindex lives here so a re-render can restore it — LFO ticks and
+* commits replace the strip's contents, and focus must never fall to <body>
+* (DESIGN §10.33). Read-only strips (derived or driven frames) expose the same
+* values with `aria-readonly` but no tab stop.
 */
 var stripEl = document.getElementById("strip");
 var nibsEl = document.getElementById("nibs");
+var rovingJ = 0;
+function nibAriaText(j, v, n) {
+	const base = S.N - 1 - 4 * j;
+	const lo = base - 3;
+	const hex = v.toString(16).toUpperCase();
+	return `nibble ${j + 1} of ${n}, hex ${hex}, bits ${lo}–${base}, weight 2^${nibWeightPow(j)}`;
+}
+function spinAttrs(j, v, n, readonly) {
+	const common = `role="spinbutton" aria-valuenow="${v}" aria-valuemin="0" aria-valuemax="15" aria-label="nibble ${j + 1} of ${n}" aria-valuetext="${nibAriaText(j, v, n)}"`;
+	if (readonly) return `${common} aria-readonly="true"`;
+	return `${common} tabindex="${j === rovingJ ? 0 : -1}"`;
+}
 function renderStrip() {
 	const r = focusReg();
 	const n = nibCount();
 	const compact = S.compact;
 	const readonly = !focusEditable() || isFocusDriven();
+	const hadFocus = nibsEl.contains(document.activeElement);
+	if (hadFocus) {
+		const active = document.activeElement.closest(".nib");
+		if (active) rovingJ = Number(active.dataset.j) || 0;
+	}
+	rovingJ = Math.max(0, Math.min(n - 1, rovingJ));
 	const midA = S.N / 2 - 1;
 	const midB = S.N / 2;
 	let html = "";
 	for (let j = 0; j < n; j++) {
 		const base = S.N - 1 - 4 * j;
 		const v = nibValue(r, j);
-		html += `<div class="nib" data-j="${j}"><div class="bits">`;
+		const attrs = spinAttrs(j, v, n, readonly);
+		html += `<div class="nib" data-j="${j}" ${attrs}><div class="bits">`;
 		for (let k = 0; k < 4; k++) {
 			const b = base - k;
 			const cls = [
@@ -961,9 +986,14 @@ function renderStrip() {
 		html += `</div>`;
 	}
 	nibsEl.innerHTML = html;
+	if (hadFocus && !readonly) {
+		const back = nibsEl.querySelector(`.nib[data-j="${rovingJ}"]`);
+		if (back) back.focus({ preventScroll: true });
+	}
 	stripEl.dataset.edit = frameLabel();
 	stripEl.classList.toggle("is-readonly", readonly);
-	stripEl.setAttribute("aria-readonly", readonly ? "true" : "false");
+	stripEl.setAttribute("role", "group");
+	stripEl.setAttribute("aria-label", `${frameLabel()} register${readonly ? ", read-only" : ""}`);
 	syncHoverClasses();
 }
 function patchNibble(j) {
@@ -981,6 +1011,24 @@ function patchNibble(j) {
 	el.querySelector(".hex").textContent = v.toString(16).toUpperCase();
 	const dec = el.querySelector(".dec");
 	if (dec) dec.textContent = v;
+	if (!el.hasAttribute("aria-readonly")) {
+		const n = nibCount();
+		el.setAttribute("aria-valuenow", String(v));
+		el.setAttribute("aria-valuetext", nibAriaText(j, v, n));
+	}
+}
+/**
+* Moves the roving tabindex to nibble `j` and focuses it.
+* The caller owns the "is this strip editable" check.
+*/
+function focusNibble(j) {
+	const n = nibCount();
+	rovingJ = Math.max(0, Math.min(n - 1, j));
+	const kids = nibsEl.children;
+	for (let k = 0; k < kids.length; k++) if (kids[k].hasAttribute("role")) kids[k].setAttribute("tabindex", k === rovingJ ? "0" : "-1");
+	const target = nibsEl.querySelector(`.nib[data-j="${rovingJ}"]`);
+	if (target) target.focus({ preventScroll: false });
+	return rovingJ;
 }
 function syncHoverClasses() {
 	const kids = nibsEl.children;
@@ -1003,6 +1051,7 @@ var hexBEl = document.getElementById("hexB");
 var hexZEl = document.getElementById("hexZ");
 var popEl = document.getElementById("pop");
 var trendEl = document.getElementById("trend");
+var canvasEl = document.getElementById("wave");
 function toHexOf(r) {
 	const n = nibCount();
 	let s = "";
@@ -1084,6 +1133,20 @@ function updateReadouts(withDecimal = true) {
 	const diff = r.target[n - 1] - r.target[0];
 	trendEl.classList.toggle("flat", diff === 0);
 	trendEl.textContent = diff < 0 ? "step-down" : diff > 0 ? "step-up" : "level";
+	let pop = 0;
+	for (let i = 0; i < S.N; i++) pop += S.Z.bits[i];
+	const alt = [
+		S.view3d ? "3-D depth field" : "2-D waveform",
+		`lane ${laneLabel(S.slot)}`,
+		`${frameName(S.slot, "a")} ${toHexOf(S.A)}`
+	];
+	if (S.showB) {
+		alt.push(`${frameName(S.slot, "b")} ${toHexOf(S.B)}`);
+		alt.push(`${frameName(S.slot, "z")} ${toHexOf(S.Z)}`);
+		alt.push(`popcount ${pop}`);
+	}
+	alt.push(`editing ${frameLabel()}`);
+	canvasEl.setAttribute("aria-label", alt.join(" · "));
 }
 // src/ui/frame-navigator.js
 /**
@@ -1193,9 +1256,7 @@ function createFrameNavigator(deps) {
 		const btn = document.createElement("button");
 		btn.type = "button";
 		btn.className = "frame-btn";
-		const focused = active ? ", focused" : "";
-		btn.setAttribute("aria-label", `Lane ${laneLabel(laneKey)} frame ${name}, ${frameSub(frame)}${focused}`);
-		btn.title = `Lane ${laneLabel(laneKey)} · ${name} (${frameSub(frame)})`;
+		btn.title = `Lane ${laneLabel(laneKey)} · ${name} (${frameSub(frame)})${active ? " — focused" : ""}`;
 		const label = document.createElement("span");
 		label.className = "frame-label";
 		const swatch = document.createElement("span");
@@ -1226,7 +1287,7 @@ function createFrameNavigator(deps) {
 		btn.className = "lane-btn";
 		btn.dataset.lane = laneKey;
 		btn.setAttribute("aria-expanded", String(expanded));
-		btn.setAttribute("aria-label", `Lane ${laneLabel(laneKey)}${expanded ? ", expanded" : ""}`);
+		btn.title = `Lane ${laneLabel(laneKey)}${expanded ? " · expanded" : ""}`;
 		const num = document.createElement("span");
 		num.className = "lane-num";
 		num.textContent = `LANE ${laneLabel(laneKey)}`;
@@ -1336,15 +1397,21 @@ function createStageBar(deps) {
 			const dot = document.createElement("i");
 			dot.className = "focus-dot";
 			dot.title = "Focused lane (controls & strip edit this lane)";
+			dot.setAttribute("aria-hidden", "true");
 			wrap.appendChild(dot);
 			const seg = document.createElement("div");
 			seg.className = "seg mini";
+			seg.setAttribute("role", "radiogroup");
+			seg.setAttribute("aria-label", `Lane${paneIdx === 1 ? " (second pane)" : ""}`);
 			const btns = {};
 			for (const k of SLOT_KEYS) {
 				const b = document.createElement("button");
 				b.type = "button";
 				b.className = "op";
 				b.dataset.slot = k;
+				b.setAttribute("role", "radio");
+				b.setAttribute("aria-checked", "false");
+				b.setAttribute("tabindex", "-1");
 				b.textContent = laneLabel(k);
 				b.title = `Lane ${laneLabel(k)}`;
 				b.setAttribute("aria-label", `Lane ${laneLabel(k)}`);
@@ -1356,6 +1423,21 @@ function createStageBar(deps) {
 				seg.appendChild(b);
 				btns[k] = b;
 			}
+			seg.addEventListener("keydown", (e) => {
+				const current = S.split3d ? paneIdx === 0 ? S.splitPair[0] : S.splitPair[1] : S.slot;
+				let next = SLOT_KEYS.indexOf(current);
+				if (e.key === "ArrowLeft" || e.key === "ArrowUp") next = (next + SLOT_KEYS.length - 1) % SLOT_KEYS.length;
+				else if (e.key === "ArrowRight" || e.key === "ArrowDown") next = (next + 1) % SLOT_KEYS.length;
+				else if (e.key === "Home") next = 0;
+				else if (e.key === "End") next = SLOT_KEYS.length - 1;
+				else return;
+				e.preventDefault();
+				e.stopPropagation();
+				const chosen = SLOT_KEYS[next];
+				if (S.split3d) selectSlotInPane(paneIdx, chosen);
+				else selectSlot(chosen);
+				seg.querySelector(`[data-slot="${chosen}"]`)?.focus();
+			});
 			wrap.appendChild(seg);
 			const expr = document.createElement("span");
 			expr.className = "stage-expr";
@@ -1389,6 +1471,14 @@ function createStageBar(deps) {
 			p1: makePane(1)
 		};
 	}
+	function syncRadio(btns, active) {
+		for (const k of SLOT_KEYS) {
+			const on = k === active;
+			btns[k].classList.toggle("on", on);
+			btns[k].setAttribute("aria-checked", String(on));
+			btns[k].setAttribute("tabindex", on ? "0" : "-1");
+		}
+	}
 	function syncStageBar() {
 		if (!stageDom) return;
 		element.hidden = !S.view3d;
@@ -1402,7 +1492,7 @@ function createStageBar(deps) {
 			p0.spBtn.hidden = false;
 			p0.spBtn.setAttribute("aria-pressed", "false");
 			p0.spBtn.classList.remove("on");
-			for (const k of SLOT_KEYS) p0.btns[k].classList.toggle("on", k === S.slot);
+			syncRadio(p0.btns, S.slot);
 			p0.expr.textContent = slotExprText(sl, true);
 			p1.wrap.hidden = true;
 		} else {
@@ -1410,7 +1500,7 @@ function createStageBar(deps) {
 			p0.dot.hidden = false;
 			p0.spBtn.hidden = true;
 			p0.wrap.classList.toggle("focused", S.activePane === 0);
-			for (const k of SLOT_KEYS) p0.btns[k].classList.toggle("on", k === k0);
+			syncRadio(p0.btns, k0);
 			p0.expr.textContent = slotExprText(S.slots[k0], false);
 			p1.wrap.hidden = false;
 			p1.dot.hidden = false;
@@ -1418,7 +1508,7 @@ function createStageBar(deps) {
 			p1.spBtn.setAttribute("aria-pressed", "true");
 			p1.spBtn.classList.add("on");
 			p1.wrap.classList.toggle("focused", S.activePane === 1);
-			for (const k of SLOT_KEYS) p1.btns[k].classList.toggle("on", k === k1);
+			syncRadio(p1.btns, k1);
 			p1.expr.textContent = slotExprText(S.slots[k1], false);
 		}
 	}
@@ -1475,6 +1565,7 @@ function attachKeyboard(deps) {
 		}
 		if (!DEMO.rows.length) return;
 		if (/^(INPUT|SELECT|TEXTAREA)$/.test(e.target && e.target.tagName || "")) return;
+		if (e.target && e.target.closest && e.target.closest("#nibs")) return;
 		if (e.key === "ArrowRight") {
 			applyExample(DEMO.i + 1);
 			e.preventDefault();
@@ -2166,6 +2257,59 @@ function createSourceTable(deps) {
 		isOpen: () => !panel.hidden
 	};
 }
+// src/ui/live-status.js
+/**
+* One committed-change live region (DESIGN §8, §10.34).
+*
+* Every register change is visible but silent to a screen reader. Naïvely
+* making the readouts live would flood: a drag commits per pointermove and the
+* LFO commits 1–8×/s. So there is exactly one polite, atomic status region,
+* driven by transaction boundaries, debounced ~150 ms, and quiet while a drag
+* or the LFO is running. One short sentence: lane, frame, value, Z popcount.
+*/
+function createLiveStatus(store) {
+	const el = document.getElementById("liveStatus");
+	let timer = 0;
+	let pending = "";
+	const quiet = () => S.drag >= 0 || S.lfo.on;
+	function describe() {
+		const r = focusReg();
+		const n = nibCount();
+		let hex = "";
+		for (let j = 0; j < n; j++) hex += nibValue(r, j).toString(16).toUpperCase();
+		const sl = curSlot();
+		let pop = 0;
+		for (let i = 0; i < S.N; i++) pop += sl.Z.bits[i];
+		return `lane ${laneLabel(S.slot)} · ${frameLabel()} = ${hex} · ${frameName(S.slot, "z")} popcount ${pop}`;
+	}
+	function flush() {
+		timer = 0;
+		if (el.textContent === pending) return;
+		el.textContent = pending;
+	}
+	function schedule() {
+		if (quiet()) {
+			clearTimeout(timer);
+			timer = 0;
+			return;
+		}
+		pending = describe();
+		clearTimeout(timer);
+		timer = setTimeout(flush, 150);
+	}
+	function announceNow() {
+		clearTimeout(timer);
+		timer = 0;
+		pending = describe();
+		el.textContent = pending;
+	}
+	store.subscribe(schedule);
+	return {
+		schedule,
+		announceNow,
+		describe
+	};
+}
 // src/render/canvas.js
 /**
 * Canvas renderer — the 2-D curve, the 3-D depth field and the legend.
@@ -2615,6 +2759,8 @@ var getPad = () => PAD;
 (() => {
 	"use strict";
 	const store = createStore(S);
+	const prefersReducedMotion = () => window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+	const liveStatus = createLiveStatus(store);
 	const controls = createControls({
 		store,
 		resizeRegister,
@@ -2670,6 +2816,7 @@ var getPad = () => PAD;
 		});
 	}
 	function commit(instant = false) {
+		if (prefersReducedMotion()) instant = true;
 		store.patch(() => {
 			syncTarget(S.A, instant);
 			syncTarget(S.B, instant);
@@ -2791,6 +2938,7 @@ var getPad = () => PAD;
 		S.drag = -1;
 		canvas.classList.remove("grabbing");
 		updateReadouts(true);
+		liveStatus.announceNow();
 		if (e && canvas.hasPointerCapture(e.pointerId)) canvas.releasePointerCapture(e.pointerId);
 	}
 	canvas.addEventListener("pointerup", endDrag);
@@ -2804,13 +2952,55 @@ var getPad = () => PAD;
 		}
 	});
 	nibsEl.addEventListener("click", (e) => {
+		const nib = e.target.closest(".nib");
 		const bit = e.target.closest(".bit");
-		if (!bit) return;
+		if (!bit) {
+			if (nib && focusEditable() && !isFocusDriven()) nib.focus();
+			return;
+		}
 		if (!focusEditable()) return;
 		if (isFocusDriven()) return;
 		controls.lfoStop();
 		store.patch(() => {
 			const j = toggleBit(editReg(), Number(bit.dataset.b));
+			evaluate();
+			patchNibble(j);
+			updateReadouts();
+		});
+		if (nib) nib.focus();
+	});
+	nibsEl.addEventListener("keydown", (e) => {
+		if (!focusEditable() || isFocusDriven()) return;
+		const nib = e.target.closest(".nib");
+		if (!nib) return;
+		const j = Number(nib.dataset.j);
+		if (!Number.isInteger(j)) return;
+		if (e.altKey || e.ctrlKey || e.metaKey) return;
+		if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+			e.preventDefault();
+			e.stopPropagation();
+			focusNibble(j + (e.key === "ArrowRight" ? 1 : -1));
+			return;
+		}
+		if (e.key === "Home" || e.key === "End") {
+			e.preventDefault();
+			e.stopPropagation();
+			focusNibble(e.key === "Home" ? 0 : nibCount() - 1);
+			return;
+		}
+		let next = null;
+		if (e.key === "ArrowUp") next = nibValue(editReg(), j) + 1;
+		else if (e.key === "ArrowDown") next = nibValue(editReg(), j) - 1;
+		else if (/^[0-9a-f]$/i.test(e.key)) next = parseInt(e.key, 16);
+		if (next === null) return;
+		e.preventDefault();
+		e.stopPropagation();
+		if (next < 0 || next > 15) return;
+		const reg = editReg();
+		if (nibValue(reg, j) === next) return;
+		controls.lfoStop();
+		store.patch(() => {
+			setNibble(reg, j, next);
 			evaluate();
 			patchNibble(j);
 			updateReadouts();
@@ -3020,7 +3210,8 @@ var getPad = () => PAD;
 		slotSeg.querySelectorAll("[data-slot]").forEach((b) => {
 			const active = b.dataset.slot === S.slot;
 			b.classList.toggle("on", active);
-			b.setAttribute("aria-pressed", String(active));
+			b.setAttribute("aria-checked", String(active));
+			b.setAttribute("tabindex", active ? "0" : "-1");
 			b.textContent = laneLabel(b.dataset.slot);
 		});
 		const isSplit = S.view3d && S.split3d;
@@ -3046,6 +3237,19 @@ var getPad = () => PAD;
 	});
 	slotSeg.querySelectorAll("[data-slot]").forEach((b) => {
 		b.addEventListener("click", () => selectSlot(b.dataset.slot));
+	});
+	slotSeg.addEventListener("keydown", (e) => {
+		const idx = SLOT_KEYS.indexOf(S.slot);
+		let next = idx;
+		if (e.key === "ArrowLeft" || e.key === "ArrowUp") next = (idx + SLOT_KEYS.length - 1) % SLOT_KEYS.length;
+		else if (e.key === "ArrowRight" || e.key === "ArrowDown") next = (idx + 1) % SLOT_KEYS.length;
+		else if (e.key === "Home") next = 0;
+		else if (e.key === "End") next = SLOT_KEYS.length - 1;
+		else return;
+		e.preventDefault();
+		e.stopPropagation();
+		selectSlot(SLOT_KEYS[next]);
+		slotSeg.querySelector(`[data-slot="${SLOT_KEYS[next]}"]`)?.focus();
 	});
 	splitBtn.addEventListener("click", () => setSplitMode(!(S.view3d && S.split3d)));
 	copySlotBtn.addEventListener("click", () => {
@@ -3099,9 +3303,10 @@ var getPad = () => PAD;
 		if (!lfoPrev) lfoPrev = now;
 		const dt = Math.min(120, Math.max(0, now - lfoPrev));
 		lfoPrev = now;
+		const reduce = prefersReducedMotion();
 		if (S.lfo.on) {
 			S.lfoAcc += dt;
-			const interval = 1e3 / S.lfo.rate;
+			const interval = 1e3 / (reduce ? Math.min(4, S.lfo.rate) : S.lfo.rate);
 			let guard = 0;
 			while (S.lfoAcc >= interval && guard++ < 6) {
 				S.lfoAcc -= interval;
@@ -3110,10 +3315,18 @@ var getPad = () => PAD;
 		}
 		for (const k of SLOT_KEYS) {
 			const sl = S.slots[k];
-			easeReg(sl.A);
-			if (sl.showB) {
-				easeReg(sl.B);
-				easeReg(sl.Z);
+			if (reduce) {
+				sl.A.anim = sl.A.target.slice();
+				if (sl.showB) {
+					sl.B.anim = sl.B.target.slice();
+					sl.Z.anim = sl.Z.target.slice();
+				}
+			} else {
+				easeReg(sl.A);
+				if (sl.showB) {
+					easeReg(sl.B);
+					easeReg(sl.Z);
+				}
 			}
 		}
 		draw();
@@ -3319,19 +3532,44 @@ var getPad = () => PAD;
   * { box-sizing: border-box; }
   [hidden] { display: none !important; }
 
-  html, body { height: 100%; }
+  /* Live region for committed changes (DESIGN §8) — announced, never shown. */
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    border: 0;
+    clip: rect(0 0 0 0);
+    clip-path: inset(50%);
+    overflow: hidden;
+    white-space: nowrap;
+  }
+
+  html { height: 100%; }
 
   body {
     margin: 0;
-    height: 100vh;
-    height: 100dvh;
-    overflow: hidden;
+    /* DESIGN §5: viewport-height at normal sizes, but never clip to fake it.
+       At zoom the page scrolls and the stage keeps its floor. */
+    min-height: 100vh;
+    min-height: 100dvh;
+    overflow: visible;
     background: var(--bg);
     color: var(--text);
     font-family: var(--sans);
     display: grid;
-    grid-template-rows: auto minmax(0, 1fr) auto auto auto;
+    grid-template-rows: auto 1fr;
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  /* The instrument is one main landmark; its internal rows are the old body
+     grid (stage flexes, the four bands follow) — DESIGN §8/§9. */
+  main {
+    display: grid;
+    grid-template-rows: minmax(clamp(220px, 44dvh, 620px), 1fr) auto auto auto;
+    grid-template-columns: minmax(0, 1fr);
+    min-height: 0;
   }
 
   /* ── header ───────────────────────────────────────────── */
@@ -3375,7 +3613,8 @@ var getPad = () => PAD;
     -webkit-appearance: none;
     appearance: none;
     width: clamp(110px, 16vw, 190px);
-    height: 22px;
+    /* DESIGN §9: 24px minimum interactive target. */
+    height: 24px;
     background: transparent;
     cursor: pointer;
   }
@@ -3388,9 +3627,9 @@ var getPad = () => PAD;
 
   input[type="range"]::-webkit-slider-thumb {
     -webkit-appearance: none;
-    width: 12px;
-    height: 12px;
-    margin-top: -5px;
+    width: 24px;
+    height: 24px;
+    margin-top: -11px;
     border-radius: 50%;
     background: var(--accent);
     border: 2px solid var(--bg);
@@ -3404,8 +3643,8 @@ var getPad = () => PAD;
   }
 
   input[type="range"]::-moz-range-thumb {
-    width: 10px;
-    height: 10px;
+    width: 24px;
+    height: 24px;
     border-radius: 50%;
     background: var(--accent);
     border: 2px solid var(--bg);
@@ -3427,7 +3666,8 @@ var getPad = () => PAD;
   /* ── wave stage ───────────────────────────────────────── */
   .stage {
     position: relative;
-    min-height: 0;
+    /* DESIGN §5 zoom floor — the depth field never collapses to 0px. */
+    min-height: clamp(220px, 44dvh, 620px);
     background: radial-gradient(120% 90% at 50% 45%, var(--stage-glow) 0%, var(--bg) 70%);
   }
 
@@ -3851,6 +4091,16 @@ var getPad = () => PAD;
 
   .nib.hot { background: rgba(52,211,153,0.07); }
 
+  /* The whole nibble is one semantic target and the keyboard editor's focus
+     unit (DESIGN §8 nibble spinbutton / §10.32). The ring wraps the nibble,
+     not a single bit glyph. */
+  .nib:focus { outline: none; }
+  .nib:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: -1px;
+    background: rgba(52,211,153,0.10);
+  }
+
   /* The bit glyphs keep a natural monospace pitch and stay centred in
      the nibble, rather than stretching when a register has few nibbles
      (2 nibbles would otherwise scatter the digits 166px apart). */
@@ -4130,6 +4380,35 @@ var getPad = () => PAD;
     .stage-expr { display: none; }
     .pane-head { gap: 5px; padding: 0 4px; }
   }
+
+  /* ── accessibility floor ─────────────────────────────────── */
+
+  /* DESIGN §9: every interactive target is ≥24×24 CSS px. The stage-bar
+     controls are the ones small enough to need the floor. */
+  .op.mini,
+  .seg.mini .op {
+    min-width: 24px;
+    min-height: 24px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  /* DESIGN §7: reduced motion removes decorative transitions and lets the
+     LFO cap itself; 1:1 drag is untouched. */
+  @media (prefers-reduced-motion: reduce) {
+    .hint,
+    .bit,
+    button.op,
+    select,
+    .focus-dot,
+    .eye-btn,
+    .lane-btn,
+    .frame-btn,
+    .nib {
+      transition: none;
+    }
+  }
 /*$vite$:1*/</style>
 </head>
 <body>
@@ -4146,14 +4425,15 @@ var getPad = () => PAD;
   </div>
 </header>
 
-<section class="stage">
-  <canvas id="wave"></canvas>
+<main>
+<section class="stage" aria-label="waveform stage">
+  <canvas id="wave" role="img" aria-label="2-D waveform plot of the register"></canvas>
   <div class="hint" id="hint">drag a nibble · click a bit · scroll a hex</div>
   <div class="stage-bar" id="stageBar" hidden></div>
   <aside class="frames-panel" id="framesPanel" hidden aria-label="Frame navigator">
     <div class="fp-head">
       <h2 class="fp-title">frames</h2>
-      <button class="op" id="framesClose" type="button" aria-label="Close frame navigator" title="Close (Esc)">×</button>
+      <button class="op" id="framesClose" type="button" aria-label="× close frame navigator" title="Close (Esc)">×</button>
     </div>
     <div class="fp-body" id="framesBody"></div>
     <div class="fp-foot">
@@ -4165,7 +4445,7 @@ var getPad = () => PAD;
   <aside class="sources-panel" id="sourcesPanel" hidden aria-label="Input source table">
     <div class="fp-head">
       <h2 class="fp-title">sources</h2>
-      <button class="op" id="sourcesClose" type="button" aria-label="Close source table" title="Close (Esc)">×</button>
+      <button class="op" id="sourcesClose" type="button" aria-label="× close source table" title="Close (Esc)">×</button>
     </div>
     <div class="src-body">
       <table class="src-table">
@@ -4199,28 +4479,28 @@ var getPad = () => PAD;
   <div class="abOnly kv"><span>pop Z1</span><code id="pop">—</code></div>
 </section>
 
-<section class="controls">
-  <div class="group">
+<section class="controls" aria-label="controls">
+  <div class="group" role="group" aria-label="source data">
     <label>data</label>
     <button class="op" id="csvBtn" title="Import a CSV or TSV of examples">import csv</button>
     <input type="file" id="csvFile" accept=".csv,.tsv,text/csv,text/plain" hidden />
-    <div class="seg" id="stepSeg" hidden>
-      <button class="op" id="prevEx" title="Previous example (←)" aria-label="Previous example">◀</button>
-      <button class="op" id="nextEx" title="Next example (→)" aria-label="Next example">▶</button>
+    <div class="seg" id="stepSeg" role="group" aria-label="example stepper" hidden>
+      <button class="op" id="prevEx" title="Previous example (←)" aria-label="◀ previous example">◀</button>
+      <button class="op" id="nextEx" title="Next example (→)" aria-label="▶ next example">▶</button>
     </div>
     <span class="excount" id="exCount" hidden>0 / 0</span>
     <button class="op" id="sourcesBtn" aria-expanded="false" aria-controls="sourcesPanel" title="Show the six input bindings">sources</button>
-    <div class="seg" id="obsSeg" hidden>
+    <div class="seg" id="obsSeg" role="group" aria-label="observation logger" hidden>
       <button class="op" id="logObsBtn" title="Log current observation">log</button>
       <button class="op" id="exportObsBtn" title="Export observations to CSV">export</button>
     </div>
     <span class="excount" id="obsCount" hidden>0 obs</span>
   </div>
 
-  <div class="group">
+  <div class="group" role="group" aria-label="shape presets">
     <label>shape</label>
-    <button class="op" data-preset="zero" title="All zeros" aria-label="All zeros">0</button>
-    <button class="op" data-preset="max" title="All ones (F)" aria-label="All ones">F</button>
+    <button class="op" data-preset="zero" title="All zeros" aria-label="all zeros 0">0</button>
+    <button class="op" data-preset="max" title="All ones (F)" aria-label="all ones F">F</button>
     <button class="op" data-preset="sine">sine</button>
     <button class="op" data-preset="cosine">cosine</button>
     <button class="op" data-preset="triangle">tri</button>
@@ -4229,7 +4509,7 @@ var getPad = () => PAD;
     <button class="op" data-preset="square">square</button>
   </div>
 
-  <div class="group" id="logicGroup">
+  <div class="group" id="logicGroup" role="group" aria-label="binary logic">
     <label>logic</label>
     <button class="op accent" data-binop="and" hidden>AND</button>
     <button class="op accent" data-binop="or" hidden>OR</button>
@@ -4238,24 +4518,24 @@ var getPad = () => PAD;
     <button class="op accent" data-binop="sub" hidden title="Arithmetic subtract — borrows propagate">SUB</button>
   </div>
 
-  <div class="group">
+  <div class="group" role="group" aria-label="lanes">
     <label>lane</label>
-    <div class="seg" id="slotSeg" role="group" aria-label="Lane 1, 2, or 3">
-      <button class="op on" data-slot="A" title="Lane 1 (Alt+1)" aria-pressed="true" aria-keyshortcuts="Alt+1">1</button>
-      <button class="op" data-slot="B" title="Lane 2 (Alt+2)" aria-pressed="false" aria-keyshortcuts="Alt+2">2</button>
-      <button class="op" data-slot="C" title="Lane 3 (Alt+3)" aria-pressed="false" aria-keyshortcuts="Alt+3">3</button>
+    <div class="seg" id="slotSeg" role="radiogroup" aria-label="Lane 1, 2, or 3">
+      <button class="op on" data-slot="A" role="radio" aria-checked="true" tabindex="0" title="Lane 1 (Alt+1)" aria-keyshortcuts="Alt+1">1</button>
+      <button class="op" data-slot="B" role="radio" aria-checked="false" tabindex="-1" title="Lane 2 (Alt+2)" aria-keyshortcuts="Alt+2">2</button>
+      <button class="op" data-slot="C" role="radio" aria-checked="false" tabindex="-1" title="Lane 3 (Alt+3)" aria-keyshortcuts="Alt+3">3</button>
     </div>
     <button class="op" id="framesBtn" aria-expanded="false" aria-controls="framesPanel" title="Browse frames A, Z, B across lanes">frames</button>
     <button class="op" id="splitBtn" aria-pressed="false" aria-keyshortcuts="Alt+S" title="Split main 3D view into two side-by-side visualizers (Alt+S)">split</button>
     <button class="op" id="copySlotBtn" aria-pressed="false" title="Copy the focused lane into another lane (click, then pick 1, 2, or 3)">copy to…</button>
   </div>
 
-  <div class="group">
+  <div class="group" role="group" aria-label="view">
     <label>view</label>
     <button class="op" id="depthBtn" aria-pressed="false" title="Show the depth field: A at frame 1, Z at 128, B at 256">3D</button>
   </div>
 
-  <div class="group">
+  <div class="group" role="group" aria-label="motion">
     <label>lfo</label>
     <button class="op" id="lfoBtn" aria-pressed="false" title="Animate the register you are editing">LFO</button>
     <select id="lfoMode" aria-label="LFO motion">
@@ -4278,7 +4558,7 @@ var getPad = () => PAD;
     </select>
   </div>
 
-  <div class="group">
+  <div class="group" role="group" aria-label="bit operations">
     <label>bit ops</label>
     <select id="amount" aria-label="Rotate / shift amount in bits">
       <option value="1">1 bit</option>
@@ -4294,7 +4574,10 @@ var getPad = () => PAD;
     <button class="op accent" data-op="fold">FOLD</button>
     <button class="op accent" data-op="bswap" title="Reverse byte order — endianness swap">BSWAP</button>
   </div>
+
+  <span id="liveStatus" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></span>
 </section>
+</main>
 
 </body>
 </html>

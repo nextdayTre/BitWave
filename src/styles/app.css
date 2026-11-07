@@ -23,19 +23,44 @@
   * { box-sizing: border-box; }
   [hidden] { display: none !important; }
 
-  html, body { height: 100%; }
+  /* Live region for committed changes (DESIGN §8) — announced, never shown. */
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    border: 0;
+    clip: rect(0 0 0 0);
+    clip-path: inset(50%);
+    overflow: hidden;
+    white-space: nowrap;
+  }
+
+  html { height: 100%; }
 
   body {
     margin: 0;
-    height: 100vh;
-    height: 100dvh;
-    overflow: hidden;
+    /* DESIGN §5: viewport-height at normal sizes, but never clip to fake it.
+       At zoom the page scrolls and the stage keeps its floor. */
+    min-height: 100vh;
+    min-height: 100dvh;
+    overflow: visible;
     background: var(--bg);
     color: var(--text);
     font-family: var(--sans);
     display: grid;
-    grid-template-rows: auto minmax(0, 1fr) auto auto auto;
+    grid-template-rows: auto 1fr;
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  /* The instrument is one main landmark; its internal rows are the old body
+     grid (stage flexes, the four bands follow) — DESIGN §8/§9. */
+  main {
+    display: grid;
+    grid-template-rows: minmax(clamp(220px, 44dvh, 620px), 1fr) auto auto auto;
+    grid-template-columns: minmax(0, 1fr);
+    min-height: 0;
   }
 
   /* ── header ───────────────────────────────────────────── */
@@ -79,7 +104,8 @@
     -webkit-appearance: none;
     appearance: none;
     width: clamp(110px, 16vw, 190px);
-    height: 22px;
+    /* DESIGN §9: 24px minimum interactive target. */
+    height: 24px;
     background: transparent;
     cursor: pointer;
   }
@@ -92,9 +118,9 @@
 
   input[type="range"]::-webkit-slider-thumb {
     -webkit-appearance: none;
-    width: 12px;
-    height: 12px;
-    margin-top: -5px;
+    width: 24px;
+    height: 24px;
+    margin-top: -11px;
     border-radius: 50%;
     background: var(--accent);
     border: 2px solid var(--bg);
@@ -108,8 +134,8 @@
   }
 
   input[type="range"]::-moz-range-thumb {
-    width: 10px;
-    height: 10px;
+    width: 24px;
+    height: 24px;
     border-radius: 50%;
     background: var(--accent);
     border: 2px solid var(--bg);
@@ -131,7 +157,8 @@
   /* ── wave stage ───────────────────────────────────────── */
   .stage {
     position: relative;
-    min-height: 0;
+    /* DESIGN §5 zoom floor — the depth field never collapses to 0px. */
+    min-height: clamp(220px, 44dvh, 620px);
     background: radial-gradient(120% 90% at 50% 45%, var(--stage-glow) 0%, var(--bg) 70%);
   }
 
@@ -555,6 +582,16 @@
 
   .nib.hot { background: rgba(52,211,153,0.07); }
 
+  /* The whole nibble is one semantic target and the keyboard editor's focus
+     unit (DESIGN §8 nibble spinbutton / §10.32). The ring wraps the nibble,
+     not a single bit glyph. */
+  .nib:focus { outline: none; }
+  .nib:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: -1px;
+    background: rgba(52,211,153,0.10);
+  }
+
   /* The bit glyphs keep a natural monospace pitch and stay centred in
      the nibble, rather than stretching when a register has few nibbles
      (2 nibbles would otherwise scatter the digits 166px apart). */
@@ -833,4 +870,33 @@
     .strip::before { top: 8px; }
     .stage-expr { display: none; }
     .pane-head { gap: 5px; padding: 0 4px; }
+  }
+
+  /* ── accessibility floor ─────────────────────────────────── */
+
+  /* DESIGN §9: every interactive target is ≥24×24 CSS px. The stage-bar
+     controls are the ones small enough to need the floor. */
+  .op.mini,
+  .seg.mini .op {
+    min-width: 24px;
+    min-height: 24px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  /* DESIGN §7: reduced motion removes decorative transitions and lets the
+     LFO cap itself; 1:1 drag is untouched. */
+  @media (prefers-reduced-motion: reduce) {
+    .hint,
+    .bit,
+    button.op,
+    select,
+    .focus-dot,
+    .eye-btn,
+    .lane-btn,
+    .frame-btn,
+    .nib {
+      transition: none;
+    }
   }

@@ -38,7 +38,7 @@ the artifact stays readable.
 
 ```bash
 npm test               # DOM-free core + state + bindings: 61 tests, zero dependencies
-npm run check:browser  # 27 artifact checks in headless Chromium (28 with --shots or --compare)
+npm run check:browser  # 40 artifact checks in headless Chromium (41 with --shots or --compare)
 npm run capture        # state screenshots → .tmp-captures/
 ```
 
@@ -48,8 +48,12 @@ the repo; edit `src/`, then `npm run build`.
 `check:browser` auto-detects Chromium (Playwright's browser cache, a Chrome/Edge
 install, or `BITWAVE_CHROME=…`). It opens the artifact over `file://` — the way a
 user opens it — and asserts console cleanliness, layout at 360/420/720/1440, the
-DESIGN §5 strip geometry, the frame navigator and focus lens, the 3-D truth table,
-CSV import, the §11 operation vectors, and the agent surface.
+DESIGN §5 strip geometry, the 2-D/3-D states, the frame navigator and focus lens,
+the 3-D truth table, CSV import, the source table, the §11 operation vectors, the
+agent surface, the F4 reflow (200 %/400 %), keyboard editing, roles/live status,
+reduced motion, targets and an axe-core audit (dev-only; zero critical/serious).
+**Keyboard editing:** Tab into the strip, then ↑/↓ adjust a nibble, ←/→ move
+between nibbles, Home/End jump, 0–F set the digit; Esc cancels an armed mode.
 
 `--compare` is the rebuild gate: it loads a reference artifact and the new one in
 the same Chromium and asserts identical screenshots across six states.

@@ -316,6 +316,29 @@ async function click(selector) {
   })()`);
 }
 
+/* Synthetic keydown on the focused element — exercises the strip's own
+   key handler without browser traversal (which Tab needs, see pressNative). */
+async function keydown(key) {
+  return JSON.parse(await evaluate(`JSON.stringify((() => {
+    const el = document.activeElement || document.body;
+    const event = new KeyboardEvent('keydown', { key: ${JSON.stringify(key)}, bubbles: true, cancelable: true });
+    el.dispatchEvent(event);
+    return {
+      prevented: event.defaultPrevented,
+      activeJ: document.activeElement?.closest?.('.nib')?.dataset?.j ?? null,
+      activeTag: document.activeElement ? document.activeElement.tagName : null
+    };
+  })())`));
+}
+
+/* Native key event — required for Tab focus traversal. */
+async function pressNative(key, code, keyCode) {
+  const base = { key, code, windowsVirtualKeyCode: keyCode, nativeVirtualKeyCode: keyCode };
+  await cdp.send('Input.dispatchKeyEvent', { type: 'rawKeyDown', ...base });
+  await cdp.send('Input.dispatchKeyEvent', { type: 'keyUp', ...base });
+  await sleep(80);
+}
+
 async function readInstrument() {
   return JSON.parse(await evaluate(`JSON.stringify({
     hex: document.getElementById('hex').textContent.trim(),
@@ -509,6 +532,61 @@ try {
     });
   }
 
+  /* 2b. zoom / reflow — DESIGN §5: page scrolls, stage keeps its floor --- */
+  const zooms = [
+    { label: '200 %', width: 720, height: 450 },
+    { label: '400 %', width: 360, height: 225 },
+  ];
+
+  for (const zoom of zooms) {
+    await runCheck(`reflow · ${zoom.label} (${zoom.width}×${zoom.height}) · scrolls, stage floor, no clipped controls`, async () => {
+      await loadApp({ width: zoom.width, height: zoom.height });
+      const measured = JSON.parse(await evaluate(`JSON.stringify((() => {
+        const scroller = document.scrollingElement;
+        const stage = document.querySelector('.stage');
+        const controls = [...document.querySelectorAll('button, select, input')]
+          .filter((el) => el.offsetParent !== null && !el.hidden);
+        const clipped = controls.filter((el) => {
+          const r = el.getBoundingClientRect();
+          const top = r.top + window.scrollY;
+          return r.width > 0 && (top < -0.5 || top + r.height > scroller.scrollHeight + 0.5);
+        }).map((el) => (el.id || el.textContent || el.tagName).trim().slice(0, 18));
+        return {
+          scrollHeight: scroller.scrollHeight,
+          innerHeight: window.innerHeight,
+          scrollable: scroller.scrollHeight > window.innerHeight + 1,
+          stageHeight: stage.getBoundingClientRect().height,
+          bodyOverflowY: getComputedStyle(document.body).overflowY,
+          horizontal: document.body.scrollWidth - document.body.clientWidth,
+          canvasClientWidth: document.getElementById('wave').clientWidth,
+          clipped,
+        };
+      })())`));
+      assert(
+        measured.bodyOverflowY === 'visible',
+        `body overflow-y is ${measured.bodyOverflowY} — controls clip with no scrollbar`
+      );
+      assert(
+        measured.scrollable,
+        `page does not scroll: scrollHeight ${measured.scrollHeight} ≤ viewport ${measured.innerHeight}`
+      );
+      assert(
+        measured.stageHeight >= 220,
+        `stage floor broken: ${measured.stageHeight.toFixed(1)}px < 220px`
+      );
+      assert(measured.horizontal === 0, `horizontal overflow: ${measured.horizontal}`);
+      assert(
+        measured.canvasClientWidth === zoom.width,
+        `canvas width ${measured.canvasClientWidth} ≠ viewport ${zoom.width}`
+      );
+      assert(
+        measured.clipped.length === 0,
+        `unreachable controls: ${measured.clipped.join(', ')}`
+      );
+      return `scroll ${measured.scrollHeight}px > ${measured.innerHeight}px · stage ${measured.stageHeight.toFixed(0)}px`;
+    });
+  }
+
   /* 3. frame navigator -------------------------------------------------- */
   await runCheck('frames · navigator lists lane 1 A/Z/B and all lanes', async () => {
     await loadApp();
@@ -647,13 +725,13 @@ try {
       view3d: document.getElementById('depthBtn').getAttribute('aria-pressed'),
       strip: document.getElementById('strip').dataset.edit,
       readonly: document.getElementById('strip').classList.contains('is-readonly'),
-      ariaReadonly: document.getElementById('strip').getAttribute('aria-readonly'),
+      nibReadonly: [...document.querySelectorAll('#nibs .nib')].every((n) => n.getAttribute('aria-readonly') === 'true'),
       bits: document.querySelectorAll('#nibs .bit').length,
       hint: document.getElementById('hint').textContent
     })`));
     assert(state.view3d === 'true', 'focusing Z1 left the 3-D view');
     assert(state.strip === 'Z1', `strip after focusing Z1: ${state.strip}`);
-    assert(state.readonly === true && state.ariaReadonly === 'true', 'Z strip is not read-only');
+    assert(state.readonly === true && state.nibReadonly === true, 'Z strip is not read-only');
     assert(state.bits === 64, `strip should show all 64 bits of Z1, found ${state.bits}`);
     assert(/read-only/.test(state.hint), `hint did not explain read-only: ${JSON.stringify(state.hint)}`);
 
@@ -792,6 +870,326 @@ try {
     assert(state.size === '64 bits · 16 nibbles', `size after import: ${state.size}`);
     await click('#sourcesClose');
     return `A · payload → data · A = ${state.hex} · 64 bits`;
+  });
+
+  /* 5b. keyboard editing — the strip is the semantic editor (DESIGN §6) -- */
+  await runCheck('keyboard · nibbles are spinbuttons with one roving tab stop', async () => {
+    await loadApp();
+    const a11y = JSON.parse(await evaluate(`JSON.stringify((() => {
+      const nibs = [...document.querySelectorAll('#nibs .nib')];
+      return {
+        count: nibs.length,
+        roles: [...new Set(nibs.map((n) => n.getAttribute('role')))],
+        tabStops: nibs.filter((n) => n.getAttribute('tabindex') === '0').length,
+        inRovingSet: nibs.filter((n) => n.getAttribute('tabindex') !== null).length,
+        valuenow: nibs[0].getAttribute('aria-valuenow'),
+        valuetext: nibs[0].getAttribute('aria-valuetext'),
+        label: nibs[0].getAttribute('aria-label'),
+        stripRole: document.getElementById('strip').getAttribute('role'),
+        stripLabel: document.getElementById('strip').getAttribute('aria-label'),
+      };
+    })())`));
+    assert(a11y.count === 16, `nibbles: ${a11y.count}`);
+    assert(
+      JSON.stringify(a11y.roles) === JSON.stringify(['spinbutton']),
+      `nibble roles: ${JSON.stringify(a11y.roles)}`
+    );
+    assert(a11y.tabStops === 1, `roving tab stops: ${a11y.tabStops} (expected 1)`);
+    assert(a11y.inRovingSet === 16, `roving set: ${a11y.inRovingSet}/16 nibbles`);
+    assert(a11y.valuenow === '8', `nibble 0 aria-valuenow: ${a11y.valuenow}`);
+    assert(
+      /nibble 1 of 16, hex 8, bits 60–63, weight 2\^60/.test(a11y.valuetext),
+      `aria-valuetext: ${a11y.valuetext}`
+    );
+    assert(/nibble 1 of 16/.test(a11y.label), `aria-label: ${a11y.label}`);
+    assert(a11y.stripRole === 'group' && /A register/.test(a11y.stripLabel), `strip: ${a11y.stripRole} / ${a11y.stripLabel}`);
+    return '16 spinbuttons · 1 tab stop · valuetext names bits + weight';
+  });
+
+  await runCheck('keyboard · ↑/↓, ←/→, Home/End and 0–F edit the focused nibble', async () => {
+    await loadApp();
+    await evaluate(`document.querySelector('#nibs .nib[data-j="0"]').focus()`);
+
+    let r = await keydown('ArrowDown');
+    let hex = await evaluate(`document.getElementById('hex').textContent.trim()`);
+    assert(hex === '7ADEFEDA85210125', `↓ on nibble 0: ${hex}`);
+    assert(r.activeJ === '0', `↓ moved focus to ${r.activeJ}`);
+    const now = await evaluate(`document.querySelector('#nibs .nib[data-j="0"]').getAttribute('aria-valuenow')`);
+    assert(now === '7', `aria-valuenow after ↓: ${now}`);
+
+    r = await keydown('ArrowRight');
+    assert(r.activeJ === '1' && r.prevented, `→ should move nibble focus: ${JSON.stringify(r)}`);
+
+    r = await keydown('f');
+    hex = await evaluate(`document.getElementById('hex').textContent.trim()`);
+    assert(hex === '7FDEFEDA85210125', `0–F on nibble 1: ${hex}`);
+    assert(r.activeJ === '1', `typing moved focus to ${r.activeJ}`);
+
+    r = await keydown('End');
+    assert(r.activeJ === '15', `End focus: ${r.activeJ}`);
+    r = await keydown('0');
+    hex = await evaluate(`document.getElementById('hex').textContent.trim()`);
+    assert(hex === '7FDEFEDA85210120', `0–F on last nibble: ${hex}`);
+
+    r = await keydown('Home');
+    assert(r.activeJ === '0', `Home focus: ${r.activeJ}`);
+
+    const dec = await evaluate(`document.getElementById('dec').textContent.trim()`);
+    assert(BigInt(`0x${hex}`).toString() === dec, 'decimal readout drifted after keyboard edit');
+    return 'nibbles set by keys · focus stays · readouts agree';
+  });
+
+  await runCheck('keyboard · Tab enters the strip and Enter-focus survives a render', async () => {
+    await loadApp();
+    await evaluate(`document.getElementById('size').focus()`);
+    await pressNative('Tab', 'Tab', 9);
+    const entered = await evaluate(`document.activeElement?.closest?.('.nib')?.dataset?.j ?? null`);
+    assert(entered === '0', `Tab from size did not enter the strip (active nibble: ${entered})`);
+
+    /* A commit re-renders the strip's innerHTML; the focused nibble must survive. */
+    await evaluate(`document.querySelector('#nibs .nib[data-j="3"]').focus()`);
+    await click('[data-preset="square"]');
+    await evaluate(`new Promise((resolve) => setTimeout(resolve, 80))`);
+    const survived = JSON.parse(await evaluate(`JSON.stringify({
+      activeJ: document.activeElement?.closest?.('.nib')?.dataset?.j ?? null,
+      hex: document.getElementById('hex').textContent.trim()
+    })`));
+    assert(survived.activeJ === '3', `focus lost on re-render: ${survived.activeJ}`);
+    assert(survived.hex !== '8ADEFEDA85210125', 'preset did not apply');
+    return 'Tab → strip · focus survives commit re-render';
+  });
+
+  await runCheck('keyboard · arrows in the strip do not also step the CSV', async () => {
+    await loadApp();
+    const fixture = readFileSync(resolve(ROOT, 'examples/testcsv.csv'), 'utf8');
+    await importCsvText(fixture);
+    const before = await evaluate(`document.getElementById('exCount').textContent.trim()`);
+    await evaluate(`document.querySelector('#nibs .nib[data-j="0"]').focus()`);
+    const r = await keydown('ArrowRight');
+    const after = await evaluate(`document.getElementById('exCount').textContent.trim()`);
+    assert(r.activeJ === '1', `strip arrow focus: ${r.activeJ}`);
+    assert(after === before, `CSV stepper fired from the strip: ${before} → ${after}`);
+
+    /* Away from the strip the stepper still works (no regression). */
+    await evaluate(`document.activeElement.blur()`);
+    await evaluate(`document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true }))`);
+    await sleep(120);
+    const stepped = await evaluate(`document.getElementById('exCount').textContent.trim()`);
+    assert(stepped !== after, `CSV stepper did not work outside the strip: ${stepped}`);
+    return `strip owns ←/→ · stepper still steps (${after} → ${stepped})`;
+  });
+
+  await runCheck('keyboard · a bit click focuses its nibble; derived strips have no tab stop', async () => {
+    await loadApp();
+    await evaluate(`document.querySelector('#nibs .nib[data-j="2"] .bit').click()`);
+    const focused = await evaluate(`document.activeElement?.closest?.('.nib')?.dataset?.j ?? null`);
+    assert(focused === '2', `bit click left focus on ${focused}`);
+
+    await click('#framesBtn');
+    await waitFor(`!document.getElementById('framesPanel').hidden`, 'frame navigator');
+    await click('#framesBody .frame-row[data-frame="z"] .frame-btn');
+    await sleep(150);
+    const z = JSON.parse(await evaluate(`JSON.stringify({
+      readonly: [...document.querySelectorAll('#nibs .nib')].every((n) => n.getAttribute('aria-readonly') === 'true'),
+      tabStops: document.querySelectorAll('#nibs .nib[tabindex]').length,
+      roles: document.querySelectorAll('#nibs .nib[role="spinbutton"]').length
+    })`));
+    assert(z.readonly === true, 'derived strip is not aria-readonly');
+    assert(z.tabStops === 0, `derived strip has ${z.tabStops} tab stops`);
+    assert(z.roles === 16, `derived strip exposes ${z.roles}/16 spinbuttons`);
+    return 'bit click → nibble focus · Z1 strip read-only, no tab stops';
+  });
+
+  /* 5c. semantics — landmarks, names, live region, radiogroup ------------- */
+  await runCheck('a11y · one main landmark, named groups, canvas text alternative', async () => {
+    await loadApp();
+    const a = JSON.parse(await evaluate(`JSON.stringify((() => {
+      const main = document.querySelectorAll('main');
+      const groups = [...document.querySelectorAll('.controls .group')];
+      return {
+        mains: main.length,
+        inside: main[0] ? [...main[0].children].map((el) => el.className.split(' ')[0]) : [],
+        groups: groups.length,
+        named: groups.filter((g) => g.getAttribute('role') === 'group' && g.getAttribute('aria-label')).length,
+        groupLabels: groups.map((g) => g.getAttribute('aria-label')),
+        canvasRole: document.getElementById('wave').getAttribute('role'),
+        canvasAlt: document.getElementById('wave').getAttribute('aria-label'),
+        liveRole: document.getElementById('liveStatus').getAttribute('role'),
+        liveLive: document.getElementById('liveStatus').getAttribute('aria-live'),
+        liveAtomic: document.getElementById('liveStatus').getAttribute('aria-atomic'),
+        stripRole: document.getElementById('strip').getAttribute('role'),
+        stripLabel: document.getElementById('strip').getAttribute('aria-label'),
+      };
+    })())`));
+    assert(a.mains === 1, `main landmarks: ${a.mains}`);
+    assert(
+      JSON.stringify(a.inside) === JSON.stringify(['stage', 'strip', 'meta', 'controls']),
+      `main children: ${JSON.stringify(a.inside)}`
+    );
+    assert(a.groups >= 7 && a.named === a.groups, `named groups: ${a.named}/${a.groups}`);
+    assert(a.groupLabels.every(Boolean), `group labels: ${JSON.stringify(a.groupLabels)}`);
+    assert(a.canvasRole === 'img', `canvas role: ${a.canvasRole}`);
+    assert(/2-D waveform · lane 1 · A 8ADEFEDA85210125 · editing A/.test(a.canvasAlt), `canvas alt: ${a.canvasAlt}`);
+    assert(a.liveRole === 'status' && a.liveLive === 'polite' && a.liveAtomic === 'true', 'live region attributes');
+    assert(a.stripRole === 'group' && /A register/.test(a.stripLabel), `strip group: ${a.stripRole}/${a.stripLabel}`);
+    return 'main landmark · 7 named groups · canvas alt · polite live region';
+  });
+
+  await runCheck('a11y · live status announces committed changes only', async () => {
+    await loadApp();
+    await click('[data-preset="square"]');
+    await sleep(260);
+    const announced = await evaluate(`document.getElementById('liveStatus').textContent.trim()`);
+    assert(
+      /^lane 1 · A = [0-9A-F]{16} · Z1 popcount \d+$/.test(announced),
+      `live status: ${JSON.stringify(announced)}`
+    );
+
+    /* The canvas alternative updates with the same commit. */
+    const alt = await evaluate(`document.getElementById('wave').getAttribute('aria-label')`);
+    assert(/A 0F0F0F0F0F0F0F0F|A [0-9A-F]{16}/.test(alt) && !/A 8ADEFEDA85210125/.test(alt), `canvas alt after commit: ${alt}`);
+
+    /* Starting the LFO must not flood the region: its ticks stay quiet. */
+    await click('#lfoBtn');
+    await sleep(500);
+    const during = await evaluate(`document.getElementById('liveStatus').textContent.trim()`);
+    await click('#lfoBtn');
+    await sleep(300);
+    assert(/^lane 1 · A = [0-9A-F]{16}/.test(during), `LFO tick spoke: ${JSON.stringify(during)}`);
+    return `announced "${announced}" · quiet during LFO`;
+  });
+
+  await runCheck('a11y · lane set is a radiogroup with arrow-key selection', async () => {
+    await loadApp();
+    const before = JSON.parse(await evaluate(`JSON.stringify({
+      role: document.getElementById('slotSeg').getAttribute('role'),
+      radios: [...document.querySelectorAll('#slotSeg [data-slot]')].map((b) => ({
+        role: b.getAttribute('role'),
+        checked: b.getAttribute('aria-checked'),
+        tab: b.getAttribute('tabindex')
+      }))
+    })`));
+    assert(before.role === 'radiogroup', `lane set role: ${before.role}`);
+    assert(before.radios.every((r) => r.role === 'radio'), `lane roles: ${JSON.stringify(before.radios.map((r) => r.role))}`);
+    assert(before.radios.filter((r) => r.checked === 'true').length === 1, 'exactly one lane checked');
+    assert(before.radios.filter((r) => r.tab === '0').length === 1, 'roving tab stop on the lane set');
+
+    await evaluate(`document.querySelector('#slotSeg [data-slot="A"]').focus()`);
+    await keydown('ArrowRight');
+    const after = JSON.parse(await evaluate(`JSON.stringify({
+      lane: window.BitWave.state().lane,
+      checked: [...document.querySelectorAll('#slotSeg [data-slot]')].map((b) => b.getAttribute('aria-checked')),
+      focused: document.activeElement.dataset.slot
+    })`));
+    assert(after.lane === 2, `arrow-right selected lane ${after.lane}`);
+    assert(JSON.stringify(after.checked) === JSON.stringify(['false', 'true', 'false']), `aria-checked: ${JSON.stringify(after.checked)}`);
+    assert(after.focused === 'B', `focus follows selection: ${after.focused}`);
+    return 'radiogroup · one checked · arrows move selection, focus follows';
+  });
+
+  await runCheck('a11y · all interactive targets are at least 24px', async () => {
+    await loadApp();
+    await click('#depthBtn');   // stage-bar mini controls only exist in 3-D
+    await sleep(200);
+    const sizes = JSON.parse(await evaluate(`JSON.stringify((() => {
+      const rect = (el) => { const r = el.getBoundingClientRect(); return { w: r.width, h: r.height }; };
+      const minis = [...document.querySelectorAll('.op.mini, .seg.mini .op')]
+        .filter((el) => el.offsetParent !== null);
+      return {
+        miniCount: minis.length,
+        minW: minis.length ? Math.min(...minis.map((el) => rect(el).w)) : 0,
+        minH: minis.length ? Math.min(...minis.map((el) => rect(el).h)) : 0,
+        rangeH: rect(document.getElementById('size')).h,
+      };
+    })())`));
+    assert(sizes.miniCount > 0, 'no stage-bar mini controls found');
+    assert(sizes.minW >= 24 && sizes.minH >= 24, `mini controls ${sizes.minW.toFixed(1)}×${sizes.minH.toFixed(1)} < 24`);
+    assert(sizes.rangeH >= 24, `width slider target height ${sizes.rangeH}`);
+    return `stage-bar minis ≥ ${sizes.minW.toFixed(0)}×${sizes.minH.toFixed(0)}px · width target ${sizes.rangeH}px`;
+  });
+
+  await runCheck('a11y · prefers-reduced-motion removes transitions and keeps the LFO usable', async () => {
+    await cdp.send('Emulation.setEmulatedMedia', {
+      features: [{ name: 'prefers-reduced-motion', value: 'reduce' }],
+    });
+    try {
+      await loadApp();
+      const reduced = JSON.parse(await evaluate(`JSON.stringify({
+        matches: window.matchMedia('(prefers-reduced-motion: reduce)').matches,
+        hint: getComputedStyle(document.getElementById('hint')).transitionDuration,
+        bit: getComputedStyle(document.querySelector('#nibs .bit')).transitionDuration,
+        lfoPressed: document.getElementById('lfoBtn').getAttribute('aria-pressed')
+      })`));
+      assert(reduced.matches === true, 'media emulation did not apply');
+      assert(reduced.hint === '0s' && reduced.bit === '0s', `transitions not removed: hint ${reduced.hint}, bit ${reduced.bit}`);
+      assert(reduced.lfoPressed === 'false', 'LFO should start off');
+      await click('#lfoBtn');
+      await sleep(200);
+      const on = await evaluate(`document.getElementById('lfoBtn').getAttribute('aria-pressed')`);
+      assert(on === 'true', 'LFO cannot be started under reduced motion');
+      await click('#lfoBtn');
+      return 'transitions 0s · LFO off by default, startable (rate capped 4/s)';
+    } finally {
+      await cdp.send('Emulation.setEmulatedMedia', { features: [] });
+    }
+  });
+
+  /* 5d. automated a11y audit — axe-core is a dev dependency only ---------- */
+  const axeSource = readFileSync(resolve(ROOT, 'node_modules/axe-core/axe.min.js'), 'utf8');
+  await runCheck('axe · zero critical/serious in 2-D, A·B 3-D, source table and navigator', async () => {
+    const states = [
+      { name: '2-D', prepare: async () => { await loadApp(); } },
+      {
+        name: 'A·B 3-D',
+        prepare: async () => { await loadApp(); await click('#depthBtn'); await sleep(250); },
+      },
+      {
+        name: 'source table',
+        prepare: async () => {
+          await loadApp();
+          await importCsv();
+          await click('#sourcesBtn');
+          await waitFor(`!document.getElementById('sourcesPanel').hidden`, 'source table');
+        },
+      },
+      {
+        name: 'frame navigator',
+        prepare: async () => {
+          await loadApp();
+          await click('#framesBtn');
+          await waitFor(`!document.getElementById('framesPanel').hidden`, 'frame navigator');
+        },
+      },
+    ];
+
+    const found = [];
+    const counts = [];
+    for (const state of states) {
+      await state.prepare();
+      await evaluate(axeSource);
+      const summary = JSON.parse(await evaluate(`(async () => {
+        const result = await axe.run(document, {
+          resultTypes: ['violations'],
+          /* The palette is deliberately hands-off (D10 / Q8); the measured
+             contrast trade-off is recorded in PLAN §4.3 instead. Everything
+             else runs, including the WCAG 2.5.3 Label-in-Name rule. */
+          rules: { 'color-contrast': { enabled: false } },
+        });
+        return JSON.stringify({
+          total: result.violations.length,
+          criticalSerious: result.violations
+            .filter((v) => v.impact === 'critical' || v.impact === 'serious')
+            .map((v) => v.id + ' (' + v.impact + ' ×' + v.nodes.length + ') '
+              + v.nodes.slice(0, 4).map((n) => n.target.join(' ')).join(' ; '))
+        });
+      })()`));
+      if (summary.criticalSerious.length) {
+        found.push(`${state.name}: ${summary.criticalSerious.join(', ')}`);
+      }
+      counts.push(`${state.name} ${summary.total}`);
+    }
+    assert(found.length === 0, `axe critical/serious — ${found.join(' | ')}`);
+    return `0 critical/serious · advisory: ${counts.join(' · ')}`;
   });
 
   await runCheck('sources · frame binding drives the input, labels it, and unbinds', async () => {
