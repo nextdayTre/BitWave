@@ -1,0 +1,1439 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BitWave — Lane Logic spike (programmable motion)</title>
+<!--
+  BitWave · SPIKE · Lane Logic — a clickable design mockup
+  =============================================================================
+  WHAT THIS IS
+  - A self-contained, offline review artifact for one proposed feature: a per-lane
+    step program that runs on the existing LFO clock. Open it over file://; nothing
+    is fetched, no fonts, images, modules or URLs.
+  - Drawn with the real DESIGN.md / src/styles/app.css token values and the real
+    control vocabulary (src/index.html, src/core/ops.ts). Only the motion group and
+    the new `lane logic` panel are interactive; everything else is a static crop of
+    the shipped shell, for context.
+  - Clickable: switch lanes (stage bar), edit each step's op and amount, change the
+    direction, and press the LFO button to run the program. Stop restores the
+    snapshot. The wave, hex and Z update on every tick, exactly the way the app's
+    real commits would.
+
+  WHAT IT IS NOT
+  - Not the implementation. No strip, truth table, source table, 3-D field, project
+    menu or observation logger is drawn; no app file is imported. The only engine
+    here is a small BigInt simulator (ROT/SHIFT/NOT/FOLD/BSWAP + presets) used to
+    make the demo truthful.
+  - Not a new visual system: every colour is a DESIGN.md / app.css token; the panel
+    reuses `.fp-*`, `.op`, `.seg`, `select` and the `sources` panel conventions.
+  - Only logic mode is simulated. The other mode options are drawn for context and
+    make the transport inert (stated in the review header and in note 1).
+
+  THE PROPOSED SHAPE (defaults shown, all open to your call in review)
+  - Per-lane programs: lane 1/2/3 each own a program; the panel follows the stage
+    bar's focused lane.
+  - Eight fixed steps in the first slice; one instruction per LFO tick, executed
+    cumulatively on the lane's first operand (A/C/E); `rest` holds the tick.
+  - Step vocabulary = the instrument's own: ROL/ROR/SHL/SHR + amount, NOT, FOLD,
+    BSWAP, the eight wavetable presets, and rest. No new maths.
+  - forward / pingpong; stop restores the pre-run snapshot byte-identically
+    (DESIGN §10.18); driven inputs are skipped; reduced motion caps at 4/s.
+  - Deliberately absent in v1: operator/binop steps, CSV data steps (they collide
+    with stop-restore semantics), conditions, a text editor, a node graph.
+
+  ANNOTATION LAYER
+  - Everything dashed, and every numbered circle (1)–(8), is review markup, not UI.
+  - The <section class="notes"> below the instrument holds the legend, the decision
+    cards and the open questions.
+
+  SOURCES
+  - DESIGN.md §7 (motion), §8 (motion group), §9 (module order, reserve space),
+    §10.18–20 (snapshot/restore, yields to manual, clamped ticks), §11 (verify),
+    §12 (roadmap), §13 (change protocol).
+  - src/ui/controls.js (the existing LFO engine), src/core/ops.ts (verbs),
+    src/state/instrument.ts (S.lfo, per-lane settings), src/index.html (motion
+    group), spike/f4-ia.html (self-containment + annotation conventions).
+-->
+<style>
+  /* ═══════════════════════════════ tokens ═══════════════════════════════
+     Copied exactly from src/styles/app.css :root. No new hex colours.      */
+  :root {
+    color-scheme: dark;
+    --bg:        #08090c;
+    --panel:     #0d1015;
+    --panel-hi:  #12161d;
+    --line:      #1b212b;
+    --line-soft: #141920;
+    --text:      #e8edf5;
+    --dim:       #67728a;
+    --dimmer:    #3f4859;
+    --accent:    #34d399;
+    --accent-hi: #5eead4;
+    --accent-low:#22c55e;
+    --panel-hover:#181d26;
+    --line-hi:   #2a3341;
+    --inf:       #f5b544;
+    --stage-glow:#0b0e13;
+    --handle-hi: #eafaf3;
+    --pad:       40px;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+    --sans: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  html { color-scheme: dark; }
+  html, body { margin: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    border: 0;
+    clip: rect(0 0 0 0);
+    clip-path: inset(50%);
+    overflow: hidden;
+    white-space: nowrap;
+  }
+
+  /* ═════════════════════════ review header (annotation) ════════════════ */
+  .review-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 12px 20px;
+    padding: 14px var(--pad) 12px;
+    border-bottom: 1px dashed var(--line-hi);
+  }
+  .review-head > div { min-width: 0; }
+  .eyebrow {
+    margin: 0 0 5px;
+    font: 500 10px/1.2 var(--sans);
+    letter-spacing: .09em;
+    text-transform: uppercase;
+    color: var(--dim);
+  }
+  .review-sub {
+    margin: 0;
+    max-width: 96ch;
+    font: 11.5px/1.5 var(--sans);
+    color: var(--dim);
+  }
+  .review-sub b { color: var(--text); font-weight: 600; }
+  .vp-badge {
+    flex: 0 0 auto;
+    padding: 6px 10px;
+    border: 1px dashed var(--line-hi);
+    border-radius: 99px;
+    font: 500 10px/1 var(--mono);
+    letter-spacing: .05em;
+    color: var(--dim);
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* ═══════════════════════════ instrument crop ════════════════════════ */
+  .app {
+    display: grid;
+    grid-template-rows: auto auto auto auto;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 24px;
+    padding: 16px var(--pad) 14px;
+    border-bottom: 1px solid var(--line-soft);
+  }
+  .title { display: flex; align-items: baseline; gap: 12px; min-width: 0; }
+  h1 { margin: 0; font-size: 16px; font-weight: 700; letter-spacing: -0.01em; }
+  .title p { margin: 0; font-size: 10.5px; letter-spacing: 0.09em; text-transform: uppercase; color: var(--dimmer); white-space: nowrap; }
+  .sizer { display: flex; align-items: center; gap: 12px; min-width: 240px; }
+  .sizer label { font-size: 10px; letter-spacing: 0.09em; text-transform: uppercase; color: var(--dimmer); }
+  .sizer input[type="range"] { width: 120px; accent-color: var(--accent); }
+  #sizeOut { font-family: var(--mono); font-size: 11px; color: var(--dim); white-space: nowrap; font-variant-numeric: tabular-nums; }
+
+  /* ── stage ─────────────────────────────────────────────── */
+  .stage {
+    position: relative;
+    height: 380px;
+    border-bottom: 1px solid var(--line-soft);
+    background: var(--stage-glow);
+    overflow: hidden;
+  }
+  .chart { display: block; width: 100%; height: 100%; }
+
+  .legend {
+    position: absolute;
+    top: 10px;
+    right: calc(var(--pad) + 10px);
+    z-index: 1;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    font: 10px/1 var(--mono);
+    color: var(--dim);
+    pointer-events: none;
+  }
+  .legend .lg { display: inline-flex; align-items: center; gap: 6px; }
+  .legend i { display: inline-block; width: 18px; height: 0; border-top: 2px solid var(--accent); }
+  .legend i.b { border-top: 1.5px dashed var(--dim); }
+  .legend i.z { border-top: 2.5px solid var(--accent-hi); }
+
+  /* Stage bar: drawn left-aligned in this spike so the lane selector stays
+     clickable beside the open panel. The app centers it (§8); `sources` can
+     already overlap it when open. Called out in the spec note. */
+  .stage-bar {
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 7px;
+    z-index: 2;
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+    padding: 0 var(--pad) 0 calc(var(--pad) + 4px);
+    pointer-events: none;
+    user-select: none;
+  }
+  .pane-head {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+    padding: 0 12px;
+    pointer-events: auto;
+  }
+  .focus-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); flex: 0 0 auto; box-shadow: 0 0 0 2px rgba(52,211,153,0.22); }
+  .stage-expr {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    color: var(--text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 280px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* ── meta readout ─────────────────────────────────────── */
+  .meta {
+    display: flex;
+    align-items: center;
+    gap: 10px 22px;
+    flex-wrap: wrap;
+    padding: 9px var(--pad);
+    border-top: 1px solid var(--line-soft);
+    background: var(--panel);
+    font-family: var(--mono);
+    font-size: 11.5px;
+  }
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 9px;
+    border: 1px solid var(--line);
+    border-radius: 99px;
+    color: var(--accent);
+    font-size: 10.5px;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    white-space: nowrap;
+  }
+  .badge.ghost { color: var(--dim); }
+  .kv { display: inline-flex; align-items: baseline; gap: 6px; min-width: 0; }
+  .kv > span { font-family: var(--sans); font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--dimmer); }
+  .kv code { font-family: var(--mono); font-size: 11.5px; color: var(--text); font-variant-numeric: tabular-nums; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  /* ── controls ─────────────────────────────────────────── */
+  .controls {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 10px 22px;
+    padding: 12px var(--pad);
+    border-top: 1px solid var(--line-soft);
+    background: var(--panel);
+  }
+  .group { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+  .group > label {
+    font-size: 10px;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--dimmer);
+    margin-right: 1px;
+  }
+  button.op {
+    font-family: var(--mono);
+    font-size: 11.5px;
+    color: var(--text);
+    background: var(--panel-hi);
+    border: 1px solid var(--line);
+    border-radius: 5px;
+    padding: 5px 10px;
+    cursor: pointer;
+    transition: background-color 110ms linear, border-color 110ms linear, color 110ms linear;
+  }
+  button.op:hover { background: var(--panel-hover); border-color: var(--line-hi); }
+  button.op:active { transform: translateY(0.5px); }
+  button.op:focus-visible { outline: none; box-shadow: 0 0 0 2px rgba(52,211,153,0.35); }
+  button.op.accent { color: var(--accent); border-color: rgba(52,211,153,0.28); }
+  button.op.accent:hover { border-color: rgba(52,211,153,0.5); }
+  button.op.on,
+  button.op[aria-pressed="true"],
+  button.op[aria-checked="true"] {
+    color: var(--accent);
+    border-color: rgba(52,211,153,0.5);
+    background: rgba(52,211,153,0.10);
+  }
+  button.op:disabled { opacity: 0.42; cursor: default; }
+  .op[aria-disabled="true"], .seg[aria-disabled="true"] .op { opacity: 0.42; cursor: default; }
+  .seg { display: flex; }
+  .seg .op { border-radius: 0; padding: 5px 9px; }
+  .seg .op:first-child { border-radius: 5px 0 0 5px; }
+  .seg .op:last-child { border-radius: 0 5px 5px 0; }
+  .seg .op + .op { margin-left: -1px; }
+  .seg .op.on, .seg .op[aria-pressed="true"], .seg .op:hover, .seg .op:focus-visible { position: relative; z-index: 1; }
+  .op.mini, .seg.mini .op { min-width: 24px; min-height: 24px; display: inline-flex; align-items: center; justify-content: center; }
+  .seg.mini .op { font-size: 10.5px; padding: 2px 7px; line-height: 1.35; }
+  select {
+    font-family: var(--mono);
+    font-size: 11.5px;
+    color: var(--text);
+    background: var(--panel-hi);
+    border: 1px solid var(--line);
+    border-radius: 5px;
+    padding: 5px 6px;
+    cursor: pointer;
+  }
+  select:focus-visible { outline: none; box-shadow: 0 0 0 2px rgba(52,211,153,0.35); }
+  select:disabled { opacity: 0.42; cursor: default; }
+  .sub-label { font-size: 9px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--dimmer); margin-left: 2px; }
+  .edit-target { font-family: var(--mono); font-size: 11px; color: var(--dim); white-space: nowrap; }
+  .hex-entry {
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--text);
+    background: var(--panel-hi);
+    border: 1px solid var(--line);
+    border-radius: 5px;
+    padding: 5px 8px;
+    width: 20ch;
+    text-align: right;
+    letter-spacing: 0.02em;
+    font-variant-numeric: tabular-nums;
+  }
+  .hex-entry:focus-visible { outline: none; box-shadow: 0 0 0 2px rgba(52,211,153,0.35); }
+  .b-state { font-family: var(--mono); font-size: 10.5px; color: var(--dim); white-space: nowrap; min-width: 34px; }
+  .excount { font-family: var(--mono); font-size: 11px; color: var(--dim); font-variant-numeric: tabular-nums; min-width: 54px; text-align: center; }
+  .src-status { flex: 1 1 100%; margin-top: 2px; font-family: var(--sans); font-size: 10px; letter-spacing: 0.03em; color: var(--dim); }
+
+  /* ═════════════════════════ lane logic panel ═════════════════════════
+     Same transient-overlay slot as `sources` (position absolute in the
+     stage, top/bottom 8, right --pad); reuses `.fp-head` / `.fp-title`.   */
+  .logic-panel {
+    position: absolute;
+    z-index: 4;
+    top: 38px;
+    bottom: auto;
+    max-height: calc(100% - 46px);
+    right: var(--pad);
+    width: min(620px, calc(100% - 2 * var(--pad)));
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 5px;
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+  }
+  .fp-head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 10px;
+    border-bottom: 1px solid var(--line-soft);
+  }
+  .fp-title {
+    position: relative;
+    margin: 0;
+    font-size: 10px;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--dim);
+  }
+  .panel-lane {
+    font-family: var(--mono);
+    font-size: 9.5px;
+    letter-spacing: 0.05em;
+    color: var(--dimmer);
+    white-space: nowrap;
+  }
+  .fp-head .op { margin-left: auto; padding: 2px 8px; min-height: 24px; display: inline-flex; align-items: center; }
+  .logic-body { display: flex; flex-direction: column; min-height: 0; flex: 1 1 auto; overflow-y: auto; }
+
+  .seq-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    padding: 7px 10px;
+    border-bottom: 1px solid var(--line-soft);
+    font-family: var(--sans);
+    font-size: 9px;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--dimmer);
+  }
+  .seq-cap { color: var(--dimmer); }
+  .seq-meta { font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.04em; text-transform: none; color: var(--dim); }
+  .seq-toolbar .spacer { flex: 1 1 0; min-width: 8px; }
+  .seq-toolbar label { color: var(--dimmer); }
+  .seq-toolbar select { padding: 3px 6px; font-size: 10px; text-transform: none; }
+  .transport {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-family: var(--mono);
+    font-size: 9.5px;
+    letter-spacing: 0.05em;
+    text-transform: lowercase;
+    color: var(--dim);
+    white-space: nowrap;
+  }
+  .transport::before {
+    content: "";
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--dimmer);
+    box-shadow: none;
+  }
+  .transport.is-on { color: var(--accent); }
+  .transport.is-on::before { background: var(--accent); box-shadow: 0 0 0 2px rgba(52,211,153,0.18); }
+
+  .seq-scroll { overflow-x: auto; overflow-y: hidden; padding: 8px 10px 10px; position: relative; }
+  .seq { display: grid; grid-template-columns: repeat(8, minmax(54px, 1fr)); gap: 6px; min-width: 500px; }
+  .step {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+    padding: 5px 5px 7px;
+    border: 1px solid var(--line);
+    border-radius: 5px;
+    background: var(--panel-hi);
+    transition: border-color 110ms linear, background-color 110ms linear;
+  }
+  .step.is-tick {
+    border-color: rgba(52,211,153,0.55);
+    background: rgba(52,211,153,0.08);
+  }
+  .step-num {
+    font-family: var(--mono);
+    font-size: 9px;
+    letter-spacing: 0.08em;
+    color: var(--dimmer);
+    font-variant-numeric: tabular-nums;
+  }
+  .step.is-tick .step-num { color: var(--accent); }
+  .step select { width: 100%; padding: 3px 2px; font-size: 10px; }
+  .step-op { text-transform: none; }
+  .step-amt { color: var(--text); }
+  .step-amt:disabled { color: var(--dimmer); }
+  .step-bar { display: flex; align-items: flex-end; justify-content: center; height: 44px; margin-top: 2px; }
+  .step-bar i {
+    display: block;
+    width: 12px;
+    min-height: 2px;
+    border-radius: 2px 2px 0 0;
+    background: rgba(52,211,153,0.32);
+    transition: height 110ms ease;
+  }
+  .step.is-tick .step-bar i { background: rgba(52,211,153,0.55); }
+  .step-bar.is-rewrite i { height: 16px !important; background: transparent; border: 1px solid rgba(52,211,153,0.38); border-radius: 3px; }
+  .step-bar.is-rest i { height: 2px !important; width: 14px; background: var(--line-hi); }
+
+  .logic-foot {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+    padding: 7px 10px;
+    border-top: 1px solid var(--line-soft);
+    font-family: var(--mono);
+    font-size: 9.5px;
+    color: var(--dim);
+    position: relative;
+  }
+  .lf-kv { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .lf-kv > span { font-family: var(--sans); font-size: 8.5px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--dimmer); }
+  .lf-kv code { color: var(--text); font-size: 9.5px; }
+  .lf-msg { flex: 1 1 auto; min-width: 0; text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--dim); }
+  .lf-msg.is-live { color: var(--accent); }
+
+  /* ═════════════════════ annotation markers (review layer) ══════════════ */
+  .anno { position: relative; }
+  .anno.inline { display: inline-flex; align-items: center; }
+  .mk {
+    position: absolute;
+    z-index: 5;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 15px;
+    height: 15px;
+    border: 1px dashed var(--line-hi);
+    border-radius: 50%;
+    background: var(--bg);
+    color: var(--dim);
+    font: 400 9px/1 var(--mono);
+    pointer-events: none;
+  }
+  .anno.inline > .mk { right: -8px; top: -8px; }
+  .fp-title > .mk { right: -13px; top: -9px; }
+  .seq-scroll > .mk { right: 6px; top: 4px; }
+  .logic-foot > .mk { right: 8px; top: -9px; }
+
+  /* ═══════════════════════════ annotation section ══════════════════════ */
+  .notes { margin: 0; padding: 22px var(--pad) 40px; border-top: 1px dashed var(--line-hi); }
+  .notes-head { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 6px 20px; }
+  .notes h2 { margin: 0; font: 500 10px/1.2 var(--sans); letter-spacing: .09em; text-transform: uppercase; color: var(--dim); }
+  .notes-sub { margin: 0; max-width: 72ch; font: 11px/1.45 var(--sans); color: var(--dimmer); }
+  .notes-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 14px 30px; margin-top: 16px; }
+  .note {
+    display: grid;
+    grid-template-columns: 21px minmax(0, 1fr);
+    gap: 10px;
+    align-items: start;
+    padding-top: 10px;
+    border-top: 1px dashed var(--line-soft);
+  }
+  .notes .note > .mk { position: static; width: 19px; height: 19px; font-size: 10px; }
+  .note h3 { margin: 0 0 3px; font: 600 11.5px/1.3 var(--sans); color: var(--text); }
+  .note p { margin: 0; font: 11px/1.5 var(--sans); color: var(--dim); }
+  .note code { font-family: var(--mono); font-size: 10.5px; color: var(--text); font-variant-numeric: tabular-nums; }
+
+  .details { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; margin-top: 22px; }
+  .detail { padding: 12px 14px 13px; border: 1px dashed var(--line-hi); border-radius: 5px; }
+  .detail-cap { margin: 0 0 10px; font: 500 9px/1.2 var(--sans); letter-spacing: .09em; text-transform: uppercase; color: var(--dimmer); }
+  .detail-note { margin: 10px 0 0; font: 10.5px/1.5 var(--sans); color: var(--dim); }
+  .detail-note b { color: var(--text); font-weight: 600; }
+
+  .vocab { width: 100%; border-collapse: collapse; font: 10.5px/1.45 var(--mono); }
+  .vocab th {
+    padding: 4px 8px 6px 0;
+    border-bottom: 1px solid var(--line-soft);
+    font: 500 9px/1.2 var(--sans);
+    letter-spacing: .09em;
+    text-transform: uppercase;
+    text-align: left;
+    color: var(--dimmer);
+  }
+  .vocab td { padding: 5px 8px 5px 0; border-bottom: 1px solid var(--line-soft); color: var(--dim); vertical-align: top; }
+  .vocab td:first-child { color: var(--text); white-space: nowrap; }
+  .vocab tr:last-child td { border-bottom: 0; }
+
+  .open-list { margin: 0; padding-left: 16px; font: 11px/1.55 var(--sans); color: var(--dim); }
+  .open-list li { margin: 5px 0; }
+  .open-list b { color: var(--text); font-weight: 600; }
+
+  .spec-foot { margin: 26px 0 0; padding-top: 14px; border-top: 1px dashed var(--line-hi); font: 10.5px/1.6 var(--sans); color: var(--dimmer); }
+  .spec-foot b { font-weight: 600; color: var(--dim); }
+  .spec-note {
+    margin: 14px 0 0;
+    padding: 10px 12px;
+    border: 1px dashed var(--line-hi);
+    border-radius: 5px;
+    font: 10.5px/1.55 var(--sans);
+    color: var(--dim);
+  }
+  .spec-note b { font-weight: 600; color: var(--text); }
+
+  /* ═════════════════════════════ responsive ═════════════════════════════ */
+  @media (max-width: 720px) {
+    :root { --pad: 16px; }
+    header { flex-wrap: wrap; gap: 12px; }
+    .title p { display: none; }
+    .sizer { width: 100%; min-width: 0; }
+    .sizer input[type="range"] { flex: 1 1 auto; width: auto; }
+    .stage { height: 420px; }
+    .logic-panel { width: calc(100% - 2 * var(--pad)); top: 34px; max-height: calc(100% - 42px); }
+    .stage-bar { padding-left: calc(var(--pad) + 2px); }
+    .stage-expr { display: none; }
+    .notes-grid { grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
+    .details { grid-template-columns: minmax(0, 1fr); }
+  }
+  @media (max-width: 420px) {
+    .stage { height: 460px; }
+    .review-head { padding-top: 12px; }
+    .logic-panel { top: 34px; max-height: calc(100% - 42px); }
+    .step select { font-size: 9px; }
+    .seq { min-width: 460px; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    button.op, select, .step, .step-bar i { transition: none; }
+  }
+</style>
+</head>
+<body>
+
+<!-- ═══════════════════════ review header — annotation, not the app ═════════ -->
+<div class="review-head">
+  <div>
+    <p class="eyebrow">BitWave · spike · lane logic — programmable motion</p>
+    <p class="review-sub">
+      <b>Clickable mockup.</b> Switch lanes in the stage bar, edit each step's op and
+      amount, change the direction, then press <b>LFO</b> to run the program — stop puts
+      the register back. Drawn with the real DESIGN/app.css tokens; the instrument crop
+      is static except the motion controls and the panel. Dashed outlines and numbered
+      circles are annotations. <b>This spike simulates logic mode only</b> — the other
+      mode options are drawn for context and make the transport inert.
+    </p>
+  </div>
+  <span class="vp-badge" id="vpBadge" aria-hidden="true"></span>
+</div>
+
+<!-- ═══════════════════════════ instrument (cropped) ═══════════════════════ -->
+<main class="app" aria-label="BitWave — lane logic mockup">
+
+  <header>
+    <div class="title">
+      <h1>BitWave</h1>
+      <p>registers as waveforms — every nibble is a sample</p>
+    </div>
+    <div class="sizer">
+      <label for="size">width</label>
+      <input id="size" type="range" min="0" max="5" step="1" value="3" aria-label="Register width" />
+      <output id="sizeOut" for="size">64 bits · 16 nibbles</output>
+    </div>
+  </header>
+
+  <!-- ── stage: wave + stage bar + the lane logic overlay ───────────────── -->
+  <section class="stage" aria-label="Wave stage, 2-D view">
+    <svg class="chart" id="wave" role="img" aria-label="Waveform"></svg>
+
+    <div class="legend" aria-hidden="true">
+      <span class="lg"><i class="a"></i><span id="legendA">A</span></span>
+      <span class="lg"><i class="b"></i><span id="legendB">B</span></span>
+      <span class="lg"><i class="z"></i><span id="legendZ">Z1</span></span>
+    </div>
+
+    <div class="stage-bar" role="toolbar" aria-label="Stage — lane and expression">
+      <div class="pane-head">
+        <i class="focus-dot" aria-hidden="true"></i>
+        <div class="seg mini" id="laneSeg" role="radiogroup" aria-label="Lane">
+          <button class="op on" type="button" role="radio" aria-checked="true" tabindex="0" data-lane="0" title="Lane 1 (Alt+1)">1</button>
+          <button class="op" type="button" role="radio" aria-checked="false" tabindex="-1" data-lane="1" title="Lane 2 (Alt+2)">2</button>
+          <button class="op" type="button" role="radio" aria-checked="false" tabindex="-1" data-lane="2" title="Lane 3 (Alt+3)">3</button>
+        </div>
+        <span class="stage-expr" id="stageExpr">LANE 1 · A ⊕ B → Z1</span>
+      </div>
+    </div>
+
+    <!-- ── the proposed panel: transient overlay, same slot as `sources` ── -->
+    <aside class="logic-panel" id="logicPanel" aria-label="Lane logic program">
+      <div class="fp-head">
+        <h2 class="fp-title">lane logic<b class="mk">2</b></h2>
+        <span class="panel-lane" id="panelLane">lane 1</span>
+        <button class="op" id="panelClose" type="button" aria-label="× close lane logic" title="Close (Esc)">×</button>
+      </div>
+
+      <div class="logic-body">
+        <div class="seq-toolbar">
+          <span class="seq-cap">program</span>
+          <span class="seq-meta">8 steps · one instruction per tick</span>
+          <span class="spacer"></span>
+          <span class="anno inline">
+            <span class="transport" id="transport">stopped</span>
+            <b class="mk">4</b>
+          </span>
+          <label for="seqDir">direction</label>
+          <span class="anno inline">
+            <select id="seqDir" aria-label="Program direction">
+              <option value="fwd" selected>forward</option>
+              <option value="pingpong">pingpong</option>
+            </select>
+            <b class="mk">5</b>
+          </span>
+        </div>
+
+        <div class="seq-scroll">
+          <b class="mk">3</b>
+          <div class="seq" id="seq" role="group" aria-label="Program steps"></div>
+        </div>
+
+        <div class="logic-foot">
+          <span class="lf-kv"><span>A</span><code id="panelA">—</code></span>
+          <span class="lf-kv"><span>Z</span><code id="panelZ">—</code></span>
+          <span class="lf-msg" id="panelMsg">stopped · LFO starts the program</span>
+          <b class="mk">8</b>
+        </div>
+      </div>
+    </aside>
+  </section>
+
+  <!-- ── meta readouts (unchanged chrome; values follow the focused lane) ─ -->
+  <section class="meta" aria-label="Readouts">
+    <div class="badge" id="laneBadge">lane 1</div>
+    <div class="badge ghost">level</div>
+    <div class="kv"><span>A</span><code id="hexA">—</code></div>
+    <div class="kv"><span>B</span><code id="hexB">—</code></div>
+    <div class="kv"><span>Z</span><code id="hexZ">—</code></div>
+    <div class="kv"><span id="popLabel">pop Z1</span><code id="popZ">—</code></div>
+  </section>
+
+  <!-- ── controls: six modules in the shipped order; only motion is live ── -->
+  <section class="controls" aria-label="controls">
+
+    <div class="group" role="group" aria-label="source">
+      <label>source</label>
+      <button class="op" type="button">import csv</button>
+      <button class="op" type="button">demo</button>
+      <button class="op" type="button">project…</button>
+      <div class="seg" role="group" aria-label="example stepper">
+        <button class="op" type="button" aria-label="◀ previous example">◀</button>
+        <button class="op" type="button" aria-label="▶ next example">▶</button>
+      </div>
+      <span class="excount">— / —</span>
+      <button class="op" type="button">sources</button>
+      <div class="seg" role="group" aria-label="observation logger">
+        <button class="op" type="button" aria-disabled="true">log</button>
+        <button class="op" type="button" aria-disabled="true">export</button>
+      </div>
+      <span class="excount">0 obs</span>
+      <span class="src-status">no dataset loaded</span>
+    </div>
+
+    <div class="group" role="group" aria-label="register edit">
+      <label>width · edit</label>
+      <span class="edit-target">edit · A</span>
+      <input id="hexEntry" class="hex-entry" type="text" spellcheck="false" autocomplete="off"
+             autocapitalize="characters" aria-label="hex value for the focused register" />
+    </div>
+
+    <div class="group" role="group" aria-label="operate">
+      <label>operate</label>
+      <span class="sub-label">presets</span>
+      <button class="op" type="button">0</button>
+      <button class="op" type="button">F</button>
+      <button class="op" type="button">sine</button>
+      <button class="op" type="button">cosine</button>
+      <button class="op" type="button">tri</button>
+      <button class="op" type="button">saw ↓</button>
+      <button class="op" type="button">saw ↑</button>
+      <button class="op" type="button">square</button>
+      <span class="sub-label">unary</span>
+      <select aria-label="Rotate / shift amount in bits">
+        <option>1 bit</option><option>2 bits</option><option selected>4 bits</option><option>8 bits</option>
+      </select>
+      <button class="op accent" type="button">ROL ←</button>
+      <button class="op accent" type="button">ROR →</button>
+      <button class="op accent" type="button">SHL ←</button>
+      <button class="op accent" type="button">SHR →</button>
+      <button class="op accent" type="button">NOT</button>
+      <button class="op accent" type="button">FOLD</button>
+      <button class="op accent" type="button">BSWAP</button>
+    </div>
+
+    <div class="group" role="group" aria-label="derive">
+      <label>derive</label>
+      <span class="b-state">B on</span>
+      <div class="seg" role="radiogroup" aria-label="binary operation">
+        <button class="op accent" type="button" role="radio" aria-checked="false" tabindex="-1">AND</button>
+        <button class="op accent" type="button" role="radio" aria-checked="false" tabindex="-1">OR</button>
+        <button class="op accent" type="button" role="radio" aria-checked="true" tabindex="0">XOR</button>
+        <button class="op accent" type="button" role="radio" aria-checked="false" tabindex="-1">ADD</button>
+        <button class="op accent" type="button" role="radio" aria-checked="false" tabindex="-1">SUB</button>
+      </div>
+    </div>
+
+    <div class="group" role="group" aria-label="motion">
+      <label>motion</label>
+      <span class="anno inline">
+        <button class="op" id="lfoBtn" type="button" aria-pressed="false" title="Animate the register you are editing">LFO</button>
+        <b class="mk">6</b>
+      </span>
+      <select id="lfoMode" aria-label="LFO motion">
+        <option value="rotcw">rot ↻</option>
+        <option value="rotccw">rot ↺</option>
+        <option value="slide">slide ⇄</option>
+        <option value="csvStep">step ⏭</option>
+        <option value="logic" selected>logic ▦</option>
+      </select>
+      <select id="lfoRate" aria-label="LFO rate">
+        <option value="1">1/s</option>
+        <option value="2">2/s</option>
+        <option value="4" selected>4/s</option>
+        <option value="8">8/s</option>
+      </select>
+      <span class="anno inline">
+        <select id="lfoB" aria-label="B phase relative to A" disabled title="B phase applies to the rotation modes">
+          <option value="0">b sync</option>
+          <option value="opp">b anti</option>
+          <option value="q">b +¼</option>
+          <option value="h">b +½</option>
+        </select>
+        <b class="mk">7</b>
+      </span>
+      <span class="anno inline">
+        <button class="op on" id="logicBtn" type="button" aria-expanded="true" aria-controls="logicPanel"
+                title="Edit this lane's program">logic ▦</button>
+        <b class="mk">1</b>
+      </span>
+    </div>
+
+    <div class="group" role="group" aria-label="view">
+      <label>view</label>
+      <button class="op" type="button">3D</button>
+      <button class="op" type="button">copy to…</button>
+    </div>
+
+  </section>
+</main>
+
+<span class="sr-only" id="live" role="status" aria-live="polite" aria-atomic="true"></span>
+
+<!-- ═══════════════════════════ annotation section ═══════════════════════ -->
+<section class="notes" aria-label="Annotations — dashed marks are not UI">
+  <div class="notes-head">
+    <h2>annotations — dashed outlines + numbered circles are review markup, not UI</h2>
+    <p class="notes-sub">One line per decision. Numbers 1–8 match the markers on the instrument; 9–10 are closing notes. The cards at the foot are the scope and the open questions.</p>
+  </div>
+
+  <div class="notes-grid">
+    <article class="note">
+      <span class="mk">1</span>
+      <div>
+        <h3><code>logic ▦</code> joins the mode list</h3>
+        <p>The motion group keeps its one transport (<code>LFO</code>), the mode select and the rate. <code>logic ▦</code> selects the program and the opener button (shown <code>aria-expanded</code>) toggles the panel, exactly like <code>sources</code> opens the source table. Selecting another mode closes the panel; selecting <code>logic</code> re-opens it.</p>
+      </div>
+    </article>
+
+    <article class="note">
+      <span class="mk">2</span>
+      <div>
+        <h3>Transient panel, no new view</h3>
+        <p>It floats over the stage at the right, below the stage bar, in the same overlay convention as <code>sources</code> (which uses top/bottom 8); it reuses <code>.fp-head</code>/<code>.fp-title</code> and closes on its <code>×</code> or <code>Esc</code> with focus returned to the opener. The panel follows the stage bar's focused lane — no second lane picker. The stage bar is drawn left-aligned here only so it stays clickable beside the open panel.</p>
+      </div>
+    </article>
+
+    <article class="note">
+      <span class="mk">3</span>
+      <div>
+        <h3>One instruction per step</h3>
+        <p>Eight fixed steps in the first slice. A step is one existing verb — a unary op with an amount, one of the eight presets, or <code>rest</code> — so the program is a composition of the tested <code>src/core/ops.ts</code> operations, not new maths. The bar under each step is its amount; preset/rewrite steps draw a hollow marker, <code>rest</code> a dash.</p>
+      </div>
+    </article>
+
+    <article class="note">
+      <span class="mk">4</span>
+      <div>
+        <h3>Playhead = the LFO clock</h3>
+        <p>One step executes per tick, cumulatively: two <code>ROL 4</code> steps read as <code>ROL 8</code>, <code>NOT</code> toggles, <code>rest</code> holds. The highlight marks the next step; the footer names the tick. Rate is the existing <code>1–8/s</code> select; reduced motion caps it at 4/s.</p>
+      </div>
+    </article>
+
+    <article class="note">
+      <span class="mk">5</span>
+      <div>
+        <h3>Direction</h3>
+        <p><code>forward</code> loops <code>1→8</code>; <code>pingpong</code> runs <code>1→8→1</code>. Changing direction restarts the shape cleanly, like changing the mode does today. Length stays 8 in this slice (see open questions).</p>
+      </div>
+    </article>
+
+    <article class="note">
+      <span class="mk">6</span>
+      <div>
+        <h3><code>LFO</code> stays the play button</h3>
+        <p>No second transport. The existing toggle starts/stops every motion mode, logic included; the panel footer reports <code>running/stopped</code>. This keeps one authoritative on/off and the snapshot/restore discipline behind it.</p>
+      </div>
+    </article>
+
+    <article class="note">
+      <span class="mk">7</span>
+      <div>
+        <h3>B phase is disabled, not removed</h3>
+        <p>In logic mode <code>b sync / anti / +¼ / +½</code> does not apply; it stays in place <code>disabled</code> with a reason (reserve space, §9). This is also the open operand-scope question: v1 moves the lane's first operand only (A/C/E); both operands with the B-phase rule is a later decision.</p>
+      </div>
+    </article>
+
+    <article class="note">
+      <span class="mk">8</span>
+      <div>
+        <h3>Stop restores the snapshot</h3>
+        <p>Exactly the existing promise (§10.18): pre-run operands are held and put back byte-identically on stop; the register you hand it is the register you get back. Switching lanes while running does not stop the clock — each lane runs its own program.</p>
+      </div>
+    </article>
+
+    <article class="note">
+      <span class="mk">9</span>
+      <div>
+        <h3>Every tick is a real commit</h3>
+        <p>The wave, hex, strip, truth table and Z read the actual post-tick state — no interpolation, no frames that pretend to be values (§10.18–20). The mockup's wave and meta are driven the same way, so what you see is what a real tick would hold.</p>
+      </div>
+    </article>
+
+    <article class="note">
+      <span class="mk">10</span>
+      <div>
+        <h3>Palette and geometry untouched</h3>
+        <p>Accent green only, at existing alphas; mono for values, sans for labels; no new hue, no node graph, no second view. The stage bar, module order, strip and truth table stay where they are — this is an addition to <code>motion</code>, not a redesign.</p>
+      </div>
+    </article>
+  </div>
+
+  <div class="details">
+    <div class="detail">
+      <p class="detail-cap">specimen · step vocabulary (existing verbs only)</p>
+      <table class="vocab">
+        <thead><tr><th scope="col">step kind</th><th scope="col">values</th></tr></thead>
+        <tbody>
+          <tr><td>rotate / shift</td><td><code>ROL ROR SHL SHR</code> · amount <code>1 2 4 8</code></td></tr>
+          <tr><td>rewrite</td><td><code>NOT FOLD BSWAP</code> · no amount</td></tr>
+          <tr><td>preset</td><td><code>0 F sine cosine tri saw↓ saw↑ square</code></td></tr>
+          <tr><td>rest</td><td>hold the tick</td></tr>
+        </tbody>
+      </table>
+      <p class="detail-note"><b>Why these:</b> each is already a tested command in <code>src/core/ops.ts</code>, so the program engine is a fold over the instrument's own vocabulary. A step that needs a new verb is a separate proposal.</p>
+    </div>
+
+    <div class="detail">
+      <p class="detail-cap">open at review</p>
+      <ul class="open-list">
+        <li><b>Operand scope:</b> first operand only (shown: A/C/E, B static) or both operands with the existing B-phase rule (sync/anti/+¼/+½)?</li>
+        <li><b>Length:</b> fixed 8, or a 4/8/16 length select (reserved space, like rate)?</li>
+        <li><b>Narrow widths:</b> the step grid scrolls horizontally at 420 px; a 2×4 grid is the alternative.</li>
+        <li><b>Share/agent:</b> program in <code>.bitwave</code> schema 3 and <code>window.BitWave</code> schema 2 is planned, not drawn here; the share budget needs measuring at 256 bits.</li>
+        <li><b>Naming:</b> mode label <code>logic ▦</code> vs <code>program</code> vs <code>seq</code>; panel title “lane logic” is the working name.</li>
+      </ul>
+    </div>
+
+    <div class="detail">
+      <p class="detail-cap">deliberately not in this slice</p>
+      <ul class="open-list">
+        <li><b>Operator steps</b> (changing the binop per tick) — they would need the operator in the snapshot/restore contract.</li>
+        <li><b>CSV data steps</b> — the existing <code>step ⏭</code> mode already owns dataset stepping; mixing it into a register program muddies stop/restore.</li>
+        <li><b>Conditionals / branching</b> — this is a sequencer, not a scripting language.</li>
+        <li><b>A text editor or node graph</b> — the step grid is the program; no new visual system.</li>
+      </ul>
+    </div>
+  </div>
+
+  <p class="spec-note">
+    <b>Mockup-only mechanics, transparent:</b> the width slider, hex entry, import/stepper,
+    presets, unary ops, binop set and view controls are drawn for context and are inert.
+    The wave is a straight polyline (the app draws the monotone-Hermite spline); the strip,
+    truth table, source table, 3-D field, project menu and observation logger are omitted
+    from the crop. The stage bar is left-aligned so the lane selector stays usable beside
+    the open panel (the app centers it; <code>sources</code> can overlap it today). Other
+    mode options disable the transport because only logic mode is simulated here.
+  </p>
+
+  <p class="spec-foot">
+    <b>Sources:</b> DESIGN.md §7–§13 (motion, components, responsive, do-not-break,
+    verification, roadmap, change protocol) · src/ui/controls.js (the LFO engine this
+    extends) · src/core/ops.ts (the verbs) · src/state/instrument.ts (per-lane state) ·
+    src/index.html (motion group) · spike/f4-ia.html (self-containment + annotation
+    conventions). <b>Status:</b> review spike; no src/ change, no DESIGN amendment yet.
+  </p>
+</section>
+
+<script>
+(() => {
+  "use strict";
+
+  const $ = (id) => document.getElementById(id);
+  const MASK = (1n << 64n) - 1n;
+  const hex = (v) => (v & MASK).toString(16).toUpperCase().padStart(16, "0");
+  const pop = (v) => { let c = 0n; let x = v & MASK; while (x) { c += x & 1n; x >>= 1n; } return Number(c); };
+  const clamp15 = (v) => Math.max(0, Math.min(15, Math.round(v)));
+
+  /* ── the instrument's verbs (src/core/ops.ts), 64-bit BigInt mirror ──── */
+  const rol = (v, k) => { const s = BigInt(((k % 64) + 64) % 64); return ((v << s) | (v >> (64n - s))) & MASK; };
+  const ror = (v, k) => { const s = BigInt(((k % 64) + 64) % 64); return ((v >> s) | (v << (64n - s))) & MASK; };
+  const shl = (v, k) => (v << BigInt(k)) & MASK;
+  const shr = (v, k) => v >> BigInt(k);
+  const not = (v) => (~v) & MASK;
+  const bswap = (v) => { let out = 0n; for (let i = 0; i < 8; i++) out = (out << 8n) | ((v >> BigInt(8 * i)) & 0xFFn); return out; };
+  const fold = (v) => {
+    let out = 0n;
+    for (let j = 0; j < 16; j++) {
+      const sh = BigInt(4 * (15 - j));
+      const nib = Number((v >> sh) & 0xFn);
+      out |= BigInt(nib ^ (j & 15)) << sh;
+    }
+    return out;
+  };
+  const presetFrom = (fn) => { let out = 0n; for (let j = 0; j < 16; j++) out = (out << 4n) | BigInt(clamp15(fn(j))); return out; };
+  const PRESETS = {
+    zero: () => 0n,
+    max: () => MASK,
+    sine: () => presetFrom((j) => 7.5 + 7.5 * Math.sin((2 * Math.PI * j) / 16)),
+    cosine: () => presetFrom((j) => 7.5 + 7.5 * Math.cos((2 * Math.PI * j) / 16)),
+    triangle: () => presetFrom((j) => 15 * (1 - Math.abs((2 * j) / 15 - 1))),
+    sawDown: () => presetFrom((j) => 15 * (1 - j / 15)),
+    sawUp: () => presetFrom((j) => 15 * (j / 15)),
+    square: () => presetFrom((j) => (j < 8 ? 15 : 0)),
+  };
+
+  const OPS = [
+    { v: "rol", t: "ROL", amt: true, kind: "unary" },
+    { v: "ror", t: "ROR", amt: true, kind: "unary" },
+    { v: "shl", t: "SHL", amt: true, kind: "unary" },
+    { v: "shr", t: "SHR", amt: true, kind: "unary" },
+    { v: "not", t: "NOT", amt: false, kind: "unary" },
+    { v: "fold", t: "FOLD", amt: false, kind: "unary" },
+    { v: "bswap", t: "BSWAP", amt: false, kind: "unary" },
+    { v: "zero", t: "0", amt: false, kind: "preset" },
+    { v: "max", t: "F", amt: false, kind: "preset" },
+    { v: "sine", t: "sine", amt: false, kind: "preset" },
+    { v: "cosine", t: "cos", amt: false, kind: "preset" },
+    { v: "triangle", t: "tri", amt: false, kind: "preset" },
+    { v: "sawDown", t: "saw↓", amt: false, kind: "preset" },
+    { v: "sawUp", t: "saw↑", amt: false, kind: "preset" },
+    { v: "square", t: "sqr", amt: false, kind: "preset" },
+    { v: "rest", t: "rest", amt: false, kind: "rest" },
+  ];
+  const hasAmt = (op) => OPS.find((o) => o.v === op)?.amt ?? false;
+  const labelOf = (op) => OPS.find((o) => o.v === op)?.t ?? op;
+
+  function applyOp(a, step) {
+    const k = Number(step.amt) || 4;
+    switch (step.op) {
+      case "rol": return rol(a, k);
+      case "ror": return ror(a, k);
+      case "shl": return shl(a, k);
+      case "shr": return shr(a, k);
+      case "not": return not(a);
+      case "fold": return fold(a);
+      case "bswap": return bswap(a);
+      case "rest": return a;
+      default: return PRESETS[step.op] ? PRESETS[step.op]() : a;
+    }
+  }
+
+  /* ── per-lane programs (the proposed state shape, demo values) ───────── */
+  const mk = (op, amt = 4) => ({ op, amt });
+  const LANES = [
+    {
+      label: "1", names: { a: "A", b: "B", z: "Z1" },
+      a: 0x8ADEFEDA85210125n, b: 0xFFFFFFFF00000000n, snap: null,
+      program: [mk("rol", 4), mk("rol", 4), mk("not"), mk("rest"), mk("fold"), mk("ror", 4), mk("rest"), mk("rest")],
+    },
+    {
+      label: "2", names: { a: "C", b: "D", z: "Z2" },
+      a: 0x0123456789ABCDEFn, b: 0x0F0F0F0F0F0F0F0Fn, snap: null,
+      program: [mk("sine"), mk("rest"), mk("shl", 4), mk("not"), mk("rest"), mk("rol", 2), mk("rest"), mk("rest")],
+    },
+    {
+      label: "3", names: { a: "E", b: "F", z: "Z3" },
+      a: 0xFEDCBA9876543210n, b: 0xFFFF0000FFFF0000n, snap: null,
+      program: [mk("bswap"), mk("rest"), mk("fold"), mk("rol", 1), mk("rest"), mk("rol", 1), mk("rest"), mk("rest")],
+    },
+  ];
+
+  /* ── state ───────────────────────────────────────────────────────────── */
+  let focus = 0;
+  let mode = "logic";
+  let rate = 4;
+  let dir = "fwd";
+  const lfo = { on: false, t: 0, acc: 0, last: 0, restored: false };
+  const reduceMQ = window.matchMedia("(prefers-reduced-motion: reduce)");
+
+  const seqEl = $("seq");
+  const live = $("live");
+  const lfoBtn = $("lfoBtn");
+  const lfoMode = $("lfoMode");
+  const lfoRate = $("lfoRate");
+  const lfoB = $("lfoB");
+  const logicBtn = $("logicBtn");
+  const logicPanel = $("logicPanel");
+  const seqDir = $("seqDir");
+  const laneSeg = $("laneSeg");
+  const transport = $("transport");
+
+  function announce(msg) {
+    live.textContent = "";
+    requestAnimationFrame(() => { live.textContent = msg; });
+  }
+
+  /* ── step index (forward / pingpong) ─────────────────────────────────── */
+  function stepIndex(t) {
+    const len = 8;
+    if (dir === "pingpong") {
+      const cycle = 2 * len - 2;
+      const p = t % cycle;
+      return p < len ? p : cycle - p;
+    }
+    return t % len;
+  }
+
+  /* ── build the step grid for the focused lane ────────────────────────── */
+  function buildOpSelect(select, value) {
+    select.textContent = "";
+    for (const [label, kind] of [["unary", "unary"], ["preset", "preset"]]) {
+      const og = document.createElement("optgroup");
+      og.label = label;
+      for (const o of OPS.filter((x) => x.kind === kind)) {
+        const opt = document.createElement("option");
+        opt.value = o.v;
+        opt.textContent = o.t;
+        og.append(opt);
+      }
+      select.append(og);
+    }
+    const rest = OPS.find((o) => o.kind === "rest");
+    const ro = document.createElement("option");
+    ro.value = rest.v;
+    ro.textContent = rest.t;
+    select.append(ro);
+    select.value = value;
+  }
+
+  function syncAmount(select, step) {
+    const takes = hasAmt(step.op);
+    select.disabled = !takes;
+    select.title = takes ? "Amount in bits" : "This step has no amount";
+    select.value = takes ? String(step.amt || 4) : "";
+  }
+
+  function syncBar(bar, step) {
+    bar.classList.remove("is-rewrite", "is-rest");
+    const i = bar.firstElementChild;
+    i.style.height = "";
+    if (step.op === "rest") {
+      bar.classList.add("is-rest");
+      i.style.height = "2px";
+    } else if (!hasAmt(step.op)) {
+      bar.classList.add("is-rewrite");
+      i.style.height = "16px";
+    } else {
+      i.style.height = (6 + (Number(step.amt) || 4) * 5) + "px";
+    }
+  }
+
+  function buildSeq() {
+    seqEl.textContent = "";
+    LANES[focus].program.forEach((step, i) => {
+      const cell = document.createElement("div");
+      cell.className = "step";
+      cell.dataset.step = String(i);
+
+      const num = document.createElement("span");
+      num.className = "step-num";
+      num.textContent = String(i + 1).padStart(2, "0");
+
+      const opSel = document.createElement("select");
+      opSel.className = "step-op";
+      opSel.setAttribute("aria-label", "step " + (i + 1) + " operation");
+      buildOpSelect(opSel, step.op);
+
+      const amtSel = document.createElement("select");
+      amtSel.className = "step-amt";
+      amtSel.setAttribute("aria-label", "step " + (i + 1) + " amount");
+      for (const [v, t] of [["", "—"], ["1", "1"], ["2", "2"], ["4", "4"], ["8", "8"]]) {
+        const o = document.createElement("option");
+        o.value = v;
+        o.textContent = t;
+        amtSel.append(o);
+      }
+      syncAmount(amtSel, step);
+
+      const bar = document.createElement("span");
+      bar.className = "step-bar";
+      bar.setAttribute("aria-hidden", "true");
+      bar.innerHTML = "<i></i>";
+      syncBar(bar, step);
+
+      opSel.addEventListener("change", () => {
+        step.op = opSel.value;
+        if (hasAmt(step.op) && !step.amt) step.amt = 4;
+        syncAmount(amtSel, step);
+        syncBar(bar, step);
+        announce("step " + (i + 1) + ": " + labelOf(step.op) + (hasAmt(step.op) ? " " + step.amt : ""));
+        renderAll();
+      });
+      amtSel.addEventListener("change", () => {
+        step.amt = Number(amtSel.value) || 4;
+        syncBar(bar, step);
+        announce("step " + (i + 1) + ": " + labelOf(step.op) + " " + step.amt);
+        renderAll();
+      });
+
+      cell.append(num, opSel, amtSel, bar);
+      seqEl.append(cell);
+    });
+    updatePlayhead();
+  }
+
+  /* ── wave (the app draws the spline; this is a review polyline) ──────── */
+  function drawWave(lane, z) {
+    const svg = $("wave");
+    const w = Math.max(360, svg.clientWidth || 900);
+    const h = Math.max(240, svg.clientHeight || 360);
+    svg.setAttribute("viewBox", "0 0 " + w + " " + h);
+    const padX = 40;
+    const padT = 56;
+    const padB = 28;
+    const pw = w - padX * 2;
+    const ph = h - padT - padB;
+
+    const pts = (v) => Array.from({ length: 16 }, (_, j) => {
+      const nib = Number((v >> BigInt(4 * (15 - j))) & 0xFn);
+      const x = padX + (pw * j) / 15;
+      const y = padT + ph * (1 - nib / 15);
+      return x.toFixed(1) + "," + y.toFixed(1);
+    }).join(" ");
+
+    let out = "";
+    for (let i = 0; i <= 4; i++) {
+      const y = padT + (ph * i) / 4;
+      out += '<line x1="' + padX + '" y1="' + y + '" x2="' + (w - padX) + '" y2="' + y + '" stroke="#1b212b" stroke-width="1"/>';
+    }
+    out += '<polyline points="' + pts(z) + '" fill="none" stroke="#34d399" stroke-opacity="0.16" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>';
+    out += '<polyline points="' + pts(z) + '" fill="none" stroke="#5eead4" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>';
+    out += '<polyline points="' + pts(lane.b) + '" fill="none" stroke="#67728a" stroke-width="1.3" stroke-dasharray="6 4" stroke-linecap="round" stroke-linejoin="round"/>';
+    out += '<polyline points="' + pts(lane.a) + '" fill="none" stroke="#34d399" stroke-width="1.8" stroke-opacity="0.82" stroke-linecap="round" stroke-linejoin="round"/>';
+    for (let j = 0; j < 16; j++) {
+      const nib = Number((lane.a >> BigInt(4 * (15 - j))) & 0xFn);
+      const x = padX + (pw * j) / 15;
+      const y = padT + ph * (1 - nib / 15);
+      out += '<circle cx="' + x.toFixed(1) + '" cy="' + y.toFixed(1) + '" r="3" fill="#0d1015" stroke="#34d399" stroke-width="1.6"/>';
+    }
+    svg.innerHTML = out;
+    svg.setAttribute("aria-label",
+      "Waveform for lane " + lane.label + ", focused frame " + lane.names.a + ". " +
+      lane.names.a + " is " + hex(lane.a) + ", " + lane.names.b + " is " + hex(lane.b) + ", " +
+      lane.names.z + " is " + hex(z) + " (" + lane.names.a + " XOR " + lane.names.b + ").");
+  }
+
+  /* ── render ──────────────────────────────────────────────────────────── */
+  function updatePlayhead() {
+    const cells = [...seqEl.children];
+    cells.forEach((c) => c.classList.remove("is-tick"));
+    if (!lfo.on) return;
+    const cell = cells[stepIndex(lfo.t)];
+    if (cell) cell.classList.add("is-tick");
+  }
+
+  function panelMessage(lane) {
+    if (lfo.on) return "running · tick " + lfo.t + " · step " + (stepIndex(lfo.t) + 1) + "/8";
+    if (lfo.restored) return "stopped · lane " + lane.label + " restored byte-identically";
+    return "stopped · LFO starts the program";
+  }
+
+  function renderAll() {
+    const lane = LANES[focus];
+    const z = (lane.a ^ lane.b) & MASK;
+    const names = lane.names;
+
+    $("stageExpr").textContent = "LANE " + lane.label + " · " + names.a + " ⊕ " + names.b + " → " + names.z;
+    $("laneBadge").textContent = "lane " + lane.label;
+    $("hexA").textContent = hex(lane.a);
+    $("hexB").textContent = hex(lane.b);
+    $("hexZ").textContent = hex(z);
+    $("popLabel").textContent = "pop " + names.z;
+    $("popZ").textContent = String(pop(z));
+    $("panelLane").textContent = "lane " + lane.label;
+    $("panelA").textContent = hex(lane.a);
+    $("panelZ").textContent = hex(z);
+    $("legendA").textContent = names.a;
+    $("legendB").textContent = names.b;
+    $("legendZ").textContent = names.z;
+    $("hexEntry").value = hex(lane.a);
+    $("panelMsg").textContent = panelMessage(lane);
+    transport.textContent = lfo.on ? "running" : "stopped";
+    transport.classList.toggle("is-on", lfo.on);
+    $("panelMsg").classList.toggle("is-live", lfo.on);
+
+    drawWave(lane, z);
+    updatePlayhead();
+  }
+
+  /* ── transport ───────────────────────────────────────────────────────── */
+  function start() {
+    if (lfo.on || mode !== "logic") return;
+    for (const lane of LANES) lane.snap = { a: lane.a };
+    lfo.on = true;
+    lfo.t = 0;
+    lfo.acc = 0;
+    lfo.last = 0;
+    lfo.restored = false;
+    lfoBtn.setAttribute("aria-pressed", "true");
+    lfoBtn.classList.add("on");
+    renderAll();
+    announce("lane logic running at " + Math.min(rate, reduceMQ.matches ? 4 : rate) + " steps per second");
+  }
+
+  function stop() {
+    if (!lfo.on) return;
+    for (const lane of LANES) {
+      if (lane.snap) lane.a = lane.snap.a;
+      lane.snap = null;
+    }
+    lfo.on = false;
+    lfo.t = 0;
+    lfo.acc = 0;
+    lfo.restored = true;
+    lfoBtn.setAttribute("aria-pressed", "false");
+    lfoBtn.classList.remove("on");
+    renderAll();
+    announce("lane logic stopped · snapshot restored");
+  }
+
+  function tick() {
+    for (const lane of LANES) {
+      const idx = stepIndex(lfo.t);
+      lane.a = applyOp(lane.a, lane.program[idx]);
+    }
+    lfo.t += 1;
+    renderAll();
+  }
+
+  function loop(now) {
+    if (lfo.on) {
+      if (!lfo.last) lfo.last = now;
+      const dt = Math.min(120, Math.max(0, now - lfo.last));
+      lfo.last = now;
+      lfo.acc += dt;
+      const cap = reduceMQ.matches ? Math.min(rate, 4) : rate;
+      const interval = 1000 / cap;
+      let guard = 0;
+      while (lfo.acc >= interval && guard < 6) {
+        lfo.acc -= interval;
+        guard += 1;
+        tick();
+      }
+    } else {
+      lfo.last = 0;
+    }
+    requestAnimationFrame(loop);
+  }
+
+  /* ── panel open / close (same contract as `sources`) ─────────────────── */
+  function openPanel() {
+    logicPanel.hidden = false;
+    logicBtn.setAttribute("aria-expanded", "true");
+    logicBtn.classList.add("on");
+  }
+  function closePanel(returnFocus) {
+    logicPanel.hidden = true;
+    logicBtn.setAttribute("aria-expanded", "false");
+    logicBtn.classList.remove("on");
+    if (returnFocus) logicBtn.focus();
+  }
+
+  /* ── wire the mockup ─────────────────────────────────────────────────── */
+  lfoBtn.addEventListener("click", () => (lfo.on ? stop() : start()));
+
+  lfoMode.addEventListener("change", () => {
+    mode = lfoMode.value;
+    const logic = mode === "logic";
+    lfoB.disabled = logic;
+    lfoB.title = logic ? "B phase applies to the rotation modes" : "B sync / anti / +¼ / +½";
+    lfoBtn.disabled = !logic;
+    lfoBtn.title = logic ? "Animate the register you are editing" : "This spike simulates logic mode only";
+    if (!logic) {
+      if (lfo.on) stop();
+      closePanel(false);
+      announce("mode " + lfoMode.options[lfoMode.selectedIndex].textContent.trim() + " · this spike simulates logic only");
+    } else {
+      openPanel();
+      announce("lane logic mode · edit the program");
+    }
+    renderAll();
+  });
+
+  lfoRate.addEventListener("change", () => {
+    rate = Number(lfoRate.value) || 4;
+    lfo.acc = 0;
+    renderAll();
+    announce("rate " + rate + " steps per second");
+  });
+
+  seqDir.addEventListener("change", () => {
+    dir = seqDir.value;
+    if (lfo.on) lfo.t = 0;
+    renderAll();
+    announce("direction " + dir);
+  });
+
+  logicBtn.addEventListener("click", () => {
+    if (!logicPanel.hidden) {
+      closePanel(true);
+      return;
+    }
+    if (mode !== "logic") {
+      mode = "logic";
+      lfoMode.value = "logic";
+      lfoB.disabled = true;
+      lfoB.title = "B phase applies to the rotation modes";
+      lfoBtn.disabled = false;
+      lfoBtn.title = "Animate the register you are editing";
+    }
+    openPanel();
+    announce("lane logic panel opened");
+  });
+
+  $("panelClose").addEventListener("click", () => closePanel(true));
+
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && !logicPanel.hidden) {
+      event.preventDefault();
+      closePanel(true);
+    }
+  });
+
+  laneSeg.addEventListener("click", (event) => {
+    const btn = event.target.closest("[data-lane]");
+    if (!btn) return;
+    focus = Number(btn.dataset.lane);
+    [...laneSeg.children].forEach((b, i) => {
+      b.classList.toggle("on", i === focus);
+      b.setAttribute("aria-checked", String(i === focus));
+      b.tabIndex = i === focus ? 0 : -1;
+    });
+    buildSeq();
+    renderAll();
+    announce("lane " + LANES[focus].label);
+  });
+
+  laneSeg.addEventListener("keydown", (event) => {
+    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+    event.preventDefault();
+    const next = (focus + (event.key === "ArrowRight" ? 1 : -1) + 3) % 3;
+    laneSeg.children[next].click();
+    laneSeg.children[next].focus();
+  });
+
+  /* ── boot ────────────────────────────────────────────────────────────── */
+  function syncViewport() {
+    $("vpBadge").textContent = window.innerWidth + " × " + window.innerHeight;
+  }
+  window.addEventListener("resize", () => {
+    syncViewport();
+    renderAll();
+  });
+
+  syncViewport();
+  buildSeq();
+  renderAll();
+  requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>
