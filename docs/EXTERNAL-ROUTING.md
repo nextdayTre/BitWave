@@ -213,6 +213,9 @@ Resolved in the shipped slice:
    Enter/blur commits, Esc reverts, invalid text is rejected and restored.
 5. **Evaluator:** the prototype's `src/core/expression.ts` is the shipped evaluator,
    with the same grammar/limits/rounding.
+6. **Agent setters:** `setExpression`, `setSource`/`setRoute`, `record`, `getLog` are live,
+   so an agent can build and clock the whole pipeline headlessly; routes are no longer a
+   manual-only step.
 
 Still open: a future float-valued expression mode (declared precision/rounding contract),
 and optional expression-only dependency ordering (v1 documents the route-topo-order

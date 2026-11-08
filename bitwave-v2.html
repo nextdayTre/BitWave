@@ -4813,6 +4813,7 @@ var PATCH_KEYS = [
 	"lfo",
 	"dataset",
 	"expression",
+	"source",
 	"record",
 	"reset"
 ];
@@ -4913,6 +4914,41 @@ function normalizeAgentPatch(value) {
 		if (input.record !== void 0) {
 			if (typeof input.record !== "boolean") bad("E_BAD_ARGS", "record must be a boolean");
 			patch.record = input.record;
+		}
+		if (input.source !== void 0) {
+			const source = objectValue(input.source, "source");
+			onlyKeys(source, [
+				"frame",
+				"kind",
+				"column",
+				"from"
+			], "source");
+			const frame = frameRefFromName(source.frame);
+			if (!frame) bad("E_BAD_ENUM", "source.frame must be an operand frame (A–F)");
+			if (frame.frame === "z") bad("E_BAD_ENUM", "Z is derived and cannot carry a source");
+			if (source.kind === "none") patch.source = {
+				frame: frame.name,
+				kind: "none"
+			};
+			else if (source.kind === "data") {
+				const column = integerValue(source.column, "source.column");
+				if (column < 0) bad("E_OUT_OF_RANGE", "source.column must be non-negative");
+				patch.source = {
+					frame: frame.name,
+					kind: "data",
+					column
+				};
+			} else if (source.kind === "frame") {
+				if (typeof source.from !== "string") bad("E_BAD_ARGS", "source.from must be a port string");
+				const match = /^([123])\.([abz])$/.exec(source.from);
+				if (!match) bad("E_BAD_ENUM", "source.from must be a port such as 3.z or 2.a");
+				if (match[1] === frame.lane && match[2] === frame.frame) bad("E_BAD_ARGS", `${frame.name} cannot be driven by itself`);
+				patch.source = {
+					frame: frame.name,
+					kind: "frame",
+					from: source.from
+				};
+			} else bad("E_BAD_ENUM", "source.kind must be none, data or frame");
 		}
 		if (input.reset !== void 0) {
 			if (input.reset !== true) bad("E_BAD_ARGS", "reset must be true");
@@ -5051,8 +5087,8 @@ function createAgentPanel({ root }) {
 			`Tools: ${TOOLS.map((tool) => tool.name).join(", ")}.`,
 			"Try: window.bitwave.getState(); window.bitwave.call(\"manifest\", {});",
 			"Deeplink: window.bitwave.getDeeplink(); setters: setLane, setFrame, setView,",
-			"setWidth, setRegister, setBinop, setLfo, setDataset, setExpression, record,",
-			"stepDataset, reset. Read the transient take with window.bitwave.getLog()."
+			"setWidth, setRegister, setBinop, setLfo, setDataset, setExpression, setSource,",
+			"setRoute, record, stepDataset, reset. Read the transient take with getLog()."
 		].join("\n");
 	}
 	function flashCopyStatus(text) {
@@ -5478,7 +5514,7 @@ function toolDefinitions() {
 	}));
 }
 function createAgentBridge(deps) {
-	const { store, share, selectSlot, selectFrame, setView: applyView, resizeRegister, setSize, chooseBinop, lfoStart, lfoStop, syncLfoUi, loadCSV, applyExample, resetInstrument, syncEditUi, setExpression: applyExpressionSource, startRecording, stopRecording, skipRecordSnapshot, readLog } = deps;
+	const { store, share, selectSlot, selectFrame, setView: applyView, resizeRegister, setSize, chooseBinop, lfoStart, lfoStop, syncLfoUi, loadCSV, applyExample, resetInstrument, syncEditUi, setExpression: applyExpressionSource, setSource: applySourceSource, startRecording, stopRecording, skipRecordSnapshot, readLog } = deps;
 	/** Subscriber set; each listener is wrapped so one thrower cannot break others. */
 	const subscribers = /* @__PURE__ */ new Set();
 	let installed = null;
@@ -5570,6 +5606,13 @@ function createAgentBridge(deps) {
 				};
 			}
 		}
+		if (patch.source) {
+			if (patch.source.kind === "data" && !DEMO.cols[patch.source.column]) return {
+				code: "E_BAD_STATE",
+				message: `source.column ${patch.source.column} is outside the current dataset`,
+				hint: "load a dataset first or choose an existing column index"
+			};
+		}
 		if (patch.dataset) {
 			const dataset = patch.dataset;
 			if (dataset.csv !== void 0) {
@@ -5637,6 +5680,10 @@ function createAgentBridge(deps) {
 		if (syncEditUi) syncEditUi();
 	}
 	/** Expression source write: the app owns binding + evaluation + UI sync. */
+	/** Source write (none/data/frame): the app owns binding + evaluation + UI sync. */
+	function applySource(source) {
+		if (typeof applySourceSource === "function") applySourceSource(source.frame, source);
+	}
 	function applyExpression(expression) {
 		if (typeof applyExpressionSource === "function") applyExpressionSource(expression.frame, expression.text);
 	}
@@ -5666,6 +5713,7 @@ function createAgentBridge(deps) {
 		});
 		if (patch.lfo) applyLfo(patch.lfo);
 		if (patch.dataset) applyDataset(patch.dataset);
+		if (patch.source) applySource(patch.source);
 		if (patch.expression) applyExpression(patch.expression);
 		if (patch.record !== void 0) applyRecord(patch.record);
 	}
@@ -5740,6 +5788,14 @@ function createAgentBridge(deps) {
 		frame,
 		text
 	} });
+	const setSource = (frame, source) => setState({ source: {
+		...source && typeof source === "object" ? source : {},
+		frame
+	} });
+	const setRoute = (frame, from) => setSource(frame, {
+		kind: "frame",
+		from
+	});
 	const record = (on) => setState({ record: on });
 	const reset = () => setState({ reset: true });
 	/**
@@ -5842,6 +5898,8 @@ function createAgentBridge(deps) {
 			setLfo,
 			setDataset,
 			setExpression,
+			setSource,
+			setRoute,
 			record,
 			getLog,
 			stepDataset,
@@ -7200,6 +7258,31 @@ var getPad = () => PAD;
 		updateReadouts
 	});
 	const recordUi = createRecordUI({ store });
+	/** Source write through the instrument's own commands (bridge setSource/setRoute). */
+	function applySourceSource(frame, source) {
+		const ref = frameRefFromName(frame);
+		if (!ref || ref.frame === "z") return false;
+		const sl = S.slots[ref.slotKey];
+		store.patch(() => {
+			if (source.kind === "none") bindNone(sl, ref.frame);
+			else if (source.kind === "data") {
+				bindData(sl, ref.frame, source.column);
+				csv.fitColumns();
+			} else {
+				const [lane, frameKey] = String(source.from).split(".");
+				bindFrame(sl, ref.frame, {
+					lane,
+					frame: frameKey
+				});
+			}
+			evaluate();
+			controls.syncEditUi();
+			renderStrip();
+			updateReadouts();
+		});
+		if (source.kind === "data") csv.applyExample(DEMO.i, true, true);
+		return true;
+	}
 	/** External-routing expression write through the instrument's own commands. */
 	function applyExpressionSource(frame, text) {
 		const ref = frameRefFromName(frame);
@@ -7393,6 +7476,7 @@ var getPad = () => PAD;
 			resetInstrument,
 			syncEditUi: () => controls.syncEditUi(),
 			setExpression: applyExpressionSource,
+			setSource: applySourceSource,
 			startRecording: () => recordUi.start(),
 			stopRecording: () => recordUi.stop(),
 			skipRecordSnapshot: () => recordUi.skipNextSnapshot(),

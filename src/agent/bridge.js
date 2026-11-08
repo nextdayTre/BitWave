@@ -75,6 +75,7 @@ export function createAgentBridge(deps) {
     resetInstrument,
     syncEditUi,
     setExpression: applyExpressionSource,
+    setSource: applySourceSource,
     startRecording,
     stopRecording,
     skipRecordSnapshot,
@@ -182,6 +183,16 @@ export function createAgentBridge(deps) {
       }
     }
 
+    if (patch.source) {
+      if (patch.source.kind === "data" && !DEMO.cols[patch.source.column]) {
+        return {
+          code: "E_BAD_STATE",
+          message: `source.column ${patch.source.column} is outside the current dataset`,
+          hint: "load a dataset first or choose an existing column index",
+        };
+      }
+    }
+
     if (patch.dataset) {
       const dataset = patch.dataset;
       if (dataset.csv !== undefined) {
@@ -265,6 +276,13 @@ export function createAgentBridge(deps) {
   }
 
   /** Expression source write: the app owns binding + evaluation + UI sync. */
+  /** Source write (none/data/frame): the app owns binding + evaluation + UI sync. */
+  function applySource(source) {
+    if (typeof applySourceSource === "function") {
+      applySourceSource(source.frame, source);
+    }
+  }
+
   function applyExpression(expression) {
     if (typeof applyExpressionSource === "function") {
       applyExpressionSource(expression.frame, expression.text);
@@ -295,6 +313,7 @@ export function createAgentBridge(deps) {
     if (patch.binop !== undefined) chooseBinop(patch.binop, { force: true, focus: false });
     if (patch.lfo) applyLfo(patch.lfo);
     if (patch.dataset) applyDataset(patch.dataset);
+    if (patch.source) applySource(patch.source);
     if (patch.expression) applyExpression(patch.expression);
     if (patch.record !== undefined) applyRecord(patch.record);
   }
@@ -367,6 +386,9 @@ export function createAgentBridge(deps) {
   const setLfo = (lfo) => setState({ lfo });
   const setDataset = (dataset) => setState({ dataset });
   const setExpression = (frame, text) => setState({ expression: { frame, text } });
+  const setSource = (frame, source) =>
+    setState({ source: { ...(source && typeof source === "object" ? source : {}), frame } });
+  const setRoute = (frame, from) => setSource(frame, { kind: "frame", from });
   const record = (on) => setState({ record: on });
   const reset = () => setState({ reset: true });
 
@@ -473,6 +495,8 @@ export function createAgentBridge(deps) {
       setLfo,
       setDataset,
       setExpression,
+      setSource,
+      setRoute,
       record,
       getLog,
       stepDataset,

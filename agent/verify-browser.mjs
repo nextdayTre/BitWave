@@ -75,6 +75,8 @@ const BRIDGE_KEYS = [
   "setLfo",
   "setDataset",
   "setExpression",
+  "setSource",
+  "setRoute",
   "record",
   "getLog",
   "stepDataset",
@@ -429,6 +431,8 @@ async function main() {
     await run("bridge exposes exactly the contract surface (v1 + 1.1.0 additions)", async () => {
       assertEqual(await browser.evaluate("Object.keys(window.bitwave).sort()"), BRIDGE_KEYS);
       assertEqual(await browser.evaluate("typeof window.bitwave.setExpression"), "function");
+      assertEqual(await browser.evaluate("typeof window.bitwave.setSource"), "function");
+      assertEqual(await browser.evaluate("typeof window.bitwave.setRoute"), "function");
       assertEqual(await browser.evaluate("typeof window.bitwave.record"), "function");
       assertEqual(await browser.evaluate("typeof window.bitwave.getLog"), "function");
     });
@@ -660,6 +664,43 @@ async function main() {
       })()`);
       assertEqual(result.ok, true);
       assertEqual(result.expressions, { C: null, D: null });
+    });
+
+    await run("setRoute/setSource bind and clear a frame route", async () => {
+      await browser.navigate(freshUrl);
+      const routed = await browser.evaluate(`(() => {
+        const before = window.bitwave.getState();
+        const result = window.bitwave.setRoute("D", "1.z");
+        const after = window.bitwave.getState();
+        return {
+          ok: result.ok,
+          source: after.lanes["2"].sources.D,
+          equalsZ1: after.lanes["2"].frames.D === after.lanes["1"].frames.Z1,
+          changed: JSON.stringify(after) !== JSON.stringify(before),
+          expression: after.lanes["2"].expressions.D,
+        };
+      })()`);
+      assertEqual(routed.ok, true);
+      assertEqual(routed.changed, true);
+      assertEqual(routed.equalsZ1, true);
+      assertEqual(routed.source.kind, "frame");
+      assertEqual(routed.source.source, "1:1");
+      assertEqual(routed.source.lane, 1);
+      assertEqual(routed.source.frame, "Z1");
+      assertEqual(routed.expression, null);
+
+      const self = await browser.evaluate(
+        `window.bitwave.setRoute("D", "2.b")`,
+      );
+      assertEqual(self.ok, false);
+      assertEqual(self.error.code, "E_BAD_ARGS");
+
+      const cleared = await browser.evaluate(`(() => {
+        const result = window.bitwave.setSource("D", { kind: "none" });
+        return { ok: result.ok, source: window.bitwave.getState().lanes["2"].sources.D };
+      })()`);
+      assertEqual(cleared.ok, true);
+      assertEqual(cleared.source.kind, "none");
     });
 
     /* ── external routing: the transient Record take ────────────────────── */

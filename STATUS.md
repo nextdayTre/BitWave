@@ -159,7 +159,8 @@ status line, §10.39–41 persistence invariants, §11 persistence checks, §12 
 - **State/UI.** `S.slots[*].expressions`, `src/state/record.ts` (bounded transient log),
   source-table `expr` rows with a validated one-line editor, Record toggle/count/export log,
   expression-driven inputs read-only locally. Toolset 1.1.0; `window.bitwave` gains
-  `setExpression`/`record`/`getLog`, state gains `recording` + per-lane `expressions`.
+  `setExpression`/`setSource`/`setRoute`/`record`/`getLog`, state gains `recording` +
+  per-lane `expressions`.
 - **Persistence.** `.bitwave` schema 3 additive (schema 1/2 load); expressions round-trip;
   the record log is session-only and never enters the project or share link.
 - **Float policy.** Float coefficients from audio/DSP tools are legitimate; conversion to
@@ -168,11 +169,11 @@ status line, §10.39–41 persistence invariants, §11 persistence checks, §12 
 
 ## Verified this session
 
-- `npm test` → **125 + 7 tests, all pass, 0 fail** (core/state/actions/bindings/share/
+- `npm test` → **126 + 7 tests, all pass, 0 fail** (core/state/actions/bindings/share/
   project, expression routing, the agent registry/state/transports, and the 7 app-bridge
   tests in a separate process because they replace the live singletons);
   `npm run typecheck` → **clean**.
-- `npm run build` → **`bitwave-v2.html`, 272.7 KB / 279,237 bytes, single file**, no
+- `npm run build` → **`bitwave-v2.html`, 275.6 KB / 282,194 bytes, single file**, no
   external references (`tools/build-artifact.mjs` gate). The default control row now
   intentionally includes Record; pixel parity resumes from this slice's artifact, not the
   pre-agent one.
@@ -180,7 +181,7 @@ status line, §10.39–41 persistence invariants, §11 persistence checks, §12 
   `--shots`/`--compare`), including the F5 persistence groups (now schema 3), the F4
   reflow/keyboard/semantics/axe groups, the §11 geometry assertion and the source-table/
   record controls; the hidden agent node and bridge do not alter the rendered stage.
-- `npm run build:pwa` → **`dist/hosted/`** (index 279.7 KB, sw.js 1.6 KB, manifest 0.9 KB,
+- `npm run build:pwa` → **`dist/hosted/`** (index 282.7 KB, sw.js 1.6 KB, manifest 0.9 KB,
   4 icons) with a hash cache version; the committed `bitwave-v2.html` was
   **byte-unchanged** (sha256 checked in the build itself); the build also serves `agent/`,
   `AGENTS.md`, `llms.txt` and the agent docs.
@@ -195,21 +196,22 @@ status line, §10.39–41 persistence invariants, §11 persistence checks, §12 
   editor open, export-log click, legacy bridge intact); `tests/share.test.ts` asserts
   canonical links preserve expression sources (D1 regression); schema-3 project
   round-trip/lenient tests and the app expression→log integration test pass. Agent
-  `selftest` 23/23 after the state-shape update.
+  `selftest` 23/23 after the state-shape update; independent verifier now also checks
+  `setRoute`/`setSource` (bind Z1→D, self-route `E_BAD_ARGS`, clear to none) → **31/31**.
 - **Agent layer:** `node agent/gen-agent-artifacts.mjs --check` → 8 files current;
-  `node agent/selftest.mjs` → 23/23; `node agent/verify-browser.mjs` → **30/30 PASS**
-  against artifact 279,237 B / sha256 `FE1789B0…`, independently updated for toolset 1.1.0 /
-  schema 3 (23-key bridge, 13-key state, 6 tools, 12 error codes; expression/record/getLog
-  lifecycle, invalid/no-op silence, a real `#bw=` reload twice with autosave cleared proving
-  schema-3 expression sources survive, legacy surface, agent tab, overflow 360/720/1440,
-  0 console errors). Screenshots: `docs/agent/{default,ab-xor,width-16,agent-tab,record}.png`
+  `node agent/selftest.mjs` → 23/23; `node agent/verify-browser.mjs` → **31/31 PASS**
+  against the rebuilt artifact (expression/record/getLog lifecycle, route/source setters,
+  invalid/no-op silence, a real `#bw=` reload twice with autosave cleared proving schema-3
+  expression sources survive, legacy surface, agent tab, overflow 360/720/1440, 0 console
+  errors). Screenshots: `docs/agent/{default,ab-xor,width-16,agent-tab,record}.png`
   (1440×900, 146–247 KB) visually inspected; `record.png` shows an armed take with an `expr`
   source open. The shared link now preserves expressions (D1 regression fixed).
-- `npm run verify` → **exit 0** on the final tree: 125 + 7 tests, typecheck, deterministic
-  single-file build, generated artifacts current, CLI/MCP selftest 23/23, independent
-  `agent/verify-browser.mjs` 30/30, existing browser harness 52/52, hosted build + PWA
-  8/8. Pre-slice `--compare` is retired as the baseline because the Record control is an
-  intentional default-view change; compare against this slice's artifact if needed.
+- `npm run verify` → **exit 0** on the final tree: 126 + 7 tests, typecheck, deterministic
+  single-file build (`bitwave-v2.html` 275.6 KB), generated artifacts current, CLI/MCP
+  selftest 23/23, independent `agent/verify-browser.mjs` 31/31, existing browser harness
+  52/52, hosted build + PWA 8/8. Pre-slice `--compare` is retired as the baseline because
+  the Record control is an intentional default-view change; compare against this slice's
+  artifact if needed.
 - **F4 slice 1 — reflow/zoom (D27):** parity was 6/6 pixel-identical against the pre-F4
   artifact at normal viewports (measured before the IA slice, which intentionally changes the
   layout); at 640×360 and 360×225 CSS px the page scrolls, the stage stays 220 px and every
@@ -393,10 +395,6 @@ status line, §10.39–41 persistence invariants, §11 persistence checks, §12 
 13. **Float input is a boundary format, not a float-valued expression mode.** Float
     coefficients are converted once to exact rationals/declared precision; a full
     float-valued expression mode with its own rounding/precision contract is not shipped.
-14. **Agent route/source setters are deferred.** The bridge exposes
-    `setExpression`/`record`/`getLog`, but not a `setSource`/`setRoute`; routes are still
-    edited in the source table or a project document. A future bridge setter (and an optional
-    pure `evaluate_expression` tool) would let an agent build the whole pipeline headlessly.
 
 ## Errata found
 
@@ -426,10 +424,10 @@ infrastructure):
    the artifact check, CLI/MCP selftest and the independent `agent/verify-browser.mjs`);
    regenerate `agent/manifest.json` + examples when `src/core/agent-tools.ts` changes.
    Populate `relatedTools` only when a real, tested handoff exists (ecosystem map).
-5. **External routing (shipped 2026-11-08, D40):** expressions, Record/log, schema 3 and the
-   bridge/state surface are live; the design record is
+5. **External routing (shipped 2026-11-08, D40):** expressions, Record/log, schema 3, the
+   bridge/state surface and `setSource`/`setRoute` are live; the design record is
    [`docs/EXTERNAL-ROUTING.md`](docs/EXTERNAL-ROUTING.md), with the Node reference model at
    `node tools/prototype-external-routing.mjs --check` (27 checks) and
-   `tests/external-routing.test.ts`. Follow-ups: bridge `setSource`/`setRoute` (gap 14),
-   expression dependency ordering (gap 12), a float-valued mode only if requested (gap 13),
-   and optional log export through the observation CSV path.
+   `tests/external-routing.test.ts`. Follow-ups: expression dependency ordering (gap 12),
+   a float-valued mode only if requested (gap 13), and optional log export through the
+   observation CSV path.

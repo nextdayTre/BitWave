@@ -278,7 +278,8 @@ window.bitwave = {
   setState(patch), setLane(n), setFrame(name), setView(mode), setWidth(bits),
   setRegister(frame, hex), setBinop(op), setLfo(patch), setDataset(patch),
   stepDataset(delta), reset(),
-  setExpression(frame, text), record(on), getLog({ limit } = {}),
+  setExpression(frame, text), setSource(frame, source), setRoute(frame, from),
+  record(on), getLog({ limit } = {}),
   subscribe(fn),
 };
 ```
@@ -310,11 +311,13 @@ unknown key → `E_BAD_ARGS`; all validation happens before any mutation):
 | `lfo` | `{ on?: boolean, mode?: "rotcw"\|"rotccw"\|"slide"\|"csvStep", rate?: 1\|2\|4\|8 }` | start/stop keeps the snapshot/restore discipline; mode/rate restart the shape |
 | `dataset` | `{ csv?: string, index?: integer }` | load CSV/TSV text and/or step to a row; `index` requires a dataset |
 | `expression` | `{ frame: A–F, text: string }` | bind/clear a deterministic expression source (`""` clears; `E_INVALID_EXPRESSION` on bad text; clears any route/data on that operand) |
+| `source` | `{ frame: A–F, kind: "none" }` or `{ frame, kind: "data", column }` or `{ frame, kind: "frame", from: "<lane>.<a\|b\|z>" }` | bind/unbind one input to a dataset column or frame route; `E_BAD_STATE` for a column outside the current dataset, `E_BAD_ARGS` for a self-route; clears any expression on that operand |
 | `record` | `boolean` | `true` arms a fresh transient take, `false` freezes; rows are read via `getLog()` |
 | `reset` | `true` | boot state, same as `reset instrument` |
 
 Individual setters are thin wrappers: `setLane(n)` = `setState({lane:n})`, etc.
-`getLog({limit})` returns the newest recorded rows (default all, newest-last), each
+`setSource(frame, source)` and `setRoute(frame, from)` build the same patch; `setRoute` is
+the shorthand for `{kind:"frame",from}`. `getLog({limit})` returns the newest recorded rows (default all, newest-last), each
 `{step, frames:{A,B,Z1,C,D,Z2,E,F,Z3}}` as uppercase hex; `limit` must be a non-negative
 integer. Recording is transient and never stored in the project/link.
 

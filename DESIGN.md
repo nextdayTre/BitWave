@@ -845,7 +845,8 @@ them.
 - **External routing (2026-11-08)** — deterministic expression sources in the six-row
   source table (one-line editor, validated, `expr` state), a DAW-style Record toggle +
   bounded transient frame log + `export log`, `.bitwave` schema 3 (expressions additive;
-  schema 1/2 still load), and bridge/CLI-visible `setExpression`/`record`/`getLog` with
+  schema 1/2 still load), and bridge/CLI-visible `setExpression`/`setSource`/`setRoute`/
+  `record`/`getLog` with
   `recording` and per-lane `expressions` in the agent state. Float is accepted as an
   authoring boundary and converted once to exact values; the register engine stays exact.
   Toolset 1.1.0; the default control row intentionally gains the Record control (D40).

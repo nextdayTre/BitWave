@@ -549,9 +549,15 @@ export interface NormalizedPatch {
   lfo?: { on?: boolean; mode?: string; rate?: number };
   dataset?: { csv?: string; index?: number };
   expression?: { frame: string; text: string };
+  source?: SourcePatch;
   record?: boolean;
   reset?: true;
 }
+
+export type SourcePatch =
+  | { frame: string; kind: "none" }
+  | { frame: string; kind: "data"; column: number }
+  | { frame: string; kind: "frame"; from: string };
 
 export interface PatchError {
   code: ErrorCode;
@@ -561,7 +567,7 @@ export interface PatchError {
 
 export type PatchResult = { ok: true; patch: NormalizedPatch } | { ok: false; error: PatchError };
 
-const PATCH_KEYS = ["lane", "frame", "view", "width", "register", "binop", "lfo", "dataset", "expression", "record", "reset"] as const;
+const PATCH_KEYS = ["lane", "frame", "view", "width", "register", "binop", "lfo", "dataset", "expression", "source", "record", "reset"] as const;
 
 /** Validate a bridge patch without applying it; never throws. */
 export function normalizeAgentPatch(value: unknown): PatchResult {
@@ -676,6 +682,31 @@ export function normalizeAgentPatch(value: unknown): PatchResult {
     if (input.record !== undefined) {
       if (typeof input.record !== "boolean") bad("E_BAD_ARGS", "record must be a boolean");
       patch.record = input.record;
+    }
+
+    if (input.source !== undefined) {
+      const source = objectValue(input.source, "source");
+      onlyKeys(source, ["frame", "kind", "column", "from"], "source");
+      const frame = frameRefFromName(source.frame);
+      if (!frame) bad("E_BAD_ENUM", "source.frame must be an operand frame (A–F)");
+      if (frame.frame === "z") bad("E_BAD_ENUM", "Z is derived and cannot carry a source");
+      if (source.kind === "none") {
+        patch.source = { frame: frame.name, kind: "none" };
+      } else if (source.kind === "data") {
+        const column = integerValue(source.column, "source.column");
+        if (column < 0) bad("E_OUT_OF_RANGE", "source.column must be non-negative");
+        patch.source = { frame: frame.name, kind: "data", column };
+      } else if (source.kind === "frame") {
+        if (typeof source.from !== "string") bad("E_BAD_ARGS", "source.from must be a port string");
+        const match = /^([123])\.([abz])$/.exec(source.from);
+        if (!match) bad("E_BAD_ENUM", "source.from must be a port such as 3.z or 2.a");
+        if (match[1] === frame.lane && match[2] === frame.frame) {
+          bad("E_BAD_ARGS", `${frame.name} cannot be driven by itself`);
+        }
+        patch.source = { frame: frame.name, kind: "frame", from: source.from };
+      } else {
+        bad("E_BAD_ENUM", "source.kind must be none, data or frame");
+      }
     }
 
     if (input.reset !== undefined) {

@@ -128,8 +128,8 @@ export function createAgentPanel({ root }) {
       `Tools: ${TOOLS.map((tool) => tool.name).join(", ")}.`,
       'Try: window.bitwave.getState(); window.bitwave.call("manifest", {});',
       'Deeplink: window.bitwave.getDeeplink(); setters: setLane, setFrame, setView,',
-      "setWidth, setRegister, setBinop, setLfo, setDataset, setExpression, record,",
-      "stepDataset, reset. Read the transient take with window.bitwave.getLog().",
+      "setWidth, setRegister, setBinop, setLfo, setDataset, setExpression, setSource,",
+      "setRoute, record, stepDataset, reset. Read the transient take with getLog().",
     ].join("\n");
   }
 

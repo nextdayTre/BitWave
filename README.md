@@ -152,9 +152,10 @@ bits remain reproducible. Invalid text never mutates registers (the bridge repor
 **Record** is the DAW-style take beside the observation log: arm it, and one row of all
 nine frame registers is appended per settled update (in memory only; starting clears the
 take; the pointer-drag stream is skipped). `export log` downloads CSV. Expressions can
-read the previous row, so a recorded feedback loop is well-defined. See
-[`docs/EXTERNAL-ROUTING.md`](docs/EXTERNAL-ROUTING.md) for the full model and work-in-progress
-boundaries (route setters and expression-only dependency ordering are follow-ups).
+read the previous row, so a recorded feedback loop is well-defined. The bridge can build
+the whole patch headlessly too (`setRoute`/`setSource`, `setExpression`, `record`,
+`getLog`); see [`docs/EXTERNAL-ROUTING.md`](docs/EXTERNAL-ROUTING.md) for the model and the
+remaining boundary (expression-only dependency ordering, float-valued mode).
 
 ### 1. URL deep links
 
@@ -187,6 +188,8 @@ window.bitwave.call("compare_operands", { a: "8ADEFEDA85210125", b: "FFFFFFFF000
 window.bitwave.setLane(2)               // setters never throw
 window.bitwave.setRegister("A", "DEADBEEF")
 window.bitwave.setExpression("D", "round(1.2599210498948732 * C)") // expr source
+window.bitwave.setRoute("D", "1.z")     // bind an input to a frame route
+window.bitwave.setSource("D", { kind: "none" })
 window.bitwave.record(true)             // arm a transient take
 window.bitwave.getLog({ limit: 8 })     // recorded frame rows
 window.bitwave.record(false)

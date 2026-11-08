@@ -299,6 +299,24 @@ test("normalizeAgentPatch accepts expression and record controls", () => {
   assert.equal(normalizeAgentPatch({ record: 1 }).ok, false);
 });
 
+test("normalizeAgentPatch accepts source and route controls", () => {
+  const route = normalizeAgentPatch({ source: { frame: "D", kind: "frame", from: "1.z" } });
+  assert.equal(route.ok, true);
+  if (route.ok) assert.deepEqual(route.patch.source, { frame: "D", kind: "frame", from: "1.z" });
+
+  const data = normalizeAgentPatch({ source: { frame: "a", kind: "data", column: 2 } });
+  assert.equal(data.ok, true);
+  if (data.ok) assert.deepEqual(data.patch.source, { frame: "A", kind: "data", column: 2 });
+
+  const none = normalizeAgentPatch({ source: { frame: "F", kind: "none" } });
+  assert.equal(none.ok, true);
+
+  assert.equal(normalizeAgentPatch({ source: { frame: "D", kind: "frame", from: "2.b" } }).ok, false);
+  assert.equal(normalizeAgentPatch({ source: { frame: "Z1", kind: "none" } }).ok, false);
+  assert.equal(normalizeAgentPatch({ source: { frame: "D", kind: "frame", from: "bad" } }).ok, false);
+  assert.equal(normalizeAgentPatch({ source: { frame: "D", kind: "data", column: -1 } }).ok, false);
+});
+
 test("frame references resolve the global names", () => {
   assert.deepEqual(frameRefFromName("Z2"), { lane: "2", frame: "z", slotKey: "B", name: "Z2" });
   assert.deepEqual(frameRefFromName("d"), { lane: "2", frame: "b", slotKey: "B", name: "D" });

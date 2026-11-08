@@ -9,7 +9,8 @@ CSV/TSV input, stepped LFO, single offline HTML file.
 - Browser bridge: `window.bitwave`; hidden state: `#bitwave-state`;
   ready: `body[data-agent-ready='true']`; events: `bitwave:ready`, `bitwave:change`.
 - Toolset 1.1.0; `.bitwave` schema 3 (schema 1/2 load). Bridge additions:
-  `setExpression(frame, text)`, `record(on)`, `getLog({limit})`; state additions:
+  `setExpression(frame, text)`, `setSource(frame, source)`, `setRoute(frame, from)`,
+  `record(on)`, `getLog({limit})`; state additions:
   `recording:{on,rows}`, `lanes[*].expressions`.
 - Expression sources are deterministic in the shared core: routes -> expressions -> Z;
   each expression sees the current frames plus the previous recorded row as `log.<frame>`.

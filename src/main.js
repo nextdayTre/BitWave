@@ -33,7 +33,9 @@ import { createStore } from "./state/store.ts";
 
 import { DEMO } from "./state/dataset.ts";
 import {
+  bindData,
   bindExpression,
+  bindFrame,
   bindNone,
   isFocusDriven,
   isInputDriven,
@@ -829,6 +831,30 @@ import { toHexOf, updateReadouts } from "./render/readouts.js";
      `getState().recording` sees each new row in the same transaction pass. */
   const recordUi = createRecordUI({ store });
 
+  /** Source write through the instrument's own commands (bridge setSource/setRoute). */
+  function applySourceSource(frame, source) {
+    const ref = frameRefFromName(frame);
+    if (!ref || ref.frame === "z") return false;
+    const sl = S.slots[ref.slotKey];
+    store.patch(() => {
+      if (source.kind === "none") {
+        bindNone(sl, ref.frame);
+      } else if (source.kind === "data") {
+        bindData(sl, ref.frame, source.column);
+        csv.fitColumns();
+      } else {
+        const [lane, frameKey] = String(source.from).split(".");
+        bindFrame(sl, ref.frame, { lane, frame: frameKey });
+      }
+      evaluate();
+      controls.syncEditUi();
+      renderStrip();
+      updateReadouts();
+    });
+    if (source.kind === "data") csv.applyExample(DEMO.i, true, true);
+    return true;
+  }
+
   /** External-routing expression write through the instrument's own commands. */
   function applyExpressionSource(frame, text) {
     const ref = frameRefFromName(frame);
@@ -1060,6 +1086,7 @@ import { toHexOf, updateReadouts } from "./render/readouts.js";
       resetInstrument,
       syncEditUi: () => controls.syncEditUi(),
       setExpression: applyExpressionSource,
+      setSource: applySourceSource,
       startRecording: () => recordUi.start(),
       stopRecording: () => recordUi.stop(),
       skipRecordSnapshot: () => recordUi.skipNextSnapshot(),

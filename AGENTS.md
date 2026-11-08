@@ -99,6 +99,8 @@ window.bitwave.call("compare_operands", { a: "8ADEFEDA85210125", b: "FFFFFFFF000
 window.bitwave.setState({ lane: 2 })    // setters never throw
 window.bitwave.setRegister("A", "DEADBEEF")
 window.bitwave.setExpression("D", "round(1.2599210498948732 * C)") // expr source
+window.bitwave.setRoute("D", "1.z")     // or setSource("D", {kind:"frame", from:"1.z"})
+window.bitwave.setSource("D", { kind: "none" })
 window.bitwave.record(true)             // arm a transient take
 window.bitwave.getLog({ limit: 8 })     // recorded frame rows
 window.bitwave.record(false)
