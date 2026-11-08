@@ -1,0 +1,31 @@
+{
+  "ok": true,
+  "schemaVersion": 1,
+  "tool": "evaluate_lane",
+  "data": {
+    "width": 64,
+    "op": "xor",
+    "a": {
+      "hex": "8ADEFEDA85210125",
+      "popcount": 30
+    },
+    "b": {
+      "hex": "FFFFFFFF00000000",
+      "popcount": 32
+    },
+    "z": {
+      "hex": "7521012585210125",
+      "popcount": 20
+    },
+    "truthCounts": [
+      23,
+      11,
+      9,
+      21
+    ],
+    "carry": null,
+    "borrow": null
+  },
+  "deeplink": null,
+  "warnings": []
+}

@@ -1,0 +1,351 @@
+{
+  "id": "bitwave",
+  "title": "BitWave",
+  "version": "1.0.0",
+  "schemaVersion": 1,
+  "description": "BitWave renders a bit register as a wavetable. Compute Z = A op B for any lane, compare operators, parse CSV/TSV datasets and build canonical #bw= deeplinks from one shared, deterministic core.",
+  "urls": {
+    "app": "bitwave-v2.html",
+    "manifest": "agent/manifest.json",
+    "agents": "AGENTS.md",
+    "interface": "docs/AGENT-INTERFACE.md"
+  },
+  "deeplink": {
+    "template": "bitwave-v2.html#bw={payload}",
+    "prefix": "#bw=",
+    "budgetChars": 2000,
+    "defaults": {
+      "lane": 1,
+      "view": "2d",
+      "width": 64
+    }
+  },
+  "ui": {
+    "bridge": "window.bitwave",
+    "ready": "body[data-agent-ready='true']",
+    "stateSelector": "#bitwave-state",
+    "panelSelector": "[data-agent-panel]",
+    "tabSelector": "[data-agent-tab]",
+    "laneSelector": "[data-agent-lane]",
+    "frameSelector": "[data-agent-frame]"
+  },
+  "tools": [
+    {
+      "name": "manifest",
+      "title": "Tool manifest",
+      "description": "Return BitWave's capability manifest: tool definitions, argument schemas, deeplink template, UI selectors, error codes, invariants and related tools. Call this first to discover the other tools.",
+      "scope": "pure",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "examples": [
+        {
+          "args": {},
+          "note": "Discover the full toolset."
+        }
+      ]
+    },
+    {
+      "name": "analyze_register",
+      "title": "Analyze a register word",
+      "description": "Normalize a hex word at a register width and return the same nibble, decimal, popcount and bit-length values the instrument shows. Overflow truncates high bits; optional 0x prefix accepted.",
+      "scope": "pure",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "hex": {
+            "type": "string",
+            "description": "Hexadecimal word; 0x prefix optional."
+          },
+          "width": {
+            "type": "integer",
+            "enum": [
+              8,
+              16,
+              32,
+              64,
+              128,
+              256
+            ],
+            "description": "Register width in bits (default 64)."
+          }
+        },
+        "required": [
+          "hex"
+        ],
+        "additionalProperties": false
+      },
+      "examples": [
+        {
+          "args": {
+            "hex": "8ADEFEDA85210125",
+            "width": 64
+          },
+          "note": "A default 64-bit operand."
+        }
+      ]
+    },
+    {
+      "name": "evaluate_lane",
+      "title": "Evaluate one lane",
+      "description": "Compute Z = A <op> B for one lane with the instrument's own bitwise/arithmetic engine. Returns A, B, Z, truth-table counts (00,01,10,11) and carry/borrow for ADD/SUB.",
+      "scope": "pure",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "a": {
+            "type": "string",
+            "description": "Operand A hex."
+          },
+          "b": {
+            "type": "string",
+            "description": "Operand B hex (default 0)."
+          },
+          "op": {
+            "type": "string",
+            "enum": [
+              "and",
+              "or",
+              "xor",
+              "add",
+              "sub"
+            ],
+            "description": "Binary operator (default xor)."
+          },
+          "width": {
+            "type": "integer",
+            "enum": [
+              8,
+              16,
+              32,
+              64,
+              128,
+              256
+            ],
+            "description": "Register width in bits (default 64)."
+          }
+        },
+        "required": [
+          "a"
+        ],
+        "additionalProperties": false
+      },
+      "examples": [
+        {
+          "args": {
+            "a": "8ADEFEDA85210125",
+            "b": "FFFFFFFF00000000",
+            "op": "xor"
+          },
+          "note": "The DESIGN §11 A·B vector."
+        }
+      ]
+    },
+    {
+      "name": "compare_operands",
+      "title": "Compare all operators",
+      "description": "Evaluate the same A/B pair under all five operators (and, or, xor, add, sub) in canonical order, with Z, popcounts, truth counts and carry/borrow. Use for teaching or choosing an operator.",
+      "scope": "pure",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "a": {
+            "type": "string",
+            "description": "Operand A hex."
+          },
+          "b": {
+            "type": "string",
+            "description": "Operand B hex."
+          },
+          "width": {
+            "type": "integer",
+            "enum": [
+              8,
+              16,
+              32,
+              64,
+              128,
+              256
+            ],
+            "description": "Register width in bits (default 64)."
+          }
+        },
+        "required": [
+          "a",
+          "b"
+        ],
+        "additionalProperties": false
+      },
+      "examples": [
+        {
+          "args": {
+            "a": "8ADEFEDA85210125",
+            "b": "FFFFFFFF00000000"
+          },
+          "note": "All five operators on the §11 pair."
+        }
+      ]
+    },
+    {
+      "name": "parse_dataset",
+      "title": "Parse a CSV/TSV dataset",
+      "description": "Parse delimited text with the instrument's import rules: delimiter sniffed from the header, header detected when the first row is not token-shaped, per-column bin/hex typing and token width. Returns columns, total rows and the first maxRows rows.",
+      "scope": "pure",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string",
+            "description": "CSV or TSV text."
+          },
+          "maxRows": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 512,
+            "description": "Rows to return (default 64)."
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "additionalProperties": false
+      },
+      "examples": [
+        {
+          "args": {
+            "text": "Hex 1,Hex 2\n00000001,00000002",
+            "maxRows": 2
+          },
+          "note": "Header plus two token rows."
+        }
+      ]
+    },
+    {
+      "name": "build_deeplink",
+      "title": "Build a canonical deeplink",
+      "description": "Validate a .bitwave schema-2 document and build its canonical share fragment (#bw=). Canonical links omit savedAt, so equal state gives equal links; the dataset is dropped if the payload would exceed the 2000-character budget.",
+      "scope": "pure",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "project": {
+            "type": "object",
+            "description": "A .bitwave schema-2 document."
+          },
+          "base": {
+            "type": "string",
+            "description": "Absolute URL without a fragment; omit to return only the fragment."
+          }
+        },
+        "required": [
+          "project"
+        ],
+        "additionalProperties": false
+      },
+      "examples": [
+        {
+          "args": {
+            "project": {
+              "schema": 2,
+              "app": "bitwave",
+              "savedAt": "1970-01-01T00:00:00.000Z",
+              "N": 8,
+              "view": {
+                "lane": "1",
+                "view3d": false,
+                "split3d": false,
+                "splitPair": [
+                  "1",
+                  "2"
+                ],
+                "activePane": 0,
+                "lfoMode": "rotcw",
+                "lfoRate": 4
+              },
+              "lanes": {
+                "1": {
+                  "a": "88",
+                  "b": "F0",
+                  "showB": false,
+                  "binop": "xor",
+                  "edit": "a",
+                  "seededB": false,
+                  "lfoB": "0",
+                  "colA": -1,
+                  "colB": -1,
+                  "focus": "a",
+                  "frameVis": {
+                    "a": true,
+                    "b": true,
+                    "z": true
+                  }
+                },
+                "2": {
+                  "a": "F0",
+                  "b": "00",
+                  "showB": false,
+                  "binop": "xor",
+                  "edit": "a",
+                  "seededB": true,
+                  "lfoB": "0",
+                  "colA": -1,
+                  "colB": -1,
+                  "focus": "a",
+                  "frameVis": {
+                    "a": true,
+                    "b": true,
+                    "z": true
+                  }
+                },
+                "3": {
+                  "a": "0F",
+                  "b": "88",
+                  "showB": false,
+                  "binop": "and",
+                  "edit": "a",
+                  "seededB": true,
+                  "lfoB": "0",
+                  "colA": -1,
+                  "colB": -1,
+                  "focus": "a",
+                  "frameVis": {
+                    "a": true,
+                    "b": true,
+                    "z": true
+                  }
+                }
+              },
+              "routes": [],
+              "parked": {}
+            },
+            "base": "http://localhost:8000/"
+          },
+          "note": "8-bit boot document."
+        }
+      ]
+    }
+  ],
+  "errorCodes": [
+    "E_BAD_ARGS",
+    "E_UNKNOWN_TOOL",
+    "E_EMPTY_INPUT",
+    "E_INVALID_HEX",
+    "E_INVALID_PROJECT",
+    "E_BAD_ENUM",
+    "E_OUT_OF_RANGE",
+    "E_INPUT_TOO_LARGE",
+    "E_DRIVEN_INPUT",
+    "E_BAD_STATE",
+    "E_INTERNAL"
+  ],
+  "invariants": [
+    "src/core is the only implementation of the maths/data",
+    "tool output is deterministic; no timestamps or randomness",
+    "pure tools never mutate the UI",
+    "the URL is the UI state and reload reproduces the view",
+    "default rendered instrument is unchanged by the agent layer"
+  ],
+  "relatedTools": []
+}

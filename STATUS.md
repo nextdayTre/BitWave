@@ -1,6 +1,6 @@
 # BitWave — implementation status
 
-**Updated:** 2026-11-06 · **Phase:** F0 **done**, F1 **done**, F2 spine + render + UI modules done (pointer/lane controllers still in `main.js`), F3 source table + frame routing **done**, F4 accessibility + IA **done**, F5 persistence & reach **done**. **F6 distribution done** — installable offline PWA hosted build with the single-file artifact untouched; Tauri remains deferred (D37). The plan's funded path (F0–F6) is complete.
+**Updated:** 2026-11-08 · **Phase:** F0 **done**, F1 **done**, F2 spine + render + UI modules done (pointer/lane controllers still in `main.js`), F3 source table + frame routing **done**, F4 accessibility + IA **done**, F5 persistence & reach **done**, **F6 distribution done**, and the **agent interface is done** (2026-11-08) — a shared DOM-free registry, `window.bitwave` bridge, hidden state, canonical `#bw=` links, zero-dependency CLI + MCP server, generated manifest/examples and a `keys | agent` help-panel tab, all additive; default rendering is pixel-identical and `window.BitWave` (schema 1) is unchanged. The plan's funded path is complete; Tauri remains deferred (D37).
 **Source of truth:** [`PLAN.md`](PLAN.md) for the plan, [`DECISIONS.md`](DECISIONS.md) for choices taken, [`DESIGN.md`](DESIGN.md) for the visual contract. `index.html` is still untouched and remains the shipping instrument.
 
 ## Author decisions (2026-11-06)
@@ -37,6 +37,7 @@ cell enough? Confirm before the matrix lands in the app.
 | **F3 Source-table housing** | **Done** | Six-row `src/ui/source-table.js` (opened from the data group) over `src/state/bindings.ts`: each input reads a CSV column (`data`), a frame output (`1:1`/`z⁻¹`) or `—`. Labels carry the assignment (`A · Hex 1`, matching the import dropdown). Driven inputs are locked against local edits, CSV/LFO skip them, unplug restores the parked base, resize remaps parked bases, and a fresh import rebuilds the board. |
 | **F4 A11y + IA** | **Done** | DESIGN amended first (change protocol §13). Shipped: reflow/zoom contract, nibble spinbutton keyboard editing, landmarks/names/radiogroups, canvas alt, live status, reduced motion, 24 px targets, axe gate — then the author-approved IA pass: always-visible stage bar (lane + frames + split), module order `source | register edit | operate | derive | motion | view`, explicit `copy to…` menu, `width` rename + whole-word hex entry, reserved-space disabled placeholders, `?` keyboard map and truth-table semantics. Palette untouched (D10). |
 | **F5 Persistence & reach** | **Done** | `.bitwave` schema 2 (additive focus/frameVis, LFO mode/rate, dataset cursor) with a DOM-free app bridge; explicit `project…` menu (save/open/reset); debounced autosave + boot restore; `#bw=` URL-fragment share that wins over autosave; embedded 8-row demo dataset; visible dataset/status line that refuses empty/non-token CSVs; `?fresh` ephemeral sessions; stale `index.html.bak` deleted. Palette untouched (D10). |
+| **Agent interface** | **Done** | Additive agent layer (2026-11-08): `src/core/agent-*.ts` one registry/state/deeplink source; `window.bitwave` bridge (state/setters/call/subscribe/events) beside the untouched `window.BitWave`; hidden `#bitwave-state` + `body[data-agent-ready]`; `keys | agent` help-panel tab; `agent/cli.mjs` + `agent/mcp-server.mjs` (zero deps); generated `agent/manifest.json` + examples (`--check`); AGENTS/contract/llms/screenshot/ecosystem docs; hosted build serves the agent files. Default rendering pixel-identical (D39). |
 | **F6 Distribution** | **Done** | Hosted/installable PWA build (`dist/hosted/`): manifest + maskable icons, hash-versioned app-shell service worker, relative URLs, offline reload. The committed single-file `bitwave-v2.html` is untouched and still has zero external references (asserted). `npm run check:pwa` proves install/offline against the real built output; deploy/install/privacy guidance in [`docs/hosting.md`](docs/hosting.md). Tauri 2 deferred (D37). |
 
 ## F4 progress (2026-11-06) — complete
@@ -115,31 +116,74 @@ status line, §10.39–41 persistence invariants, §11 persistence checks, §12 
   headless Chromium: manifest/icons load, worker registers/activates/controls, app shell
   cached, and a reload **with the origin server stopped** boots from cache with zero console
   errors; also asserts the single-file artifact stayed clean and the hosted page's only
-  external refs are the PWA shell. **7/7 checks.**
+  external refs are the PWA shell. **7/7 checks** (the agent layer added an eighth: served
+  agent manifest + example envelope + `llms.txt` — 8/8 on 2026-11-08).
 - **Distribution docs.** [`docs/hosting.md`](docs/hosting.md): build, deploy (GitHub Pages /
   Netlify / any static host), install on desktop/mobile, offline behaviour, update/cache
   versioning, privacy, and when to send the file vs the URL. `npm run verify` runs the full
   gate. Tauri 2 stays deferred (D37).
 
+## Agent interface (2026-11-08) — done
+
+**Additive; default rendering pixel-identical (D39).** The agentify-local-tool build is
+complete on the existing `.bitwave` schema-2 state and DOM-free core:
+
+- **One source of truth.** `src/core/agent-tools.ts` (6 pure tools, one envelope, closed
+  11-code error set, manifest, bridge patch validation), `agent-state.ts` (UI-state
+  builder), `agent-share.ts` (canonical `#bw=` links, no `savedAt`) and `agent-defaults.ts`
+  (identity, enums, global frame names) are imported by the browser, CLI and MCP server.
+- **Browser.** `window.bitwave` (getState/getManifest/tools/call/getDeeplink, 10 setters,
+  subscribe, `bitwave:ready`/`bitwave:change`) beside the untouched read-only
+  `window.BitWave`; hidden `<pre id="bitwave-state" data-schema-version="1">`; readiness
+  marker; a `keys | agent` tab in the `?` help panel with status/copy controls/live state/
+  tool catalogue.
+- **Headless.** `agent/cli.mjs` (10 commands, envelope-only `--json`, exit 0/2/3/4),
+  `agent/mcp-server.mjs` (NDJSON JSON-RPC 2.0, protocol 2025-06-18, zero deps),
+  `agent/selftest.mjs` (23 checks) and generated `agent/manifest.json` +
+  `agent/examples/` (`--check` gated).
+- **Docs.** `AGENTS.md` onboarding, `docs/AGENT-INTERFACE.md` contract, `llms.txt`,
+  `docs/AGENT-SCREENSHOTS.md`, `docs/BITWAVE-ECOSYSTEM-MAP.md`, README section.
+- **Distribution.** `build:pwa` copies `agent/`, `AGENTS.md`, `llms.txt` and the agent docs
+  into `dist/hosted/`; `check:pwa` asserts the served manifest/example/llms.txt (8 checks).
+
 ## Verified this session
 
-- `npm test` → **77 tests, 77 pass, 0 fail** (71 in the main run: 38 core + 10 state +
-  7 actions/routing + 6 bindings + 5 share + 5 project; plus 6 app-bridge tests in a
-  separate process because they replace the live singletons);
+- `npm test` → **112 + 6 tests, all pass, 0 fail** (core/state/actions/bindings/share/
+  project plus the agent registry, state builder and transports; the 6 app-bridge tests
+  run in a separate process because they replace the live singletons);
   `npm run typecheck` → **clean**.
-- `npm run build` → **`bitwave-v2.html`, 184.7 KB, single file**, no external references
-  (`tools/build-artifact.mjs` gate).
+- `npm run build` → **`bitwave-v2.html`, 238.5 KB, single file**, no external references
+  (`tools/build-artifact.mjs` gate); the default 2-D view is **pixel-identical** to the
+  pre-agent artifact (`check:browser --compare`, 6/6 states).
 - `npm run check:browser` → **52/52 checks pass** on the built `bitwave-v2.html` (53 with
-  `--shots`/`--compare`), including the new F5 project-menu/open/reset, demo dataset,
-  CSV-refusal, autosave-reload, share-link round-trip/2 KB budget and `?fresh` groups, in
-  addition to the F4 reflow/keyboard/semantics/axe groups and the §11 geometry assertion.
-- `npm run build:pwa` → **`dist/hosted/`** (index 189.7 KB, sw.js 1.6 KB, manifest 0.9 KB,
-  4 icons) with cache version `bitwave-abda27e2a1`; the committed
-  `bitwave-v2.html` was **byte-unchanged** (sha256 checked in the build itself).
-- `npm run check:pwa` → **7/7 checks pass**: hosted boot + state surface, manifest + all
-  icons, worker registers/activates/controls, hash-versioned cache holds the app shell, and
-  a reload with the origin server **stopped** still boots from cache with zero console
-  errors; the single-file artifact contains no manifest/icon/SW references.
+  `--shots`/`--compare`), including the F5 persistence groups, the F4 reflow/keyboard/
+  semantics/axe groups and the §11 geometry assertion; the hidden agent node and bridge do
+  not alter the default pixels.
+- `npm run build:pwa` → **`dist/hosted/`** (index 244.7 KB, sw.js 1.6 KB, manifest 0.9 KB,
+  4 icons) with a hash cache version; the committed `bitwave-v2.html` was
+  **byte-unchanged** (sha256 checked in the build itself); the build also serves `agent/`,
+  `AGENTS.md`, `llms.txt` and the agent docs.
+- `npm run check:pwa` → **8/8 checks pass**: hosted boot + state surface, manifest + all
+  icons, worker registers/activates/controls, hash-versioned cache holds the app shell,
+  served agent manifest + example envelope + `llms.txt`, and a reload with the origin
+  server **stopped** still boots from cache with zero console errors; the single-file
+  artifact contains no manifest/icon/SW references.
+- **Agent layer:** `node agent/gen-agent-artifacts.mjs --check` → 8 files current;
+  `node agent/selftest.mjs` → 23/23; `node agent/verify-browser.mjs` → **17/17 PASS**
+  against artifact sha256 `478749A6…` (readiness, one change on mount, key set, hidden
+  state === `getState()`, legacy surface, manifest equality, synchronous setters, no-op
+  silence, invalid setter codes, register write, call envelopes, deeplink reload twice,
+  agent tab, no overflow 360/720/1440, subscribe semantics, 0 console errors); the bridge
+  CDP harness (temp) → 69/69 including LFO-yields-to-`setRegister`; axe clean on both help
+  tabs. Screenshots: `docs/agent/{default,ab-xor,width-16,agent-tab}.png` (1440×900,
+  158–247 KB) captured from the byte-identical build and visually inspected.
+- `npm run verify` → **exit 0** on the final tree: 112 + 6 tests, typecheck, single-file
+  build (artifact sha256 `478749A6…`), agent artifacts current, CLI/MCP selftest 23/23,
+  independent `agent/verify-browser.mjs` 17/17, existing browser harness 52/52, hosted
+  build + PWA 8/8. A separate `--compare` run against the pre-agent artifact is
+  **53/53 (6/6 states pixel-identical)**; the default 2-D state was identical in every
+  run (the harness now uses grayscale AA + a retry for Chromium compositing jitter, see
+  gap 11).
 - `npm run verify` wires all of the above into one gate.
 - **F4 slice 1 — reflow/zoom (D27):** parity was 6/6 pixel-identical against the pre-F4
   artifact at normal viewports (measured before the IA slice, which intentionally changes the
@@ -246,19 +290,29 @@ status line, §10.39–41 persistence invariants, §11 persistence checks, §12 
 | [`vite.config.mjs`](vite.config.mjs) | Vite 8 build: `src/` → `dist/index.html`, no minification |
 | [`tools/build-artifact.mjs`](tools/build-artifact.mjs) | Single-file gate: verifies no external refs, writes `bitwave-v2.html` |
 | [`src/core/`](src/core/index.ts) | DOM-free engine (13 modules, ~1,700 lines), lanes 1/2/3, project schema + share codec |
-| [`tests/`](tests/design-invariants.test.ts) | 9 test files, 77 vectors + properties (share + app-bridge are new) |
+| [`src/core/agent-tools.ts`](src/core/agent-tools.ts) | Agent registry, one envelope, closed error set, manifest, canonical deeplink, bridge patch validation |
+| [`src/core/agent-state.ts`](src/core/agent-state.ts) | Pure UI-state builder shared by bridge, `#bitwave-state` and CLI `state` |
+| [`src/core/agent-share.ts`](src/core/agent-share.ts) | Canonical `#bw=` link builder (no `savedAt`, dataset-drop budget) |
+| [`src/agent/bridge.js`](src/agent/bridge.js) | `window.bitwave` install: events, hidden state, setters through the instrument's commands |
+| [`src/ui/agent-panel.js`](src/ui/agent-panel.js) | `agent` tab in the `?` help panel: status, copy actions, live state, tool catalogue |
+| [`agent/`](agent/cli.mjs) | Zero-dependency CLI + MCP stdio server, selftest, generator, manifest + example envelopes |
+| [`docs/AGENT-INTERFACE.md`](docs/AGENT-INTERFACE.md) | Normative agent contract (tools, envelope, deeplink, state, bridge, CLI, MCP) |
+| [`docs/AGENT-SCREENSHOTS.md`](docs/AGENT-SCREENSHOTS.md) | Reproducible agent-state screenshots + headless extraction recipes |
+| [`docs/BITWAVE-ECOSYSTEM-MAP.md`](docs/BITWAVE-ECOSYSTEM-MAP.md) | Honest cross-tool map (live = none; planned handoffs) |
+| [`AGENTS.md`](AGENTS.md), [`llms.txt`](llms.txt) | Agent onboarding + compact machine index |
+| [`tests/`](tests/design-invariants.test.ts) | 12 test files: core/state/app plus agent registry, state and transports |
 | [`examples/demo.bitwave.json`](examples/demo.bitwave.json) | Versioned project document (lanes 1/2/3; routes + parked bases; dataset) |
 | [`spike/routing-matrix.html`](spike/routing-matrix.html) | The reference housing prototype that F3 implements (360 lines) |
 | [`spike/f4-ia.html`](spike/f4-ia.html) | The author-approved F4 IA layout mockup (annotated, 1440/720/360 screenshots) |
 | [`tools/browser-check.mjs`](tools/browser-check.mjs) | Zero-dependency CDP harness: 52 checks (53 with `--shots` or `--compare`), incl. reflow/zoom, keyboard editing, IA, axe and F5 persistence |
-| [`tools/build-pwa.mjs`](tools/build-pwa.mjs) | Hosted/PWA build: `dist/hosted/` from the untouched artifact; injects manifest/SW registration, writes the hash-versioned worker |
-| [`tools/check-pwa.mjs`](tools/check-pwa.mjs) | Zero-dependency PWA gate: local static server + CDP; manifest/icons, worker control, hash cache, server-down offline reload, artifact cleanliness (7 checks) |
+| [`tools/build-pwa.mjs`](tools/build-pwa.mjs) | Hosted/PWA build: `dist/hosted/` from the untouched artifact + served agent files; injects manifest/SW registration, writes the hash-versioned worker |
+| [`tools/check-pwa.mjs`](tools/check-pwa.mjs) | Zero-dependency PWA gate: local static server + CDP; manifest/icons, worker control, hash cache, served agent files, server-down offline reload, artifact cleanliness (8 checks) |
 | [`tools/make-pwa-icons.py`](tools/make-pwa-icons.py) | Reproducible icon set (`assets/pwa/`): 192/512/maskable/32 from the palette, Pillow only |
 | [`assets/pwa/`](assets/pwa/icon-512.png) | Committed PWA icons used by the hosted build |
 | [`docs/hosting.md`](docs/hosting.md) | Share/deploy/install/offline/privacy guidance for researchers |
 | [`tools/make-example-project.ts`](tools/make-example-project.ts) | Regenerates the example |
-| `window.BitWave` in [`bitwave-v2.html`](bitwave-v2.html) | Read-only, schema-1 state/geometry/bindings surface; contract in [`AGENTS.md`](AGENTS.md) |
-| [`DECISIONS.md`](DECISIONS.md) | D1–D38, including the author decisions and the F4–F6 passes (D26–D38) |
+| `window.BitWave` in [`bitwave-v2.html`](bitwave-v2.html) | Legacy read-only, schema-1 state/geometry/bindings surface; contract in [`AGENTS.md`](AGENTS.md) |
+| [`DECISIONS.md`](DECISIONS.md) | D1–D39, including the author decisions, F4–F6 passes and the agent-layer decision (D39) |
 
 ## Known gaps and blockers
 
@@ -295,6 +349,12 @@ status line, §10.39–41 persistence invariants, §11 persistence checks, §12 
 10. **`dist/hosted/` is generated, not committed.** `npm run build:pwa` reproduces it
     deterministically from the committed artifact + `assets/pwa/`; deployment pipelines must
     run the build rather than copy a checked-in folder.
+11. **Parity jitter is absorbed by the harness, not ignored.** `--compare` uses grayscale
+    AA and retries a mismatching state up to three times: Chromium software compositing can
+    shift a handful of glyph-edge pixels by 1–2 levels between two runs of the *same*
+    artifact (reproduced on 2026-11-08; the 3d-focus-z1 state showed a 21-pixel text-AA
+    difference). A persistent difference still fails the gate; the default 2-D state was
+    identical in every run. This is test-tooling robustness, not an app change.
 
 ## Errata found
 
@@ -320,3 +380,7 @@ infrastructure):
    download assertion (gap 7), a `copy link` item next to `save project` for discoverability,
    and Tauri only if its trigger conditions appear (D37). **Do not touch the palette**
    (Q8 closed).
+4. **Agent layer upkeep:** after any `src/` change, run `npm run verify` (it now includes
+   the artifact check, CLI/MCP selftest and the independent `agent/verify-browser.mjs`);
+   regenerate `agent/manifest.json` + examples when `src/core/agent-tools.ts` changes.
+   Populate `relatedTools` only when a real, tested handoff exists (ecosystem map).

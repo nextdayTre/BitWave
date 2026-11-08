@@ -74,9 +74,9 @@ Paths: `assets/pwa/` holds the committed icons (regenerate with
 ## Verify
 
 ```bash
-npm test               # DOM-free core + state + bindings + project/share: 77 tests, zero dependencies
+npm test               # DOM-free core + state + bindings + project/share + agent layer: 112 + 6 tests, zero dependencies
 npm run check:browser  # 52 artifact checks in headless Chromium (53 with --shots or --compare)
-npm run check:pwa      # 7 hosted/PWA checks incl. a server-down offline reload
+npm run check:pwa      # 8 hosted/PWA checks incl. a server-down offline reload + served agent files
 npm run capture        # state screenshots → .tmp-captures/
 ```
 
@@ -98,7 +98,10 @@ between nibbles, Home/End jump, 0–F set the digit; `?` opens the keyboard map 
 Esc closes a menu or panel.
 
 `--compare` is the rebuild gate: it loads a reference artifact and the new one in
-the same Chromium and asserts identical screenshots across six states.
+the same Chromium and asserts identical screenshots across six states. The harness
+uses grayscale AA and retries a mismatching state up to three times, because Chromium
+software compositing can shift a few glyph-edge pixels between two runs of the same
+artifact; a persistent difference still fails.
 
 ```bash
 node tools/browser-check.mjs --compare path/to/reference.html
@@ -117,6 +120,113 @@ BitWave.frames()     // the frame-name table per lane
 
 No setters: the instrument's controls stay the only write path. The full contract
 and example snapshot are in [`AGENTS.md`](AGENTS.md).
+
+## Agent interface
+
+BitWave is also driveable by software. Everything the agent layer exposes is derived from
+the same DOM-free core (`src/core/*.ts`) as the UI, so the page, `window.bitwave`, the CLI
+and the MCP server cannot disagree: one implementation, one result envelope
+(`{ ok, schemaVersion, tool, data, deeplink, warnings }`), deterministic output. The layer
+is **additive** — the default rendered instrument is unchanged, and the legacy read-only
+`window.BitWave` surface above stays exactly as documented (schema 1); writes go through
+the new setters on `window.bitwave` only.
+
+Onboarding: [`AGENTS.md`](AGENTS.md) → normative contract
+[`docs/AGENT-INTERFACE.md`](docs/AGENT-INTERFACE.md). Machine-readable identity:
+`agent/manifest.json`; one example envelope per tool: `agent/examples/`; compact index:
+[`llms.txt`](llms.txt). The agent transports need **Node ≥ 23.6** (native TypeScript
+type-stripping) and zero extra dependencies.
+
+### 1. URL deep links
+
+The URL fragment is the whole view state, encoded by the `.bitwave` schema-2 codec. Build
+canonical links headlessly:
+
+```powershell
+node agent/cli.mjs deeplink --project examples/demo.bitwave.json `
+  --base "file:///C:/path/to/bitwave-v2.html" --json
+```
+
+Canonical links omit `savedAt`, so equal state gives an equal link; the app mirrors its
+settled state into the address bar with `history.replaceState` and a reload reproduces
+the view. `?fresh` opens an ephemeral session (no autosave, no share mirroring). Over
+`file://` a copied link is portable only to the same file path; pass an `http(s)` `--base`
+for a portable link.
+
+### 2. Browser bridge — `window.bitwave`
+
+After boot the page installs a command bridge beside the legacy read-only surface. Paste
+this in the console:
+
+```js
+window.bitwave.schemaVersion            // 1
+window.bitwave.version                  // "1.0.0"
+window.bitwave.getState()               // full UI state (schema 1)
+window.bitwave.getManifest()            // manifest data
+window.bitwave.tools()                  // tool definitions
+window.bitwave.call("compare_operands", { a: "8ADEFEDA85210125", b: "FFFFFFFF00000000" })
+window.bitwave.setLane(2)               // setters never throw
+window.bitwave.setRegister("A", "DEADBEEF")
+window.bitwave.getDeeplink()            // absolute current URL
+const off = window.bitwave.subscribe(state => console.log(state));
+```
+
+`call` returns the same envelope as the CLI/MCP. Setters return `{ok, state}` or
+`{ok:false, error, state}`; `getState()` already reflects a successful setter when it
+returns, and a no-op setter emits no change event. Headless state extraction needs no
+driver — the page exposes `body[data-agent-ready="true"]`, a hidden
+`<pre id="bitwave-state" data-schema-version="1">` containing `JSON.stringify(getState())`,
+and the `bitwave:ready` / `bitwave:change` events.
+
+### 3. Node CLI and MCP server
+
+Both import `src/core/agent-tools.ts` directly — no browser, no dev server:
+
+```powershell
+node agent/cli.mjs help
+node agent/cli.mjs manifest --json
+node agent/cli.mjs analyze_register --hex 8ADEFEDA85210125 --width 64 --json
+node agent/cli.mjs evaluate_lane --a 8ADEFEDA85210125 --b FFFFFFFF00000000 --op xor --json
+node agent/cli.mjs parse_dataset --text "Hex 1,Hex 2`n00000001,00000002" --json
+node agent/cli.mjs deeplink --project examples/demo.bitwave.json --json
+node agent/cli.mjs state --json
+node agent/cli.mjs selftest
+node agent/mcp-server.mjs
+```
+
+`--json` prints only the envelope on stdout (diagnostics go to stderr); flags accept
+`--flag value` and `--flag=value`. Exit codes: `0` success, `2` usage, `3` tool error
+(`E_*`), `4` internal. The MCP server speaks newline-delimited JSON-RPC 2.0 over stdio
+(protocol `2025-06-18`, zero dependencies); point an MCP client at the absolute server
+path:
+
+```json
+{ "mcpServers": { "bitwave": {
+  "command": "node",
+  "args": ["C:\\Users\\<you>\\Documents\\BitWave\\agent\\mcp-server.mjs"]
+} } }
+```
+
+The in-app human surface is the **agent tab of the help panel**: open `?`, then `agent`,
+for bridge status, copy-prompt/deeplink/state buttons, the live state JSON and the tool
+catalogue.
+
+### Agent checks
+
+```powershell
+node agent/gen-agent-artifacts.mjs --check   # manifest + examples current (deterministic)
+node agent/selftest.mjs                      # CLI + MCP + canonical vectors
+node agent/verify-browser.mjs                # independent headless-browser checklist
+npm test                                     # includes the agent-tools/state tests
+```
+
+The same commands have npm aliases: `npm run agent:check`, `npm run agent:selftest`,
+`npm run agent:verify`, and `npm run mcp`.
+
+Reproducible states, `#bitwave-state` extraction and headless-Chrome recipes:
+[`docs/AGENT-SCREENSHOTS.md`](docs/AGENT-SCREENSHOTS.md). Sibling tools and what a future
+handoff would carry (no live cross-tool links in v1; manifest `relatedTools` is empty):
+[`docs/BITWAVE-ECOSYSTEM-MAP.md`](docs/BITWAVE-ECOSYSTEM-MAP.md).
 
 ## Design and intent
 

@@ -9,11 +9,16 @@
     "build:pwa": "npm run build && node tools/build-pwa.mjs",
     "dev": "vite",
     "typecheck": "tsc -p tsconfig.core.json --noEmit",
-    "test": "node --test --test-isolation=none --test-concurrency=1 tests/design-invariants.test.ts tests/routing.test.ts tests/io-geometry.test.ts tests/project.test.ts tests/share.test.ts tests/state.test.ts tests/actions.test.ts tests/bindings.test.ts && node --test --test-isolation=none tests/project-app.test.ts",
+    "test": "node --test --test-isolation=none --test-concurrency=1 tests/design-invariants.test.ts tests/routing.test.ts tests/io-geometry.test.ts tests/project.test.ts tests/share.test.ts tests/state.test.ts tests/actions.test.ts tests/bindings.test.ts tests/agent-tools.test.ts tests/agent-state.test.ts tests/agent-transports.test.ts && node --test --test-isolation=none tests/project-app.test.ts",
     "check:browser": "node tools/browser-check.mjs",
     "check:pwa": "node tools/check-pwa.mjs",
-    "verify": "npm test && npm run typecheck && npm run build && npm run check:browser && npm run build:pwa && npm run check:pwa",
-    "capture": "node tools/browser-check.mjs --shots .tmp-captures"
+    "verify": "npm test && npm run typecheck && npm run build && node agent/gen-agent-artifacts.mjs --check && node agent/selftest.mjs && node agent/verify-browser.mjs && npm run check:browser && npm run build:pwa && npm run check:pwa",
+    "capture": "node tools/browser-check.mjs --shots .tmp-captures",
+    "agent": "node agent/cli.mjs",
+    "agent:check": "node agent/gen-agent-artifacts.mjs --check",
+    "agent:selftest": "node agent/selftest.mjs",
+    "agent:verify": "node agent/verify-browser.mjs",
+    "mcp": "node agent/mcp-server.mjs"
   },
   "engines": {
     "node": ">=23.6"

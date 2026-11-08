@@ -208,12 +208,19 @@
   <span id="liveStatus" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></span>
 </section>
 
-<aside class="help-panel" id="helpPanel" hidden aria-label="Keyboard map">
+<aside class="help-panel" id="helpPanel" hidden aria-label="Help: keyboard map and agent bridge">
   <div class="fp-head">
-    <h2 class="fp-title">keyboard map</h2>
-    <button class="op" id="helpClose" type="button" aria-label="× close keyboard map" title="Close (Esc)">×</button>
+    <div class="help-tabs" role="tablist" aria-label="Help sections">
+      <button class="op help-tab" id="helpTabKeys" type="button" role="tab" data-agent-tab="keys"
+              aria-selected="true" aria-controls="helpPanelKeys" tabindex="0">keys</button>
+      <button class="op help-tab" id="helpTabAgent" type="button" role="tab" data-agent-tab="agent"
+              aria-selected="false" aria-controls="helpPanelAgent" tabindex="-1">agent</button>
+    </div>
+    <button class="op" id="helpClose" type="button" aria-label="× close help" title="Close (Esc)">×</button>
   </div>
-  <div class="help-body">
+  <h2 class="sr-only">help: keyboard map and agent bridge</h2>
+  <div class="help-body" id="helpPanelKeys" role="tabpanel" data-agent-panel="keys"
+       aria-labelledby="helpTabKeys" tabindex="0">
     <dl class="help-list">
       <dt>Tab</dt><dd>enter the strip at the last-focused nibble</dd>
       <dt>← / →</dt><dd>move between nibbles</dd>
@@ -225,11 +232,43 @@
       <dt>Alt+1/2/3</dt><dd>select lane 1, 2 or 3</dd>
       <dt>Alt+S</dt><dd>split the 3-D view</dd>
       <dt>← / →</dt><dd>step CSV examples when focus is outside the controls and the strip</dd>
-      <dt>?</dt><dd>this keyboard map</dd>
+      <dt>?</dt><dd>this help panel</dd>
     </dl>
+  </div>
+  <div class="help-body" id="helpPanelAgent" role="tabpanel" data-agent-panel="agent"
+       aria-labelledby="helpTabAgent" tabindex="0" hidden>
+    <div class="agent-status-row" role="status" aria-live="polite">
+      <span class="agent-dot" aria-hidden="true"></span>
+      <span class="agent-status" data-agent-status="bridge-active">bridge active</span>
+      <span class="agent-version" data-agent-version>schema 1 · bridge v1.0.0</span>
+    </div>
+
+    <p class="agent-note">State is the source of truth: read <code>window.bitwave.getState()</code>
+      or the hidden <code>#bitwave-state</code> node, and change the instrument only through the
+      bridge setters.</p>
+
+    <div class="agent-actions">
+      <button class="op" type="button" data-agent-copy="prompt" title="Copy a ready-to-paste prompt for an agent">copy prompt</button>
+      <button class="op" type="button" data-agent-copy="deeplink" title="Copy the canonical #bw= deeplink">copy deeplink</button>
+      <button class="op" type="button" data-agent-copy="state" title="Copy the current state JSON">copy state</button>
+    </div>
+    <p class="agent-copy-status" role="status" aria-live="polite" data-agent-copy-status></p>
+
+    <h3 class="agent-heading">surface</h3>
+    <dl class="agent-paths" data-agent-paths></dl>
+
+    <h3 class="agent-heading">tools</h3>
+    <ul class="agent-tools" data-agent-tools></ul>
+
+    <h3 class="agent-heading">live state</h3>
+    <pre class="agent-state" data-agent-state-json tabindex="0" aria-label="Live UI state JSON"></pre>
   </div>
 </aside>
 </main>
+
+<!-- Agent layer (§6/§7): hidden JSON mirror of getState(), filled on install
+     and after every store transaction. Never rendered; no layout impact. -->
+<pre id="bitwave-state" data-schema-version="1" hidden></pre>
 
 <script type="module" src="/main.js"></script>
 </body>

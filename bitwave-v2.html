@@ -102,6 +102,11 @@ function bigToReg(v, bits, N) {
 		v >>= 1n;
 	}
 }
+function popcount(bits) {
+	let n = 0;
+	for (let i = 0; i < bits.length; i++) n += bits[i];
+	return n;
+}
 function bitsToNibbles(bits, N) {
 	const n = nibCount$1(N);
 	const out = new Array(n);
@@ -190,6 +195,31 @@ function computeZ(aBits, bBits, N, op) {
 	}
 	return out;
 }
+/**
+* How many bit positions hold each input pair, in (00, 01, 10, 11) order.
+* The four counts always sum to N (DESIGN §6).
+*/
+function truthCounts(aBits, bBits, N) {
+	const counts = [
+		0,
+		0,
+		0,
+		0
+	];
+	for (let i = 0; i < N; i++) counts[aBits[i] << 1 | bBits[i]]++;
+	return counts;
+}
+function popcountZ(zBits) {
+	let n = 0;
+	for (let i = 0; i < zBits.length; i++) n += zBits[i];
+	return n;
+}
+/** Carry out for ADD, borrow out for SUB. */
+function carryOrBorrow(aBits, bBits, N, op) {
+	const a = regToBig$1(aBits, N);
+	const b = regToBig$1(bBits, N);
+	return op === "add" ? a + b >= 1n << BigInt(N) : a < b;
+}
 // src/state/instrument.ts
 /**
 * Instrument state — the single mutable tree every renderer reads.
@@ -216,7 +246,7 @@ var LANE_LABEL = {
 	C: "3"
 };
 var laneLabel = (key) => LANE_LABEL[key] ?? key;
-var FRAME_NAMES = {
+var FRAME_NAMES$1 = {
 	A: {
 		a: "A",
 		b: "B",
@@ -233,7 +263,7 @@ var FRAME_NAMES = {
 		z: "Z3"
 	}
 };
-var frameName = (laneKey, frame) => (FRAME_NAMES[laneKey] ?? FRAME_NAMES.A)[frame] ?? frame.toUpperCase();
+var frameName$1 = (laneKey, frame) => (FRAME_NAMES$1[laneKey] ?? FRAME_NAMES$1.A)[frame] ?? frame.toUpperCase();
 var makeReg = (N) => ({
 	bits: new Uint8Array(N),
 	anim: new Array(N >> 2).fill(0),
@@ -332,7 +362,7 @@ var focusKey = (sl = curSlot()) => {
 };
 var focusReg = (sl = curSlot()) => regOf(focusKey(sl), sl);
 var focusEditable = (sl = curSlot()) => focusKey(sl) !== "z";
-var frameLabel = (sl = curSlot(), frame = focusKey(sl)) => frameName(sl.key, frame);
+var frameLabel = (sl = curSlot(), frame = focusKey(sl)) => frameName$1(sl.key, frame);
 var nibAt = (bits, j) => nibAt$1(bits, S.N, j);
 var setNibAt = (bits, j, v) => setNibAt$1(bits, S.N, j, v);
 var nibValue = (r, j) => nibAt(r.bits, j);
@@ -823,7 +853,7 @@ var routeFor = (sl, operand) => driverOf(routing, laneKeyOf(sl.key), operand);
 /** The global name of the frame driving this input, or null when local. */
 function driverName(sl, operand) {
 	const route = routeFor(sl, operand);
-	return route ? frameName(slotKeyOf(route.from.lane), route.from.frame) : null;
+	return route ? frameName$1(slotKeyOf(route.from.lane), route.from.frame) : null;
 }
 function describeInput(sl, operand) {
 	const route = routeFor(sl, operand);
@@ -835,7 +865,7 @@ function describeInput(sl, operand) {
 			kind: "frame",
 			lane: route.from.lane,
 			frame: route.from.frame,
-			name: frameName(slotKeyOf(route.from.lane), route.from.frame)
+			name: frameName$1(slotKeyOf(route.from.lane), route.from.frame)
 		};
 		state = route.delay ? "z⁻¹" : "1:1";
 	} else if (column >= 0 && DEMO.cols[column]) {
@@ -850,7 +880,7 @@ function describeInput(sl, operand) {
 		lane: sl.key,
 		laneNumber: Number(sl.key === "A" ? 1 : sl.key === "B" ? 2 : 3),
 		operand,
-		frame: frameName(sl.key, operand),
+		frame: frameName$1(sl.key, operand),
 		source,
 		state,
 		driven: Boolean(route)
@@ -888,7 +918,7 @@ function availableSources(sl, operand) {
 	]) out.push({
 		lane,
 		frame,
-		name: frameName(slotKeyOf(lane), frame),
+		name: frameName$1(slotKeyOf(lane), frame),
 		disabled: lane === destLane && frame === operand
 	});
 	return out;
@@ -1117,9 +1147,9 @@ var PAIRS = [
 ];
 var binFn = (a, b) => S.binop === "and" ? a & b : S.binop === "or" ? a | b : a ^ b;
 function renderTruth() {
-	const fa = frameName(S.slot, "a");
-	const fb = frameName(S.slot, "b");
-	const fz = frameName(S.slot, "z");
+	const fa = frameName$1(S.slot, "a");
+	const fb = frameName$1(S.slot, "b");
+	const fz = frameName$1(S.slot, "z");
 	if (isArith()) {
 		const a = regToBig(S.A);
 		const b = regToBig(S.B);
@@ -1153,10 +1183,10 @@ function updateReadouts(withDecimal = true) {
 		slotBadgeEl.textContent = `lane ${laneLabel(S.slot)}`;
 	}
 	if (S.showB) {
-		hexAEl.previousElementSibling.textContent = frameName(S.slot, "a");
-		hexBEl.previousElementSibling.textContent = frameName(S.slot, "b");
-		hexZEl.previousElementSibling.textContent = frameName(S.slot, "z");
-		popEl.previousElementSibling.textContent = `pop ${frameName(S.slot, "z")}`;
+		hexAEl.previousElementSibling.textContent = frameName$1(S.slot, "a");
+		hexBEl.previousElementSibling.textContent = frameName$1(S.slot, "b");
+		hexZEl.previousElementSibling.textContent = frameName$1(S.slot, "z");
+		popEl.previousElementSibling.textContent = `pop ${frameName$1(S.slot, "z")}`;
 		hexAEl.textContent = toHexOf(S.A);
 		hexBEl.textContent = toHexOf(S.B);
 		hexZEl.textContent = toHexOf(S.Z);
@@ -1182,11 +1212,11 @@ function updateReadouts(withDecimal = true) {
 	const alt = [
 		S.view3d ? "3-D depth field" : "2-D waveform",
 		`lane ${laneLabel(S.slot)}`,
-		`${frameName(S.slot, "a")} ${toHexOf(S.A)}`
+		`${frameName$1(S.slot, "a")} ${toHexOf(S.A)}`
 	];
 	if (S.showB) {
-		alt.push(`${frameName(S.slot, "b")} ${toHexOf(S.B)}`);
-		alt.push(`${frameName(S.slot, "z")} ${toHexOf(S.Z)}`);
+		alt.push(`${frameName$1(S.slot, "b")} ${toHexOf(S.B)}`);
+		alt.push(`${frameName$1(S.slot, "z")} ${toHexOf(S.Z)}`);
 		alt.push(`popcount ${pop}`);
 	}
 	alt.push(`editing ${frameLabel()}`);
@@ -1239,7 +1269,7 @@ function createFrameNavigator(deps) {
 	const frameReg = (sl, frame) => frame === "a" ? sl.A : frame === "b" ? sl.B : sl.Z;
 	const frameSub = (frame) => frame === "z" ? "derived" : "operand";
 	function frameVisLabel(laneKey, frame) {
-		return `${S.slots[laneKey].frameVis[frame] ? "Hide" : "Show"} frame ${frameName(laneKey, frame)} in the 2D view`;
+		return `${S.slots[laneKey].frameVis[frame] ? "Hide" : "Show"} frame ${frameName$1(laneKey, frame)} in the 2D view`;
 	}
 	function makeEyeButton(laneKey, frame) {
 		const sl = S.slots[laneKey];
@@ -1292,7 +1322,7 @@ function createFrameNavigator(deps) {
 	function buildFrameRow(laneKey, frame) {
 		const sl = S.slots[laneKey];
 		const reg = frameReg(sl, frame);
-		const name = frameName(laneKey, frame);
+		const name = frameName$1(laneKey, frame);
 		const active = laneKey === S.slot && focusKey(sl) === frame;
 		const row = document.createElement("div");
 		row.className = "frame-row" + (active ? " is-active" : "") + (sl.frameVis[frame] ? "" : " is-hidden");
@@ -1354,9 +1384,9 @@ function createFrameNavigator(deps) {
 			for (const frame of FRAME_ORDER) framesBody.appendChild(buildFrameRow(laneKey, frame));
 		}
 		const sl = curSlot();
-		const fa = frameName(sl.key, "a");
-		const fb = frameName(sl.key, "b");
-		const fz = frameName(sl.key, "z");
+		const fa = frameName$1(sl.key, "a");
+		const fb = frameName$1(sl.key, "b");
+		const fz = frameName$1(sl.key, "z");
 		if (framesLegend) framesLegend.textContent = `${fa} solid · ${fz} glow · ${fb} dashed`;
 		unpairBBtn.textContent = `unpair ${fb}`;
 		unpairBBtn.title = `Remove operand ${fb} from this lane`;
@@ -2019,6 +2049,22 @@ function columnWidth(rows, ci) {
 	}
 	return max;
 }
+/**
+* Header detection + row filtering, as `loadCSV` does: drop fully empty rows;
+* a first row is a header when it is not a data row; fall back to colN names.
+*/
+function parseDataset(text) {
+	const rows = parseDelimited(text).filter((r) => r.some((c) => normCell(c) !== ""));
+	if (rows.length < 1) return null;
+	const hasHeader = !isDataRow(rows[0]);
+	const cols = hasHeader ? rows[0].map((c, i) => String(c).trim() || `col${i + 1}`) : rows[0].map((_, i) => `col${i + 1}`);
+	const body = hasHeader ? rows.slice(1) : rows;
+	if (!body.length) return null;
+	return {
+		cols,
+		rows: body
+	};
+}
 // src/state/demo-data.ts
 /**
 * Embedded demo dataset (F5) — data, not onboarding.
@@ -2475,7 +2521,7 @@ function createLiveStatus(store) {
 		const sl = curSlot();
 		let pop = 0;
 		for (let i = 0; i < S.N; i++) pop += sl.Z.bits[i];
-		return `lane ${laneLabel(S.slot)} · ${frameLabel()} = ${hex} · ${frameName(S.slot, "z")} popcount ${pop}`;
+		return `lane ${laneLabel(S.slot)} · ${frameLabel()} = ${hex} · ${frameName$1(S.slot, "z")} popcount ${pop}`;
 	}
 	function flush() {
 		timer = 0;
@@ -2630,22 +2676,44 @@ function createCopyMenu(deps) {
 }
 // src/ui/help.js
 /**
-* Keyboard map panel (F4 IA) — a utility surface, not onboarding.
+* Help panel (F4 IA) — the instrument's one declared utility surface.
 *
-* `?` (or the header button) opens a static list of the instrument's real
-* shortcuts; Escape closes it and focus returns to where it came from. This is
-* the one place the key map is declared, so a new control has to extend it.
+* `?` (or the header button) opens it; Escape closes it and focus returns to
+* where it came from. It holds two tabs: the static keyboard map (`keys`) and
+* the agent bridge surface (`agent`). Tabs use the ARIA tabs pattern — one
+* roving tab stop, ArrowLeft/Right (plus Home/End) between tabs, click to
+* activate. The panel is hidden by default, so the default rendered instrument
+* is unchanged.
 */
 function createHelpPanel(deps) {
-	const { panel, button, closeButton } = deps;
+	const { panel, button, closeButton, onTabChange } = deps;
 	let open = false;
 	let returnFocus = null;
+	const tabs = [...panel.querySelectorAll("[data-agent-tab]")];
+	const tabPanels = [...panel.querySelectorAll("[data-agent-panel]")];
+	let activeTab = tabs.length ? tabs[0].dataset.agentTab : null;
+	function activateTab(name, { focus = false } = {}) {
+		const next = tabs.find((tab) => tab.dataset.agentTab === name);
+		if (!next) return;
+		activeTab = name;
+		for (const tab of tabs) {
+			const selected = tab === next;
+			tab.setAttribute("aria-selected", String(selected));
+			tab.setAttribute("tabindex", selected ? "0" : "-1");
+			tab.classList.toggle("on", selected);
+			if (selected && focus) tab.focus();
+		}
+		for (const tabPanel of tabPanels) tabPanel.hidden = tabPanel.dataset.agentPanel !== name;
+		if (typeof onTabChange === "function") onTabChange(name);
+	}
 	function show() {
 		if (open) return;
 		open = true;
-		returnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : button;
+		const origin = document.activeElement;
+		returnFocus = origin instanceof HTMLElement && origin !== document.body ? origin : button;
 		panel.hidden = false;
 		button.setAttribute("aria-expanded", "true");
+		activateTab(activeTab);
 		closeButton.focus();
 	}
 	function hide(refocus = true) {
@@ -2653,7 +2721,7 @@ function createHelpPanel(deps) {
 		open = false;
 		panel.hidden = true;
 		button.setAttribute("aria-expanded", "false");
-		if (refocus) (returnFocus && document.contains(returnFocus) ? returnFocus : button).focus();
+		if (refocus) (returnFocus && returnFocus !== document.body && document.contains(returnFocus) ? returnFocus : button).focus();
 		returnFocus = null;
 	}
 	function toggle() {
@@ -2675,112 +2743,30 @@ function createHelpPanel(deps) {
 		event.preventDefault();
 		toggle();
 	});
+	for (const tab of tabs) {
+		tab.addEventListener("click", () => activateTab(tab.dataset.agentTab));
+		tab.addEventListener("keydown", (event) => {
+			const index = tabs.indexOf(tab);
+			if (index < 0) return;
+			let next = -1;
+			if (event.key === "ArrowRight") next = (index + 1) % tabs.length;
+			else if (event.key === "ArrowLeft") next = (index - 1 + tabs.length) % tabs.length;
+			else if (event.key === "Home") next = 0;
+			else if (event.key === "End") next = tabs.length - 1;
+			else return;
+			event.preventDefault();
+			event.stopPropagation();
+			activateTab(tabs[next].dataset.agentTab, { focus: true });
+		});
+	}
+	if (tabs.length) activateTab(activeTab);
 	return {
 		show,
 		hide,
 		toggle,
-		isOpen: () => open
-	};
-}
-// src/ui/project-menu.js
-/**
-* Project menu (F5) — save, open and reset as one explicit menu.
-*
-* Same interaction contract as the copy menu: opening moves focus into the
-* `role="menu"`, arrows/Home/End move, Enter activates, Escape or an outside
-* click closes and returns focus, and the button reports `aria-expanded`.
-*/
-function createProjectMenu(deps) {
-	const { button, items } = deps;
-	const menu = document.createElement("div");
-	menu.className = "project-menu";
-	menu.hidden = true;
-	menu.setAttribute("role", "menu");
-	menu.setAttribute("aria-label", "project document");
-	const buttons = items.map((item) => {
-		const el = document.createElement("button");
-		el.type = "button";
-		el.className = "op";
-		el.setAttribute("role", "menuitem");
-		el.setAttribute("tabindex", "-1");
-		el.textContent = item.label;
-		el.title = item.title || item.label;
-		el.addEventListener("click", () => {
-			close(false);
-			item.onSelect();
-		});
-		menu.appendChild(el);
-		return el;
-	});
-	document.body.appendChild(menu);
-	let open = false;
-	function position() {
-		menu.hidden = false;
-		const rect = button.getBoundingClientRect();
-		const width = menu.offsetWidth;
-		const height = menu.offsetHeight;
-		const left = Math.min(Math.max(8, rect.left), window.innerWidth - width - 8);
-		let top = rect.bottom + 4;
-		if (top + height > window.innerHeight - 8) top = Math.max(8, rect.top - height - 4);
-		menu.style.left = `${left}px`;
-		menu.style.top = `${top}px`;
-	}
-	function focusItem(index) {
-		const n = buttons.length;
-		buttons[(index % n + n) % n].focus();
-	}
-	function openMenu() {
-		if (open) return;
-		open = true;
-		position();
-		button.setAttribute("aria-expanded", "true");
-		button.classList.add("on");
-		focusItem(0);
-		document.addEventListener("pointerdown", onOutside, true);
-		window.addEventListener("resize", onResize);
-	}
-	function close(refocus = true) {
-		if (!open) return;
-		open = false;
-		menu.hidden = true;
-		button.setAttribute("aria-expanded", "false");
-		button.classList.remove("on");
-		document.removeEventListener("pointerdown", onOutside, true);
-		window.removeEventListener("resize", onResize);
-		if (refocus) button.focus();
-	}
-	function onOutside(event) {
-		if (event.target === button || menu.contains(event.target)) return;
-		close(false);
-	}
-	function onResize() {
-		close(false);
-	}
-	menu.addEventListener("keydown", (event) => {
-		const index = buttons.indexOf(document.activeElement);
-		if (event.key === "ArrowDown") {
-			event.preventDefault();
-			focusItem(index + 1);
-		} else if (event.key === "ArrowUp") {
-			event.preventDefault();
-			focusItem(index - 1);
-		} else if (event.key === "Home") {
-			event.preventDefault();
-			focusItem(0);
-		} else if (event.key === "End") {
-			event.preventDefault();
-			focusItem(buttons.length - 1);
-		} else if (event.key === "Escape") {
-			event.preventDefault();
-			event.stopPropagation();
-			close(true);
-		} else if (event.key === "Tab") close(false);
-	});
-	button.addEventListener("click", () => open ? close(true) : openMenu());
-	return {
-		open: openMenu,
-		close,
-		isOpen: () => open
+		isOpen: () => open,
+		setTab: (name) => activateTab(name),
+		activeTab: () => activeTab
 	};
 }
 // src/core/lanes.ts
@@ -2840,7 +2826,7 @@ var ProjectError = class extends Error {
 		this.code = code;
 	}
 };
-var BINOPS = [
+var BINOPS$1 = [
 	"and",
 	"or",
 	"xor",
@@ -2857,7 +2843,7 @@ var DEFAULT_FOCUS = "a";
 var LFO_DEFAULT_MODE = "rotcw";
 var LFO_DEFAULT_RATE = 4;
 /** The modes the instrument's motion control offers; anything else is ignored. */
-var LFO_MODES = [
+var LFO_MODES$1 = [
 	"rotcw",
 	"rotccw",
 	"slide",
@@ -2875,7 +2861,7 @@ function lenientFrameVis(value) {
 	};
 }
 function lenientLfoMode(value) {
-	return typeof value === "string" && LFO_MODES.includes(value) ? value : LFO_DEFAULT_MODE;
+	return typeof value === "string" && LFO_MODES$1.includes(value) ? value : LFO_DEFAULT_MODE;
 }
 function lenientLfoRate(value) {
 	return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : LFO_DEFAULT_RATE;
@@ -3006,7 +2992,7 @@ function deserializeProject(doc) {
 		lane.A.bits = requireHex(s.a, N, `lanes.${key}.a`);
 		lane.B.bits = requireHex(s.b, N, `lanes.${key}.b`);
 		lane.showB = requireBool(s.showB, `lanes.${key}.showB`);
-		if (!BINOPS.includes(s.binop)) throw new ProjectError("malformed", `lanes.${key}.binop`);
+		if (!BINOPS$1.includes(s.binop)) throw new ProjectError("malformed", `lanes.${key}.binop`);
 		lane.binop = s.binop;
 		lane.edit = s.edit === "b" ? "b" : "a";
 		lane.seededB = s.seededB === true;
@@ -3070,6 +3056,1225 @@ function deserializeProject(doc) {
 }
 /** Convenience: engine state -> pretty JSON text. */
 var stringifyProject = (doc) => JSON.stringify(doc, null, 2);
+// src/core/agent-defaults.ts
+/**
+* Agent-layer identity and shared vocabulary.
+*
+* DOM-free and deterministic: the browser bridge, CLI and MCP server import these
+* constants so the tool id, versions, enums and frame names cannot drift.
+*/
+var TOOL_ID = "bitwave";
+var TOOL_TITLE = "BitWave";
+var TOOLSET_VERSION = "1.0.0";
+/** Fixed timestamp for canonical share documents (links never carry `savedAt`). */
+var CANONICAL_SAVED_AT = "1970-01-01T00:00:00.000Z";
+var WIDTHS = SIZES$1;
+var BINOPS = [
+	"and",
+	"or",
+	"xor",
+	"add",
+	"sub"
+];
+var VIEW_MODES = [
+	"2d",
+	"3d",
+	"split"
+];
+var LFO_MODES = [
+	"rotcw",
+	"rotccw",
+	"slide",
+	"csvStep"
+];
+var LFO_RATES = [
+	1,
+	2,
+	4,
+	8
+];
+/** Global frame names: lane 1 A/B/Z1, lane 2 C/D/Z2, lane 3 E/F/Z3. */
+var FRAME_NAMES = {
+	"1": {
+		a: "A",
+		b: "B",
+		z: "Z1"
+	},
+	"2": {
+		a: "C",
+		b: "D",
+		z: "Z2"
+	},
+	"3": {
+		a: "E",
+		b: "F",
+		z: "Z3"
+	}
+};
+var SLOT_OF_LANE = {
+	"1": "A",
+	"2": "B",
+	"3": "C"
+};
+var FRAME_BY_NAME = (() => {
+	const out = {};
+	for (const lane of [
+		"1",
+		"2",
+		"3"
+	]) for (const frame of [
+		"a",
+		"b",
+		"z"
+	]) {
+		const name = FRAME_NAMES[lane][frame];
+		out[name] = {
+			lane,
+			frame,
+			slotKey: SLOT_OF_LANE[lane],
+			name
+		};
+	}
+	return out;
+})();
+function frameName(lane, frame) {
+	return FRAME_NAMES[lane][frame];
+}
+/** Resolve a global frame name (`A`–`F`, `Z1`–`Z3`); case-insensitive. */
+function frameRefFromName(value) {
+	if (typeof value !== "string") return null;
+	return FRAME_BY_NAME[value.toUpperCase()] ?? null;
+}
+function laneKeyFromNumber(value) {
+	return value === 1 ? "1" : value === 2 ? "2" : value === 3 ? "3" : null;
+}
+function baseProjectDoc(N) {
+	return serializeProject(makeBootLanes(N), createRouting(), N, {
+		lane: "1",
+		view3d: false,
+		split3d: false,
+		splitPair: ["1", "2"],
+		activePane: 0
+	}, null, CANONICAL_SAVED_AT, {
+		focus: {
+			"1": "a",
+			"2": "a",
+			"3": "a"
+		},
+		frameVis: {
+			"1": {
+				a: true,
+				b: true,
+				z: true
+			},
+			"2": {
+				a: true,
+				b: true,
+				z: true
+			},
+			"3": {
+				a: true,
+				b: true,
+				z: true
+			}
+		},
+		lfoMode: "rotcw",
+		lfoRate: 4
+	});
+}
+/** A compact 8-bit document used by tool examples. */
+function exampleProjectDoc() {
+	return baseProjectDoc(8);
+}
+/**
+* Budget for the encoded payload, i.e. the characters after `bw=` (no prefix,
+* no leading `#`). A 256-bit document without a dataset is well under this;
+* a full CSV dataset is what can overflow it.
+*/
+var SHARE_MAX_CHARS = 2e3;
+var ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+/** UTF-8 bytes for a string. JSON.stringify never emits lone surrogates. */
+function toUtf8(text) {
+	const bytes = [];
+	for (let i = 0; i < text.length; i++) {
+		let cp = text.charCodeAt(i);
+		if (cp >= 55296 && cp <= 56319 && i + 1 < text.length) {
+			const low = text.charCodeAt(i + 1);
+			if (low >= 56320 && low <= 57343) {
+				cp = 65536 + (cp - 55296 << 10) + (low - 56320);
+				i++;
+			}
+		}
+		if (cp < 128) bytes.push(cp);
+		else if (cp < 2048) bytes.push(192 | cp >> 6, 128 | cp & 63);
+		else if (cp < 65536) bytes.push(224 | cp >> 12, 128 | cp >> 6 & 63, 128 | cp & 63);
+		else bytes.push(240 | cp >> 18, 128 | cp >> 12 & 63, 128 | cp >> 6 & 63, 128 | cp & 63);
+	}
+	return new Uint8Array(bytes);
+}
+/** Strict UTF-8 decode: invalid/overlong/truncated input is a malformed share. */
+function fromUtf8(bytes) {
+	const fail = (at) => {
+		throw new ProjectError("malformed", `share payload is not valid UTF-8 at byte ${at}`);
+	};
+	let out = "";
+	let i = 0;
+	while (i < bytes.length) {
+		const lead = bytes[i];
+		if (lead < 128) {
+			out += String.fromCharCode(lead);
+			i += 1;
+			continue;
+		}
+		let need = 0;
+		let cp = 0;
+		let min = 0;
+		if ((lead & 224) === 192) {
+			need = 1;
+			cp = lead & 31;
+			min = 128;
+		} else if ((lead & 240) === 224) {
+			need = 2;
+			cp = lead & 15;
+			min = 2048;
+		} else if ((lead & 248) === 240) {
+			need = 3;
+			cp = lead & 7;
+			min = 65536;
+		} else fail(i);
+		if (i + need >= bytes.length) fail(i);
+		for (let k = 1; k <= need; k++) {
+			const next = bytes[i + k];
+			if ((next & 192) !== 128) fail(i + k);
+			cp = cp << 6 | next & 63;
+		}
+		if (cp < min || cp > 1114111) fail(i);
+		if (cp >= 55296 && cp <= 57343) fail(i);
+		i += need + 1;
+		if (cp < 65536) out += String.fromCharCode(cp);
+		else {
+			const rest = cp - 65536;
+			out += String.fromCharCode(55296 + (rest >> 10), 56320 + (rest & 1023));
+		}
+	}
+	return out;
+}
+/** Base64url, no padding: 4 chars per 3 bytes. */
+function toBase64Url(bytes) {
+	let out = "";
+	for (let i = 0; i < bytes.length; i += 3) {
+		const b0 = bytes[i];
+		const has1 = i + 1 < bytes.length;
+		const has2 = i + 2 < bytes.length;
+		const b1 = has1 ? bytes[i + 1] : 0;
+		const b2 = has2 ? bytes[i + 2] : 0;
+		out += ALPHABET[b0 >> 2];
+		out += ALPHABET[(b0 & 3) << 4 | b1 >> 4];
+		if (has1) out += ALPHABET[(b1 & 15) << 2 | b2 >> 6];
+		if (has2) out += ALPHABET[b2 & 63];
+	}
+	return out;
+}
+/** Reverse of toBase64Url. Throws ProjectError("malformed") on bad input. */
+function fromBase64Url(payload) {
+	if (payload.length % 4 === 1) throw new ProjectError("malformed", "share payload has an impossible base64url length");
+	const bytes = new Uint8Array(Math.floor(payload.length * 3 / 4));
+	let acc = 0;
+	let bits = 0;
+	let written = 0;
+	for (let i = 0; i < payload.length; i++) {
+		const value = ALPHABET.indexOf(payload[i]);
+		if (value < 0) throw new ProjectError("malformed", `share payload is not base64url at index ${i}`);
+		acc = acc << 6 | value;
+		bits += 6;
+		if (bits >= 8) {
+			bits -= 8;
+			bytes[written++] = acc >> bits & 255;
+		}
+	}
+	return bytes;
+}
+/** JSON document -> unpadded base64url payload. */
+function encodeShare(doc) {
+	const json = JSON.stringify(doc);
+	if (typeof json !== "string") throw new ProjectError("malformed", "share document is not JSON-serializable");
+	return toBase64Url(toUtf8(json));
+}
+/** Unpadded base64url payload -> JSON document. Throws ProjectError. */
+function decodeShare(payload) {
+	const text = fromUtf8(fromBase64Url(payload));
+	let doc;
+	try {
+		doc = JSON.parse(text);
+	} catch {
+		throw new ProjectError("malformed", "share payload is not JSON");
+	}
+	return doc;
+}
+/**
+* Read a shared document from a `location.hash`, accepting either the full
+* fragment (`#bw=...`) or the bare payload form (`bw=...`). Returns null when
+* the hash carries no share (empty, a different fragment, or `bw=` with no
+* payload); a present-but-corrupt payload throws ProjectError.
+*/
+function parseShareHash(hash) {
+	const text = hash.startsWith("#") ? hash.slice(1) : hash;
+	if (!text.startsWith("bw=")) return null;
+	const payload = text.slice(3);
+	if (payload === "") return null;
+	return decodeShare(payload);
+}
+// src/core/agent-share.ts
+/**
+* Canonical share links for the agent layer.
+*
+* The `.bitwave` codec already exists in `share.ts`. This module adds the one rule
+* the agent contract needs: a state has exactly one link, so the timestamp is not
+* part of a shared document. It also reproduces the app's budget policy (drop the
+* dataset before giving up) so `build_deeplink` and the address bar agree.
+*/
+/**
+* Validate a document and re-serialize it canonically: no `savedAt`, extras
+* preserved, engine recomputed. Throws ProjectError on an invalid document.
+*/
+function canonicalShareDocument(doc) {
+	const loaded = deserializeProject(doc);
+	const out = serializeProject(loaded.lanes, loaded.routing, loaded.N, loaded.view, loaded.dataset, CANONICAL_SAVED_AT, {
+		focus: loaded.extras.focus,
+		frameVis: loaded.extras.frameVis,
+		lfoMode: loaded.extras.lfoMode,
+		lfoRate: loaded.extras.lfoRate
+	});
+	delete out.savedAt;
+	return out;
+}
+/**
+* Build the canonical fragment, dropping the dataset when the payload would
+* exceed the share budget (mirroring `src/io/share-url.js`).
+*/
+function buildShareLink(doc) {
+	let canonical = canonicalShareDocument(doc);
+	let payload = encodeShare(canonical);
+	let datasetDropped = false;
+	if (payload.length > 2e3 && canonical.dataset) {
+		const { dataset: _dropped, ...rest } = canonical;
+		canonical = rest;
+		payload = encodeShare(canonical);
+		datasetDropped = true;
+	}
+	return {
+		fragment: `#bw=${payload}`,
+		payloadChars: payload.length,
+		withinBudget: payload.length <= SHARE_MAX_CHARS,
+		datasetDropped
+	};
+}
+// src/core/agent-tools.ts
+/**
+* Agent tool registry — the single source of truth for every transport.
+*
+* DOM-free and deterministic. The browser bridge, CLI and MCP server import
+* `TOOLS`, `callTool`, `buildDeeplink`, `getManifest` and `normalizeAgentPatch`
+* from this module; none of them re-implements register maths.
+*/
+var ERROR_CODES = [
+	"E_BAD_ARGS",
+	"E_UNKNOWN_TOOL",
+	"E_EMPTY_INPUT",
+	"E_INVALID_HEX",
+	"E_INVALID_PROJECT",
+	"E_BAD_ENUM",
+	"E_OUT_OF_RANGE",
+	"E_INPUT_TOO_LARGE",
+	"E_DRIVEN_INPUT",
+	"E_BAD_STATE",
+	"E_INTERNAL"
+];
+var AgentToolError = class extends Error {
+	code;
+	hint;
+	constructor(code, message, hint) {
+		super(message);
+		this.name = "AgentToolError";
+		this.code = code;
+		this.hint = hint;
+	}
+};
+var MAX_TEXT_CHARS = 262144;
+var MAX_COLUMNS = 64;
+var MAX_DATASET_ROWS = 512;
+var HEX_RE = /^[0-9a-fA-F]+$/;
+function bad(code, message, hint) {
+	throw new AgentToolError(code, message, hint);
+}
+var isObject = (value) => typeof value === "object" && value !== null && !Array.isArray(value);
+function argsObject(value) {
+	if (value === void 0 || value === null) return {};
+	if (!isObject(value)) bad("E_BAD_ARGS", "arguments must be a JSON object");
+	return value;
+}
+function objectValue(value, where) {
+	if (!isObject(value)) bad("E_BAD_ARGS", `${where} must be a JSON object`);
+	return value;
+}
+function onlyKeys(value, allowed, where) {
+	for (const key of Object.keys(value)) if (!allowed.includes(key)) bad("E_BAD_ARGS", `${where} has an unknown key: ${key}`);
+}
+function hexText(value, where) {
+	if (typeof value !== "string") bad("E_BAD_ARGS", `${where} must be a string`);
+	const text = value.trim().replace(/^0[xX]/, "");
+	if (text === "") bad("E_EMPTY_INPUT", `${where} is empty`);
+	if (!HEX_RE.test(text)) bad("E_INVALID_HEX", `${where} is not hexadecimal: ${JSON.stringify(value)}`);
+	return text;
+}
+function widthOf(value) {
+	if (value === void 0) return 64;
+	if (typeof value === "number" && WIDTHS.includes(value)) return value;
+	bad("E_BAD_ENUM", `width must be one of: ${WIDTHS.join(", ")}`);
+}
+function binopOf(value, fallback = "xor") {
+	if (value === void 0) return fallback;
+	if (typeof value === "string" && BINOPS.includes(value)) return value;
+	bad("E_BAD_ENUM", `op must be one of: ${BINOPS.join(", ")}`);
+}
+function integerValue(value, where) {
+	if (typeof value !== "number" || !Number.isInteger(value)) bad("E_BAD_ARGS", `${where} must be an integer`);
+	return value;
+}
+function analyzeRegisterData(args) {
+	const input = argsObject(args);
+	onlyKeys(input, ["hex", "width"], "args");
+	const width = widthOf(input.width);
+	const bits = fromHex(hexText(input.hex, "hex"), width);
+	const nibbles = [];
+	for (let j = 0; j < nibCount$1(width); j++) nibbles.push(nibAt$1(bits, width, j));
+	const value = regToBig$1(bits, width);
+	return {
+		width,
+		hex: toHex(bits, width),
+		decimal: value.toString(),
+		nibbles,
+		popcount: popcount(bits),
+		bitLength: value === 0n ? 0 : value.toString(2).length
+	};
+}
+function evaluateLaneData(args) {
+	const input = argsObject(args);
+	onlyKeys(input, [
+		"a",
+		"b",
+		"op",
+		"width"
+	], "args");
+	const width = widthOf(input.width);
+	const op = binopOf(input.op);
+	const aText = hexText(input.a, "a");
+	const bText = input.b === void 0 ? "0" : hexText(input.b, "b");
+	const aBits = fromHex(aText, width);
+	const bBits = fromHex(bText, width);
+	const zBits = computeZ(aBits, bBits, width, op);
+	return {
+		width,
+		op,
+		a: {
+			hex: toHex(aBits, width),
+			popcount: popcount(aBits)
+		},
+		b: {
+			hex: toHex(bBits, width),
+			popcount: popcount(bBits)
+		},
+		z: {
+			hex: toHex(zBits, width),
+			popcount: popcountZ(zBits)
+		},
+		truthCounts: truthCounts(aBits, bBits, width),
+		carry: op === "add" ? carryOrBorrow(aBits, bBits, width, "add") : null,
+		borrow: op === "sub" ? carryOrBorrow(aBits, bBits, width, "sub") : null
+	};
+}
+function compareOperandsData(args) {
+	const input = argsObject(args);
+	onlyKeys(input, [
+		"a",
+		"b",
+		"width"
+	], "args");
+	const width = widthOf(input.width);
+	const aBits = fromHex(hexText(input.a, "a"), width);
+	const bBits = fromHex(hexText(input.b, "b"), width);
+	const results = BINOPS.map((op) => {
+		const zBits = computeZ(aBits, bBits, width, op);
+		return {
+			op,
+			z: toHex(zBits, width),
+			popcount: popcountZ(zBits),
+			carry: op === "add" ? carryOrBorrow(aBits, bBits, width, "add") : null,
+			borrow: op === "sub" ? carryOrBorrow(aBits, bBits, width, "sub") : null
+		};
+	});
+	return {
+		width,
+		a: {
+			hex: toHex(aBits, width),
+			popcount: popcount(aBits)
+		},
+		b: {
+			hex: toHex(bBits, width),
+			popcount: popcount(bBits)
+		},
+		truthCounts: truthCounts(aBits, bBits, width),
+		results
+	};
+}
+function parseDatasetData(args) {
+	const input = argsObject(args);
+	onlyKeys(input, ["text", "maxRows"], "args");
+	if (typeof input.text !== "string") bad("E_BAD_ARGS", "text must be a string");
+	if (input.text.trim() === "") bad("E_EMPTY_INPUT", "text is empty");
+	if (input.text.length > MAX_TEXT_CHARS) bad("E_INPUT_TOO_LARGE", `text is ${input.text.length} characters (cap ${MAX_TEXT_CHARS})`);
+	let maxRows = 64;
+	if (input.maxRows !== void 0) {
+		maxRows = integerValue(input.maxRows, "maxRows");
+		if (maxRows < 1 || maxRows > MAX_DATASET_ROWS) bad("E_OUT_OF_RANGE", `maxRows must be in [1, ${MAX_DATASET_ROWS}]`);
+	}
+	const dataset = parseDataset(input.text);
+	if (!dataset) bad("E_EMPTY_INPUT", "no data rows");
+	if (dataset.cols.length > MAX_COLUMNS) bad("E_INPUT_TOO_LARGE", `${dataset.cols.length} columns (cap ${MAX_COLUMNS})`);
+	return {
+		columns: dataset.cols.map((name, ci) => ({
+			name,
+			mode: columnMode(dataset.rows, ci),
+			widthBits: columnWidth(dataset.rows, ci)
+		})),
+		totalRows: dataset.rows.length,
+		truncated: dataset.rows.length > maxRows,
+		rows: dataset.rows.slice(0, maxRows).map((row) => row.slice())
+	};
+}
+function buildDeeplinkData(args) {
+	const input = argsObject(args);
+	onlyKeys(input, ["project", "base"], "args");
+	if (input.project === void 0) bad("E_BAD_ARGS", "project is required");
+	let link;
+	try {
+		link = buildShareLink(input.project);
+	} catch (error) {
+		if (error instanceof ProjectError) bad("E_INVALID_PROJECT", error.message);
+		throw error;
+	}
+	if (!link.withinBudget) bad("E_INPUT_TOO_LARGE", `share payload is ${link.payloadChars} characters (budget ${SHARE_MAX_CHARS})`, "remove the dataset or use a smaller register width");
+	let url = null;
+	if (input.base !== void 0) {
+		if (typeof input.base !== "string" || input.base === "" || input.base.includes("#")) bad("E_BAD_ARGS", "base must be an absolute URL without a fragment");
+		url = input.base + link.fragment;
+	}
+	return {
+		fragment: link.fragment,
+		payloadChars: link.payloadChars,
+		withinBudget: link.withinBudget,
+		datasetDropped: link.datasetDropped,
+		url
+	};
+}
+var TOOLS = [
+	{
+		name: "manifest",
+		title: "Tool manifest",
+		description: "Return BitWave's capability manifest: tool definitions, argument schemas, deeplink template, UI selectors, error codes, invariants and related tools. Call this first to discover the other tools.",
+		scope: "pure",
+		inputSchema: {
+			type: "object",
+			properties: {},
+			additionalProperties: false
+		},
+		examples: [{
+			args: {},
+			note: "Discover the full toolset."
+		}],
+		run: () => getManifest()
+	},
+	{
+		name: "analyze_register",
+		title: "Analyze a register word",
+		description: "Normalize a hex word at a register width and return the same nibble, decimal, popcount and bit-length values the instrument shows. Overflow truncates high bits; optional 0x prefix accepted.",
+		scope: "pure",
+		inputSchema: {
+			type: "object",
+			properties: {
+				hex: {
+					type: "string",
+					description: "Hexadecimal word; 0x prefix optional."
+				},
+				width: {
+					type: "integer",
+					enum: WIDTHS,
+					description: "Register width in bits (default 64)."
+				}
+			},
+			required: ["hex"],
+			additionalProperties: false
+		},
+		examples: [{
+			args: {
+				hex: "8ADEFEDA85210125",
+				width: 64
+			},
+			note: "A default 64-bit operand."
+		}],
+		run: (args) => analyzeRegisterData(args)
+	},
+	{
+		name: "evaluate_lane",
+		title: "Evaluate one lane",
+		description: "Compute Z = A <op> B for one lane with the instrument's own bitwise/arithmetic engine. Returns A, B, Z, truth-table counts (00,01,10,11) and carry/borrow for ADD/SUB.",
+		scope: "pure",
+		inputSchema: {
+			type: "object",
+			properties: {
+				a: {
+					type: "string",
+					description: "Operand A hex."
+				},
+				b: {
+					type: "string",
+					description: "Operand B hex (default 0)."
+				},
+				op: {
+					type: "string",
+					enum: BINOPS,
+					description: "Binary operator (default xor)."
+				},
+				width: {
+					type: "integer",
+					enum: WIDTHS,
+					description: "Register width in bits (default 64)."
+				}
+			},
+			required: ["a"],
+			additionalProperties: false
+		},
+		examples: [{
+			args: {
+				a: "8ADEFEDA85210125",
+				b: "FFFFFFFF00000000",
+				op: "xor"
+			},
+			note: "The DESIGN §11 A·B vector."
+		}],
+		run: (args) => evaluateLaneData(args)
+	},
+	{
+		name: "compare_operands",
+		title: "Compare all operators",
+		description: "Evaluate the same A/B pair under all five operators (and, or, xor, add, sub) in canonical order, with Z, popcounts, truth counts and carry/borrow. Use for teaching or choosing an operator.",
+		scope: "pure",
+		inputSchema: {
+			type: "object",
+			properties: {
+				a: {
+					type: "string",
+					description: "Operand A hex."
+				},
+				b: {
+					type: "string",
+					description: "Operand B hex."
+				},
+				width: {
+					type: "integer",
+					enum: WIDTHS,
+					description: "Register width in bits (default 64)."
+				}
+			},
+			required: ["a", "b"],
+			additionalProperties: false
+		},
+		examples: [{
+			args: {
+				a: "8ADEFEDA85210125",
+				b: "FFFFFFFF00000000"
+			},
+			note: "All five operators on the §11 pair."
+		}],
+		run: (args) => compareOperandsData(args)
+	},
+	{
+		name: "parse_dataset",
+		title: "Parse a CSV/TSV dataset",
+		description: "Parse delimited text with the instrument's import rules: delimiter sniffed from the header, header detected when the first row is not token-shaped, per-column bin/hex typing and token width. Returns columns, total rows and the first maxRows rows.",
+		scope: "pure",
+		inputSchema: {
+			type: "object",
+			properties: {
+				text: {
+					type: "string",
+					description: "CSV or TSV text."
+				},
+				maxRows: {
+					type: "integer",
+					minimum: 1,
+					maximum: MAX_DATASET_ROWS,
+					description: "Rows to return (default 64)."
+				}
+			},
+			required: ["text"],
+			additionalProperties: false
+		},
+		examples: [{
+			args: {
+				text: "Hex 1,Hex 2\n00000001,00000002",
+				maxRows: 2
+			},
+			note: "Header plus two token rows."
+		}],
+		run: (args) => parseDatasetData(args)
+	},
+	{
+		name: "build_deeplink",
+		title: "Build a canonical deeplink",
+		description: "Validate a .bitwave schema-2 document and build its canonical share fragment (#bw=). Canonical links omit savedAt, so equal state gives equal links; the dataset is dropped if the payload would exceed the 2000-character budget.",
+		scope: "pure",
+		inputSchema: {
+			type: "object",
+			properties: {
+				project: {
+					type: "object",
+					description: "A .bitwave schema-2 document."
+				},
+				base: {
+					type: "string",
+					description: "Absolute URL without a fragment; omit to return only the fragment."
+				}
+			},
+			required: ["project"],
+			additionalProperties: false
+		},
+		examples: [{
+			args: {
+				project: exampleProjectDoc(),
+				base: "http://localhost:8000/"
+			},
+			note: "8-bit boot document."
+		}],
+		run: (args) => buildDeeplinkData(args)
+	}
+];
+var TOOL_SUMMARIES = TOOLS.map(({ name, title, description, scope, inputSchema, examples }) => ({
+	name,
+	title,
+	description,
+	scope,
+	inputSchema,
+	examples
+}));
+function success(tool, data, deeplink) {
+	return {
+		ok: true,
+		schemaVersion: 1,
+		tool,
+		data,
+		deeplink,
+		warnings: []
+	};
+}
+function failure(tool, error) {
+	const known = error instanceof AgentToolError;
+	const payload = {
+		code: known ? error.code : "E_INTERNAL",
+		message: known ? error.message : "internal error"
+	};
+	if (known && error.hint !== void 0) payload.hint = error.hint;
+	return {
+		ok: false,
+		schemaVersion: 1,
+		tool,
+		error: payload,
+		warnings: []
+	};
+}
+function callTool(name, args = void 0) {
+	const toolName = typeof name === "string" ? name : "";
+	const tool = TOOLS.find((candidate) => candidate.name === toolName);
+	if (!tool) return failure(toolName, new AgentToolError("E_UNKNOWN_TOOL", `unknown tool: ${JSON.stringify(name)}`, "call manifest to list tools"));
+	if (args !== void 0 && args !== null && !isObject(args)) return failure(tool.name, new AgentToolError("E_BAD_ARGS", "arguments must be a JSON object"));
+	try {
+		const data = tool.run(args);
+		let deeplink = null;
+		if (tool.name === "build_deeplink" && isObject(data)) deeplink = typeof data.url === "string" ? data.url : typeof data.fragment === "string" ? data.fragment : null;
+		return success(tool.name, data, deeplink);
+	} catch (error) {
+		return failure(tool.name, error);
+	}
+}
+function getManifest() {
+	return {
+		id: TOOL_ID,
+		title: TOOL_TITLE,
+		version: TOOLSET_VERSION,
+		schemaVersion: 1,
+		description: "BitWave renders a bit register as a wavetable. Compute Z = A op B for any lane, compare operators, parse CSV/TSV datasets and build canonical #bw= deeplinks from one shared, deterministic core.",
+		urls: {
+			app: "bitwave-v2.html",
+			manifest: "agent/manifest.json",
+			agents: "AGENTS.md",
+			interface: "docs/AGENT-INTERFACE.md"
+		},
+		deeplink: {
+			template: "bitwave-v2.html#bw={payload}",
+			prefix: "#bw=",
+			budgetChars: SHARE_MAX_CHARS,
+			defaults: {
+				lane: 1,
+				view: "2d",
+				width: 64
+			}
+		},
+		ui: {
+			bridge: "window.bitwave",
+			ready: "body[data-agent-ready='true']",
+			stateSelector: "#bitwave-state",
+			panelSelector: "[data-agent-panel]",
+			tabSelector: "[data-agent-tab]",
+			laneSelector: "[data-agent-lane]",
+			frameSelector: "[data-agent-frame]"
+		},
+		tools: TOOL_SUMMARIES.map((tool) => ({
+			...tool,
+			examples: tool.examples.map((example) => ({
+				args: example.args,
+				note: example.note
+			}))
+		})),
+		errorCodes: [...ERROR_CODES],
+		invariants: [
+			"src/core is the only implementation of the maths/data",
+			"tool output is deterministic; no timestamps or randomness",
+			"pure tools never mutate the UI",
+			"the URL is the UI state and reload reproduces the view",
+			"default rendered instrument is unchanged by the agent layer"
+		],
+		relatedTools: []
+	};
+}
+var PATCH_KEYS = [
+	"lane",
+	"frame",
+	"view",
+	"width",
+	"register",
+	"binop",
+	"lfo",
+	"dataset",
+	"reset"
+];
+/** Validate a bridge patch without applying it; never throws. */
+function normalizeAgentPatch(value) {
+	try {
+		const input = argsObject(value);
+		onlyKeys(input, PATCH_KEYS, "patch");
+		const patch = {};
+		if (input.lane !== void 0) {
+			const lane = laneKeyFromNumber(input.lane);
+			if (!lane) bad("E_BAD_ENUM", "lane must be 1, 2 or 3");
+			patch.lane = Number(lane);
+		}
+		if (input.frame !== void 0) {
+			const frame = frameRefFromName(input.frame);
+			if (!frame) bad("E_BAD_ENUM", "frame must be A–F or Z1–Z3");
+			patch.frame = frame.name;
+		}
+		if (input.view !== void 0) {
+			if (typeof input.view !== "string" || !VIEW_MODES.includes(input.view)) bad("E_BAD_ENUM", `view must be one of: ${VIEW_MODES.join(", ")}`);
+			patch.view = input.view;
+		}
+		if (input.width !== void 0) patch.width = widthOf(input.width);
+		if (input.register !== void 0) {
+			const register = objectValue(input.register, "register");
+			onlyKeys(register, ["frame", "hex"], "register");
+			const frame = frameRefFromName(register.frame);
+			if (!frame) bad("E_BAD_ENUM", "register.frame must be an operand frame (A–F)");
+			if (frame.frame === "z") bad("E_BAD_ENUM", "Z is derived and cannot be written; choose an operand frame");
+			patch.register = {
+				frame: frame.name,
+				hex: hexText(register.hex, "register.hex")
+			};
+		}
+		if (input.binop !== void 0) patch.binop = binopOf(input.binop, "xor");
+		if (input.lfo !== void 0) {
+			const lfo = objectValue(input.lfo, "lfo");
+			onlyKeys(lfo, [
+				"on",
+				"mode",
+				"rate"
+			], "lfo");
+			const patchLfo = {};
+			if (lfo.on !== void 0) {
+				if (typeof lfo.on !== "boolean") bad("E_BAD_ARGS", "lfo.on must be a boolean");
+				patchLfo.on = lfo.on;
+			}
+			if (lfo.mode !== void 0) {
+				if (typeof lfo.mode !== "string" || !LFO_MODES.includes(lfo.mode)) bad("E_BAD_ENUM", `lfo.mode must be one of: ${LFO_MODES.join(", ")}`);
+				patchLfo.mode = lfo.mode;
+			}
+			if (lfo.rate !== void 0) {
+				if (typeof lfo.rate !== "number" || !LFO_RATES.includes(lfo.rate)) bad("E_BAD_ENUM", `lfo.rate must be one of: ${LFO_RATES.join(", ")}`);
+				patchLfo.rate = lfo.rate;
+			}
+			if (Object.keys(patchLfo).length === 0) bad("E_BAD_ARGS", "lfo patch has no keys");
+			patch.lfo = patchLfo;
+		}
+		if (input.dataset !== void 0) {
+			const dataset = objectValue(input.dataset, "dataset");
+			onlyKeys(dataset, ["csv", "index"], "dataset");
+			const patchDataset = {};
+			if (dataset.csv !== void 0) {
+				if (typeof dataset.csv !== "string") bad("E_BAD_ARGS", "dataset.csv must be a string");
+				if (dataset.csv.trim() === "") bad("E_EMPTY_INPUT", "dataset.csv is empty");
+				if (dataset.csv.length > MAX_TEXT_CHARS) bad("E_INPUT_TOO_LARGE", "dataset.csv is too large");
+				patchDataset.csv = dataset.csv;
+			}
+			if (dataset.index !== void 0) {
+				const index = integerValue(dataset.index, "dataset.index");
+				if (index < 0) bad("E_OUT_OF_RANGE", "dataset.index must be non-negative");
+				patchDataset.index = index;
+			}
+			if (Object.keys(patchDataset).length === 0) bad("E_BAD_ARGS", "dataset patch has no keys");
+			patch.dataset = patchDataset;
+		}
+		if (input.reset !== void 0) {
+			if (input.reset !== true) bad("E_BAD_ARGS", "reset must be true");
+			patch.reset = true;
+		}
+		if (Object.keys(patch).length === 0) bad("E_BAD_ARGS", "patch is empty");
+		return {
+			ok: true,
+			patch
+		};
+	} catch (error) {
+		if (error instanceof AgentToolError) return {
+			ok: false,
+			error: {
+				code: error.code,
+				message: error.message,
+				hint: error.hint
+			}
+		};
+		return {
+			ok: false,
+			error: {
+				code: "E_INTERNAL",
+				message: "internal error validating patch"
+			}
+		};
+	}
+}
+// src/ui/agent-panel.js
+/**
+* Agent tab of the help panel — the in-app human-readable agent surface.
+*
+* Additive by design: the tab lives inside the existing `?` help panel (hidden
+* by default), so the default rendered instrument is unchanged. It shows the
+* bridge status, copy-prompt/deeplink/state buttons, the live state JSON and
+* the tool catalogue read straight from `src/core/agent-tools.ts` — the same
+* registry the CLI and MCP server use, never a re-implementation.
+*/
+var COPY_FEEDBACK_MS = 2400;
+var PATHS = [
+	["bridge", "window.bitwave"],
+	["state", "#bitwave-state"],
+	["manifest", "agent/manifest.json"],
+	["contract", "docs/AGENT-INTERFACE.md"],
+	["onboarding", "AGENTS.md"],
+	["tools", "agent/cli.mjs · agent/mcp-server.mjs"]
+];
+/** Clipboard write with a selection fallback for `file://` / denied contexts. */
+async function copyText(text) {
+	try {
+		if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
+			await navigator.clipboard.writeText(text);
+			return true;
+		}
+	} catch (_) {}
+	try {
+		const area = document.createElement("textarea");
+		area.value = text;
+		area.setAttribute("readonly", "");
+		area.setAttribute("aria-hidden", "true");
+		area.style.position = "fixed";
+		area.style.top = "-1000px";
+		area.style.opacity = "0";
+		document.body.appendChild(area);
+		area.select();
+		const ok = typeof document.execCommand === "function" && document.execCommand("copy");
+		area.remove();
+		return Boolean(ok);
+	} catch (_) {
+		return false;
+	}
+}
+function createAgentPanel({ root }) {
+	if (!root) return { refresh() {} };
+	const statusEl = root.querySelector("[data-agent-status]");
+	const versionEl = root.querySelector("[data-agent-version]");
+	const stateEl = root.querySelector("[data-agent-state-json]");
+	const toolsEl = root.querySelector("[data-agent-tools]");
+	const copyStatusEl = root.querySelector("[data-agent-copy-status]");
+	const copyButtons = [...root.querySelectorAll("[data-agent-copy]")];
+	let feedbackTimer = 0;
+	const bridge = () => typeof window !== "undefined" ? window.bitwave : void 0;
+	function buildPaths() {
+		const list = root.querySelector("[data-agent-paths]");
+		if (!list) return;
+		list.textContent = "";
+		for (const [label, value] of PATHS) {
+			const dt = document.createElement("dt");
+			dt.textContent = label;
+			const dd = document.createElement("dd");
+			const code = document.createElement("code");
+			code.textContent = value;
+			dd.appendChild(code);
+			list.append(dt, dd);
+		}
+	}
+	function buildToolList() {
+		if (!toolsEl) return;
+		toolsEl.textContent = "";
+		for (const tool of TOOLS) {
+			const item = document.createElement("li");
+			item.className = "agent-tool";
+			const head = document.createElement("div");
+			head.className = "agent-tool-head";
+			const name = document.createElement("code");
+			name.className = "agent-tool-name";
+			name.textContent = tool.name;
+			const title = document.createElement("span");
+			title.className = "agent-tool-title";
+			title.textContent = tool.title;
+			head.append(name, title);
+			const description = document.createElement("p");
+			description.className = "agent-tool-desc";
+			description.textContent = tool.description;
+			const example = tool.examples && tool.examples[0];
+			const call = document.createElement("code");
+			call.className = "agent-call";
+			call.textContent = example ? `window.bitwave.call(${JSON.stringify(tool.name)}, ${JSON.stringify(example.args)})` : `window.bitwave.call(${JSON.stringify(tool.name)}, {})`;
+			item.append(head, description, call);
+			toolsEl.appendChild(item);
+		}
+	}
+	function rawStateText() {
+		const node = document.getElementById("bitwave-state");
+		if (node && node.textContent) return node.textContent;
+		const api = bridge();
+		return api && typeof api.getState === "function" ? JSON.stringify(api.getState()) : "";
+	}
+	function promptText() {
+		const api = bridge();
+		return [
+			`BitWave agent layer (schema 1, toolset ${api ? api.version : TOOLSET_VERSION})`,
+			"Read AGENTS.md, then the normative contract docs/AGENT-INTERFACE.md.",
+			"Read state from window.bitwave.getState() or the hidden #bitwave-state node;",
+			"pure tools are read-only and changes go only through the bridge setters.",
+			`Tools: ${TOOLS.map((tool) => tool.name).join(", ")}.`,
+			"Try: window.bitwave.getState(); window.bitwave.call(\"manifest\", {});",
+			"Deeplink: window.bitwave.getDeeplink(); setters: setLane, setFrame, setView,",
+			"setWidth, setRegister, setBinop, setLfo, setDataset, stepDataset, reset."
+		].join("\n");
+	}
+	function flashCopyStatus(text) {
+		if (!copyStatusEl) return;
+		copyStatusEl.textContent = text;
+		clearTimeout(feedbackTimer);
+		feedbackTimer = setTimeout(() => {
+			copyStatusEl.textContent = "";
+		}, COPY_FEEDBACK_MS);
+	}
+	function stateJsonText() {
+		const api = bridge();
+		if (!api) return "";
+		try {
+			return JSON.stringify(api.getState(), null, 2);
+		} catch (_) {
+			return "";
+		}
+	}
+	function refresh() {
+		const api = bridge();
+		const active = Boolean(api && api.ready === true);
+		if (statusEl) {
+			statusEl.setAttribute("data-agent-status", active ? "bridge-active" : "bridge-unavailable");
+			statusEl.textContent = active ? "bridge active" : "bridge unavailable";
+		}
+		if (versionEl) versionEl.textContent = active ? `schema ${api.schemaVersion} · bridge v${api.version}` : "instrument running without the bridge";
+		if (stateEl) stateEl.textContent = active ? stateJsonText() : "(bridge not installed)";
+		for (const button of copyButtons) {
+			button.disabled = !active;
+			button.setAttribute("aria-disabled", String(!active));
+		}
+	}
+	async function handleCopy(button) {
+		const kind = button.dataset.agentCopy;
+		const api = bridge();
+		const text = kind === "prompt" ? promptText() : kind === "deeplink" ? api ? api.getDeeplink() : "" : rawStateText();
+		if (!text) {
+			flashCopyStatus("nothing to copy — bridge not installed");
+			return;
+		}
+		if (await copyText(text)) flashCopyStatus(`${kind} copied`);
+		else if (stateEl) {
+			stateEl.focus();
+			flashCopyStatus("copy unavailable here — select the text and copy it");
+		} else flashCopyStatus("copy unavailable here");
+	}
+	buildPaths();
+	buildToolList();
+	for (const button of copyButtons) button.addEventListener("click", () => handleCopy(button));
+	window.addEventListener("bitwave:ready", refresh);
+	window.addEventListener("bitwave:change", () => {
+		if (root.hidden) return;
+		if (stateEl) stateEl.textContent = stateJsonText();
+	});
+	refresh();
+	return { refresh };
+}
+// src/core/agent-state.ts
+/**
+* UI-state builder shared by the browser bridge and the headless transports.
+*
+* Pure: takes a `.bitwave` schema-2 document plus the few transient UI values and
+* returns the exact object `window.bitwave.getState()` and `#bitwave-state`
+* expose. Derived values are recomputed from the shared core, never scraped from
+* the DOM.
+*/
+function routeInto(doc, lane, frame) {
+	const to = `${lane}.${frame}`;
+	for (const route of doc.routes) {
+		if (route.to !== to) continue;
+		const [fromLane, fromFrame] = route.from.split(".");
+		if (fromFrame === "a" || fromFrame === "b" || fromFrame === "z") return {
+			fromLane,
+			fromFrame
+		};
+	}
+	return null;
+}
+function sourceFor(doc, lane, frame, route) {
+	const laneDoc = doc.lanes[lane];
+	const column = frame === "a" ? laneDoc.colA : laneDoc.colB;
+	if (column >= 0 && doc.dataset && doc.dataset.cols[column] !== void 0) return {
+		kind: "data",
+		column: doc.dataset.cols[column],
+		index: column
+	};
+	if (route) return {
+		kind: "frame",
+		source: route.fromLane === lane ? "z⁻¹" : "1:1",
+		lane: Number(route.fromLane),
+		frame: frameName(route.fromLane, route.fromFrame)
+	};
+	return { kind: "none" };
+}
+function buildUiState(doc, options = {}) {
+	const width = doc.N;
+	const lanes = {};
+	for (const lane of [
+		"1",
+		"2",
+		"3"
+	]) {
+		const laneDoc = doc.lanes[lane];
+		const names = FRAME_NAMES[lane];
+		const aBits = fromHex(laneDoc.a, width);
+		const bBits = fromHex(laneDoc.b, width);
+		const zBits = computeZ(aBits, bBits, width, laneDoc.binop);
+		const frameVis = laneDoc.frameVis ?? {
+			a: true,
+			b: true,
+			z: true
+		};
+		const visibility = {
+			[names.a]: frameVis.a,
+			[names.b]: frameVis.b,
+			[names.z]: frameVis.z
+		};
+		const routeA = routeInto(doc, lane, "a");
+		const routeB = routeInto(doc, lane, "b");
+		const sources = {
+			[names.a]: sourceFor(doc, lane, "a", routeA),
+			[names.b]: sourceFor(doc, lane, "b", routeB)
+		};
+		const driven = {
+			[names.a]: routeA !== null,
+			[names.b]: routeB !== null
+		};
+		lanes[lane] = {
+			lane: Number(lane),
+			frames: {
+				[names.a]: laneDoc.a,
+				[names.b]: laneDoc.b,
+				[names.z]: toHex(zBits, width)
+			},
+			binop: laneDoc.binop,
+			focus: frameName(lane, laneDoc.focus ?? "a"),
+			edit: frameName(lane, laneDoc.edit ?? "a"),
+			lfoB: laneDoc.lfoB,
+			showB: laneDoc.showB,
+			seededB: laneDoc.seededB,
+			visibility,
+			sources,
+			driven,
+			derived: { [names.z]: {
+				hex: toHex(zBits, width),
+				popcount: popcountZ(zBits),
+				truthCounts: truthCounts(aBits, bBits, width)
+			} }
+		};
+	}
+	const focusedLane = doc.view.lane;
+	const focusedFrame = doc.lanes[focusedLane].focus ?? "a";
+	const focusedState = lanes[focusedLane];
+	const focusedOperand = focusedFrame === "z" ? null : focusedFrame;
+	const enabled = focusedOperand !== null && !focusedState.driven[FRAME_NAMES[focusedLane][focusedOperand]];
+	const mode = doc.view.split3d ? "split" : doc.view.view3d ? "3d" : "2d";
+	let dataset = null;
+	if (doc.dataset && doc.dataset.rows.length > 0) {
+		const index = Number.isInteger(doc.dataset.index) ? Math.max(0, Math.min(doc.dataset.rows.length - 1, doc.dataset.index)) : 0;
+		dataset = {
+			columns: doc.dataset.cols.slice(),
+			rows: doc.dataset.rows.length,
+			index,
+			row: doc.dataset.rows[index].slice()
+		};
+	}
+	return {
+		schemaVersion: 1,
+		ready: options.ready !== false,
+		width,
+		lane: Number(focusedLane),
+		frame: frameName(focusedLane, focusedFrame),
+		view: {
+			mode,
+			splitPair: [Number(doc.view.splitPair[0]), Number(doc.view.splitPair[1])],
+			activePane: doc.view.activePane === 1 ? 1 : 0
+		},
+		lanes,
+		lfo: {
+			on: options.lfoOn === true,
+			mode: doc.view.lfoMode ?? "rotcw",
+			rate: doc.view.lfoRate ?? 4
+		},
+		dataset,
+		editing: {
+			copyArmed: options.copyArmed === true,
+			enabled
+		},
+		deeplink: options.deeplink ?? "",
+		bridge: {
+			schemaVersion: 1,
+			version: TOOLSET_VERSION
+		}
+	};
+}
 // src/state/project-bridge.ts
 /**
 * App <-> `.bitwave` bridge (F5).
@@ -3237,6 +4442,453 @@ function applyProject(raw) {
 		dataset: Boolean(dataset)
 	};
 }
+// src/agent/bridge.js
+/**
+* window.bitwave — the command bridge (docs/AGENT-INTERFACE.md §7).
+*
+* Installed exactly once, after the instrument has booted. Everything it reports
+* comes from the shared core (`buildUiState` over `captureProject`); every write
+* goes through the instrument's own commands inside one store transaction, never
+* by writing DOM state. The legacy read-only `window.BitWave` surface is not
+* touched.
+*
+* Event semantics:
+*   - `bitwave:ready` + exactly one `bitwave:change` on install;
+*   - one `bitwave:change` per genuine (state-changing) store transaction;
+*   - a setter that changes nothing emits nothing;
+*   - the debounced address-bar mirror (`bitwave:urlsettled` from io/share-url)
+*     refreshes the hidden state node silently — a URL write is not a UI change.
+*/
+var STATE_NODE_ID = "bitwave-state";
+var READY_ATTR = "agent-ready";
+var stringify = (value) => JSON.stringify(value);
+/** The pure tool definitions, without the internal `run` closures. */
+function toolDefinitions() {
+	return TOOLS.map(({ name, title, description, scope, inputSchema, examples }) => ({
+		name,
+		title,
+		description,
+		scope,
+		inputSchema,
+		examples
+	}));
+}
+function createAgentBridge(deps) {
+	const { store, share, selectSlot, selectFrame, setView: applyView, resizeRegister, setSize, chooseBinop, lfoStart, lfoStop, syncLfoUi, loadCSV, applyExample, resetInstrument, syncEditUi } = deps;
+	/** Subscriber set; each listener is wrapped so one thrower cannot break others. */
+	const subscribers = /* @__PURE__ */ new Set();
+	let installed = null;
+	let lastKey = null;
+	let inTransaction = false;
+	function currentState() {
+		return buildUiState(captureProject(), {
+			deeplink: location.href,
+			lfoOn: S.lfo.on,
+			copyArmed: S.copyArmed,
+			enabled: focusEditable() && !isFocusDriven()
+		});
+	}
+	function writeStateNode(state) {
+		let node = document.getElementById(STATE_NODE_ID);
+		if (!node) {
+			node = document.createElement("pre");
+			node.id = STATE_NODE_ID;
+			node.hidden = true;
+			document.body.appendChild(node);
+		}
+		node.setAttribute("data-schema-version", String(1));
+		node.textContent = stringify(state);
+	}
+	function dispatch(name, detail) {
+		try {
+			window.dispatchEvent(new CustomEvent(name, { detail }));
+		} catch (_) {}
+	}
+	function emitChange(state) {
+		dispatch("bitwave:change", state);
+		for (const listener of [...subscribers]) try {
+			listener(state);
+		} catch (_) {}
+	}
+	/**
+	* Recompute the state after a store transaction (or a URL mirror). `silent`
+	* updates the hidden node without emitting a change event.
+	*/
+	function refresh(silent = false) {
+		const state = currentState();
+		const key = stringify(state);
+		if (key === lastKey) return state;
+		lastKey = key;
+		writeStateNode(state);
+		if (!silent) emitChange(state);
+		return state;
+	}
+	function failure(code, message, hint) {
+		return {
+			ok: false,
+			error: hint === void 0 ? {
+				code,
+				message
+			} : {
+				code,
+				message,
+				hint
+			},
+			state: currentState()
+		};
+	}
+	/**
+	* Bridge-only checks that need live routes/dataset (the pure patch validator
+	* cannot know them). Runs before any mutation.
+	*/
+	function preflight(patch) {
+		if (patch.register) {
+			const ref = frameRefFromName(patch.register.frame);
+			if (!ref) return {
+				code: "E_BAD_ENUM",
+				message: "register.frame must be an operand frame (A–F)"
+			};
+			if (ref.frame === "z") return {
+				code: "E_BAD_ENUM",
+				message: "Z is derived and cannot be written; choose an operand frame"
+			};
+			const sl = S.slots[ref.slotKey];
+			if (isInputDriven(sl, ref.frame)) {
+				const driver = driverName(sl, ref.frame) || "a route";
+				return {
+					code: "E_DRIVEN_INPUT",
+					message: `${ref.name} is driven by ${driver}; unplug it in sources`,
+					hint: "set the operand's source to none (or bind a different one) and retry"
+				};
+			}
+		}
+		if (patch.dataset) {
+			const dataset = patch.dataset;
+			if (dataset.csv !== void 0) {
+				const parsed = parseDataset(dataset.csv);
+				if (!parsed) return {
+					code: "E_BAD_STATE",
+					message: "dataset.csv has no data rows"
+				};
+				let usable = false;
+				for (let ci = 0; ci < parsed.cols.length && !usable; ci++) if (columnWidth(parsed.rows, ci) > 0) usable = true;
+				if (!usable) return {
+					code: "E_BAD_STATE",
+					message: "dataset.csv has no numeric columns (expects hex or binary tokens)"
+				};
+				if (dataset.index !== void 0 && dataset.index >= parsed.rows.length) return {
+					code: "E_OUT_OF_RANGE",
+					message: `dataset.index ${dataset.index} is outside 0..${parsed.rows.length - 1}`
+				};
+			} else if (dataset.index !== void 0) {
+				if (!DEMO.rows.length) return {
+					code: "E_BAD_STATE",
+					message: "dataset.index requires a loaded dataset",
+					hint: "send dataset.csv first"
+				};
+				if (dataset.index >= DEMO.rows.length) return {
+					code: "E_OUT_OF_RANGE",
+					message: `dataset.index ${dataset.index} is outside 0..${DEMO.rows.length - 1}`
+				};
+			}
+		}
+		return null;
+	}
+	function applyRegister(register) {
+		const ref = frameRefFromName(register.frame);
+		if (!ref) return;
+		const sl = S.slots[ref.slotKey];
+		const reg = regOf(ref.frame, sl);
+		lfoStop();
+		setHexWord(reg, register.hex);
+		syncTarget(reg, true);
+		evaluate(true);
+		renderStrip();
+		updateReadouts();
+		if (syncEditUi) syncEditUi();
+	}
+	function applyLfo(lfo) {
+		if (lfo.on !== void 0) {
+			if (lfo.on && !S.lfo.on) lfoStart();
+			else if (lfo.on === false && S.lfo.on) lfoStop();
+		}
+		if (lfo.mode !== void 0) store.patch(() => {
+			S.lfo.mode = lfo.mode;
+			if (S.lfo.on) S.lfo.t = 0;
+		});
+		if (lfo.rate !== void 0) store.patch(() => {
+			S.lfo.rate = lfo.rate;
+			S.lfoAcc = 0;
+		});
+		if (syncLfoUi) syncLfoUi();
+		if (syncEditUi) syncEditUi();
+	}
+	function applyDataset(dataset) {
+		if (dataset.csv !== void 0) loadCSV(dataset.csv);
+		if (dataset.index !== void 0) applyExample(dataset.index);
+		if (syncEditUi) syncEditUi();
+	}
+	/** Apply a validated patch in the instrument's canonical key order. */
+	function applyNormalized(patch) {
+		if (patch.reset) resetInstrument();
+		if (patch.lane !== void 0) selectSlot(SLOT_OF_LANE[laneKeyFromNumber(patch.lane)]);
+		if (patch.frame !== void 0) {
+			const ref = frameRefFromName(patch.frame);
+			if (ref) selectFrame(ref.slotKey, ref.frame);
+		}
+		if (patch.view !== void 0) applyView(patch.view);
+		if (patch.width !== void 0) {
+			resizeRegister(patch.width);
+			if (setSize) setSize(SIZES$1.indexOf(patch.width));
+		}
+		if (patch.register) applyRegister(patch.register);
+		if (patch.binop !== void 0) chooseBinop(patch.binop, {
+			force: true,
+			focus: false
+		});
+		if (patch.lfo) applyLfo(patch.lfo);
+		if (patch.dataset) applyDataset(patch.dataset);
+	}
+	/** One transaction; the address bar is mirrored in the same pass when it changed. */
+	function runTransaction(mutate) {
+		const before = stringify(currentState());
+		inTransaction = true;
+		try {
+			store.patch(() => {
+				mutate();
+				if (stringify(currentState()) !== before) try {
+					share.update();
+				} catch (_) {}
+			});
+		} finally {
+			inTransaction = false;
+		}
+	}
+	function setState(patch) {
+		const normalized = normalizeAgentPatch(patch);
+		if (!normalized.ok) return {
+			ok: false,
+			error: normalized.error,
+			state: currentState()
+		};
+		const problem = preflight(normalized.patch);
+		if (problem) return {
+			ok: false,
+			error: problem,
+			state: currentState()
+		};
+		try {
+			runTransaction(() => applyNormalized(normalized.patch));
+		} catch (_) {
+			return failure("E_INTERNAL", "internal error applying the patch");
+		}
+		return {
+			ok: true,
+			state: currentState(),
+			warnings: []
+		};
+	}
+	function stepDataset(delta) {
+		if (typeof delta !== "number" || !Number.isInteger(delta)) return failure("E_BAD_ARGS", "stepDataset(delta) expects an integer");
+		if (!DEMO.rows.length) return failure("E_BAD_STATE", "no dataset loaded", "send dataset.csv first");
+		try {
+			runTransaction(() => applyExample(DEMO.i + delta));
+		} catch (_) {
+			return failure("E_INTERNAL", "internal error stepping the dataset");
+		}
+		return {
+			ok: true,
+			state: currentState(),
+			warnings: []
+		};
+	}
+	const setLane = (lane) => setState({ lane });
+	const setFrame = (frame) => setState({ frame });
+	const setView = (view) => setState({ view });
+	const setWidth = (width) => setState({ width });
+	const setRegister = (frame, hex) => setState({ register: {
+		frame,
+		hex
+	} });
+	const setBinop = (binop) => setState({ binop });
+	const setLfo = (lfo) => setState({ lfo });
+	const setDataset = (dataset) => setState({ dataset });
+	const reset = () => setState({ reset: true });
+	function getDeeplink() {
+		try {
+			share.update();
+		} catch (_) {}
+		return location.href;
+	}
+	function subscribe(fn) {
+		if (typeof fn !== "function") return () => {};
+		let active = true;
+		const listener = (state) => {
+			if (!active) return;
+			try {
+				fn(state);
+			} catch (_) {}
+		};
+		subscribers.add(listener);
+		try {
+			fn(currentState());
+		} catch (_) {}
+		return () => {
+			if (!active) return;
+			active = false;
+			subscribers.delete(listener);
+		};
+	}
+	function install() {
+		if (installed) return installed;
+		if (Object.prototype.hasOwnProperty.call(window, "bitwave")) {
+			installed = window.bitwave;
+			return installed;
+		}
+		const api = Object.freeze({
+			schemaVersion: 1,
+			version: TOOLSET_VERSION,
+			ready: true,
+			getState: currentState,
+			getManifest,
+			tools: toolDefinitions,
+			call: (name, args) => callTool(name, args),
+			getDeeplink,
+			setState,
+			setLane,
+			setFrame,
+			setView,
+			setWidth,
+			setRegister,
+			setBinop,
+			setLfo,
+			setDataset,
+			stepDataset,
+			reset,
+			subscribe
+		});
+		Object.defineProperty(window, "bitwave", {
+			value: api,
+			enumerable: true
+		});
+		installed = api;
+		store.subscribe(() => {
+			if (installed) refresh(false);
+		});
+		window.addEventListener("bitwave:urlsettled", () => {
+			if (installed && !inTransaction) refresh(true);
+		});
+		const first = currentState();
+		lastKey = stringify(first);
+		writeStateNode(first);
+		document.body.setAttribute(`data-${READY_ATTR}`, "true");
+		dispatch("bitwave:ready", first);
+		emitChange(first);
+		return api;
+	}
+	return { install };
+}
+// src/ui/project-menu.js
+/**
+* Project menu (F5) — save, open and reset as one explicit menu.
+*
+* Same interaction contract as the copy menu: opening moves focus into the
+* `role="menu"`, arrows/Home/End move, Enter activates, Escape or an outside
+* click closes and returns focus, and the button reports `aria-expanded`.
+*/
+function createProjectMenu(deps) {
+	const { button, items } = deps;
+	const menu = document.createElement("div");
+	menu.className = "project-menu";
+	menu.hidden = true;
+	menu.setAttribute("role", "menu");
+	menu.setAttribute("aria-label", "project document");
+	const buttons = items.map((item) => {
+		const el = document.createElement("button");
+		el.type = "button";
+		el.className = "op";
+		el.setAttribute("role", "menuitem");
+		el.setAttribute("tabindex", "-1");
+		el.textContent = item.label;
+		el.title = item.title || item.label;
+		el.addEventListener("click", () => {
+			close(false);
+			item.onSelect();
+		});
+		menu.appendChild(el);
+		return el;
+	});
+	document.body.appendChild(menu);
+	let open = false;
+	function position() {
+		menu.hidden = false;
+		const rect = button.getBoundingClientRect();
+		const width = menu.offsetWidth;
+		const height = menu.offsetHeight;
+		const left = Math.min(Math.max(8, rect.left), window.innerWidth - width - 8);
+		let top = rect.bottom + 4;
+		if (top + height > window.innerHeight - 8) top = Math.max(8, rect.top - height - 4);
+		menu.style.left = `${left}px`;
+		menu.style.top = `${top}px`;
+	}
+	function focusItem(index) {
+		const n = buttons.length;
+		buttons[(index % n + n) % n].focus();
+	}
+	function openMenu() {
+		if (open) return;
+		open = true;
+		position();
+		button.setAttribute("aria-expanded", "true");
+		button.classList.add("on");
+		focusItem(0);
+		document.addEventListener("pointerdown", onOutside, true);
+		window.addEventListener("resize", onResize);
+	}
+	function close(refocus = true) {
+		if (!open) return;
+		open = false;
+		menu.hidden = true;
+		button.setAttribute("aria-expanded", "false");
+		button.classList.remove("on");
+		document.removeEventListener("pointerdown", onOutside, true);
+		window.removeEventListener("resize", onResize);
+		if (refocus) button.focus();
+	}
+	function onOutside(event) {
+		if (event.target === button || menu.contains(event.target)) return;
+		close(false);
+	}
+	function onResize() {
+		close(false);
+	}
+	menu.addEventListener("keydown", (event) => {
+		const index = buttons.indexOf(document.activeElement);
+		if (event.key === "ArrowDown") {
+			event.preventDefault();
+			focusItem(index + 1);
+		} else if (event.key === "ArrowUp") {
+			event.preventDefault();
+			focusItem(index - 1);
+		} else if (event.key === "Home") {
+			event.preventDefault();
+			focusItem(0);
+		} else if (event.key === "End") {
+			event.preventDefault();
+			focusItem(buttons.length - 1);
+		} else if (event.key === "Escape") {
+			event.preventDefault();
+			event.stopPropagation();
+			close(true);
+		} else if (event.key === "Tab") close(false);
+	});
+	button.addEventListener("click", () => open ? close(true) : openMenu());
+	return {
+		open: openMenu,
+		close,
+		isOpen: () => open
+	};
+}
 // src/io/autosave.js
 /**
 * Autosave (F5) — the work survives a reload.
@@ -3305,171 +4957,41 @@ function createAutosave(store, { enabled = true } = {}) {
 		isAvailable: () => available
 	};
 }
-/**
-* Budget for the encoded payload, i.e. the characters after `bw=` (no prefix,
-* no leading `#`). A 256-bit document without a dataset is well under this;
-* a full CSV dataset is what can overflow it.
-*/
-var SHARE_MAX_CHARS = 2e3;
-var ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
-/** UTF-8 bytes for a string. JSON.stringify never emits lone surrogates. */
-function toUtf8(text) {
-	const bytes = [];
-	for (let i = 0; i < text.length; i++) {
-		let cp = text.charCodeAt(i);
-		if (cp >= 55296 && cp <= 56319 && i + 1 < text.length) {
-			const low = text.charCodeAt(i + 1);
-			if (low >= 56320 && low <= 57343) {
-				cp = 65536 + (cp - 55296 << 10) + (low - 56320);
-				i++;
-			}
-		}
-		if (cp < 128) bytes.push(cp);
-		else if (cp < 2048) bytes.push(192 | cp >> 6, 128 | cp & 63);
-		else if (cp < 65536) bytes.push(224 | cp >> 12, 128 | cp >> 6 & 63, 128 | cp & 63);
-		else bytes.push(240 | cp >> 18, 128 | cp >> 12 & 63, 128 | cp >> 6 & 63, 128 | cp & 63);
-	}
-	return new Uint8Array(bytes);
-}
-/** Strict UTF-8 decode: invalid/overlong/truncated input is a malformed share. */
-function fromUtf8(bytes) {
-	const fail = (at) => {
-		throw new ProjectError("malformed", `share payload is not valid UTF-8 at byte ${at}`);
-	};
-	let out = "";
-	let i = 0;
-	while (i < bytes.length) {
-		const lead = bytes[i];
-		if (lead < 128) {
-			out += String.fromCharCode(lead);
-			i += 1;
-			continue;
-		}
-		let need = 0;
-		let cp = 0;
-		let min = 0;
-		if ((lead & 224) === 192) {
-			need = 1;
-			cp = lead & 31;
-			min = 128;
-		} else if ((lead & 240) === 224) {
-			need = 2;
-			cp = lead & 15;
-			min = 2048;
-		} else if ((lead & 248) === 240) {
-			need = 3;
-			cp = lead & 7;
-			min = 65536;
-		} else fail(i);
-		if (i + need >= bytes.length) fail(i);
-		for (let k = 1; k <= need; k++) {
-			const next = bytes[i + k];
-			if ((next & 192) !== 128) fail(i + k);
-			cp = cp << 6 | next & 63;
-		}
-		if (cp < min || cp > 1114111) fail(i);
-		if (cp >= 55296 && cp <= 57343) fail(i);
-		i += need + 1;
-		if (cp < 65536) out += String.fromCharCode(cp);
-		else {
-			const rest = cp - 65536;
-			out += String.fromCharCode(55296 + (rest >> 10), 56320 + (rest & 1023));
-		}
-	}
-	return out;
-}
-/** Base64url, no padding: 4 chars per 3 bytes. */
-function toBase64Url(bytes) {
-	let out = "";
-	for (let i = 0; i < bytes.length; i += 3) {
-		const b0 = bytes[i];
-		const has1 = i + 1 < bytes.length;
-		const has2 = i + 2 < bytes.length;
-		const b1 = has1 ? bytes[i + 1] : 0;
-		const b2 = has2 ? bytes[i + 2] : 0;
-		out += ALPHABET[b0 >> 2];
-		out += ALPHABET[(b0 & 3) << 4 | b1 >> 4];
-		if (has1) out += ALPHABET[(b1 & 15) << 2 | b2 >> 6];
-		if (has2) out += ALPHABET[b2 & 63];
-	}
-	return out;
-}
-/** Reverse of toBase64Url. Throws ProjectError("malformed") on bad input. */
-function fromBase64Url(payload) {
-	if (payload.length % 4 === 1) throw new ProjectError("malformed", "share payload has an impossible base64url length");
-	const bytes = new Uint8Array(Math.floor(payload.length * 3 / 4));
-	let acc = 0;
-	let bits = 0;
-	let written = 0;
-	for (let i = 0; i < payload.length; i++) {
-		const value = ALPHABET.indexOf(payload[i]);
-		if (value < 0) throw new ProjectError("malformed", `share payload is not base64url at index ${i}`);
-		acc = acc << 6 | value;
-		bits += 6;
-		if (bits >= 8) {
-			bits -= 8;
-			bytes[written++] = acc >> bits & 255;
-		}
-	}
-	return bytes;
-}
-/** JSON document -> unpadded base64url payload. */
-function encodeShare(doc) {
-	const json = JSON.stringify(doc);
-	if (typeof json !== "string") throw new ProjectError("malformed", "share document is not JSON-serializable");
-	return toBase64Url(toUtf8(json));
-}
-/** Unpadded base64url payload -> JSON document. Throws ProjectError. */
-function decodeShare(payload) {
-	const text = fromUtf8(fromBase64Url(payload));
-	let doc;
-	try {
-		doc = JSON.parse(text);
-	} catch {
-		throw new ProjectError("malformed", "share payload is not JSON");
-	}
-	return doc;
-}
-/** `#bw=<payload>` for `history.replaceState`. */
-function shareFragment(doc) {
-	return "#bw=" + encodeShare(doc);
-}
-/**
-* Read a shared document from a `location.hash`, accepting either the full
-* fragment (`#bw=...`) or the bare payload form (`bw=...`). Returns null when
-* the hash carries no share (empty, a different fragment, or `bw=` with no
-* payload); a present-but-corrupt payload throws ProjectError.
-*/
-function parseShareHash(hash) {
-	const text = hash.startsWith("#") ? hash.slice(1) : hash;
-	if (!text.startsWith("bw=")) return null;
-	const payload = text.slice(3);
-	if (payload === "") return null;
-	return decodeShare(payload);
-}
 // src/io/share-url.js
 /**
 * URL-fragment sharing (F5) — the address bar is the share link.
 *
-* The current document (minus the dataset when it would overflow the budget)
-* is encoded into `#bw=...` on every settled change with `replaceState`, so a
-* teacher can copy the URL and hand a student the exact state. Reading a link
-* wins over the autosave. Works from `file://` because only the fragment is
-* used — no network, no server.
+* The current document is encoded into `#bw=...` on every settled change with
+* `replaceState`, so a teacher can copy the URL and hand a student the exact
+* state. Reading a link wins over the autosave. Works from `file://` because
+* only the fragment is used — no network, no server.
+*
+* The fragment comes from the shared canonical builder
+* (`src/core/agent-share.ts`): links omit `savedAt`, so equal state gives equal
+* links and the address bar matches `window.bitwave.getDeeplink()` and
+* `build_deeplink`. The builder also enforces the budget by dropping the
+* dataset first, exactly as the app always has.
 */
-var MAX_FRAGMENT = SHARE_MAX_CHARS + 1;
 var DEBOUNCE_MS = 550;
 function createShareUrl({ allow = true } = {}) {
 	let timer = 0;
 	let enabled = false;
 	function encodeCurrent() {
-		const doc = captureProject();
-		let fragment = shareFragment(doc);
-		if (fragment.length > MAX_FRAGMENT && doc.dataset) {
-			const { dataset, ...rest } = doc;
-			fragment = shareFragment(rest);
+		try {
+			const link = buildShareLink(captureProject());
+			return link.withinBudget ? link.fragment : null;
+		} catch (_) {
+			return null;
 		}
-		return fragment.length <= MAX_FRAGMENT ? fragment : null;
+	}
+	/**
+	* The address bar settled. Additive automation hook: the agent bridge mirrors
+	* the new URL into `#bitwave-state` without treating it as a UI change.
+	*/
+	function announce() {
+		try {
+			window.dispatchEvent(new CustomEvent("bitwave:urlsettled", { detail: location.href }));
+		} catch (_) {}
 	}
 	function update() {
 		if (!enabled || !allow) return;
@@ -3477,7 +4999,10 @@ function createShareUrl({ allow = true } = {}) {
 		if (!fragment || fragment === location.hash) return;
 		try {
 			history.replaceState(null, "", fragment);
-		} catch {}
+		} catch (_) {
+			return;
+		}
+		announce();
 	}
 	function schedule() {
 		clearTimeout(timer);
@@ -3498,7 +5023,8 @@ function createShareUrl({ allow = true } = {}) {
 		clearTimeout(timer);
 		try {
 			history.replaceState(null, "", location.pathname + location.search);
-		} catch {}
+		} catch (_) {}
+		announce();
 	}
 	return {
 		read,
@@ -3651,21 +5177,21 @@ function drawLegend(x1, ly) {
 	const items = [
 		{
 			key: "a",
-			t: frameName(S.slot, "a"),
+			t: frameName$1(S.slot, "a"),
 			w: 1.8,
 			dash: null,
 			a: .82
 		},
 		{
 			key: "b",
-			t: frameName(S.slot, "b"),
+			t: frameName$1(S.slot, "b"),
 			w: 1.8,
 			dash: [6, 4],
 			a: .82
 		},
 		{
 			key: "z",
-			t: frameName(S.slot, "z"),
+			t: frameName$1(S.slot, "z"),
 			w: 2.5,
 			dash: null,
 			a: 1
@@ -3772,9 +5298,9 @@ function drawField3d(n, sl = curSlot(), rect = G) {
 	const colAName = showCol && sl.colA >= 0 && DEMO.cols[sl.colA] ? ` \u00B7 ${shortCol(DEMO.cols[sl.colA])}` : "";
 	const colBName = showCol && sl.colB >= 0 && DEMO.cols[sl.colB] ? ` \u00B7 ${shortCol(DEMO.cols[sl.colB])}` : "";
 	const sym = OPSYM[sl.binop] || "⊕";
-	const fa = frameName(sl.key, "a");
-	const fb = frameName(sl.key, "b");
-	const fz = frameName(sl.key, "z");
+	const fa = frameName$1(sl.key, "a");
+	const fb = frameName$1(sl.key, "b");
+	const fz = frameName$1(sl.key, "z");
 	plate(sl.A, 1, { label: `1 \u00B7 ${fa}${colAName}` });
 	plate(sl.Z, 0, { label: `128 \u00B7 ${fz} \u00B7 ${fa} ${sym} ${fb}` });
 	plate(sl.B, -1, {
@@ -4002,10 +5528,14 @@ var getPad = () => PAD;
 		csvStatusEl.textContent = text;
 		csvStatusEl.classList.toggle("is-error", Boolean(isError));
 	}
+	let agentPanel = null;
 	createHelpPanel({
 		panel: document.getElementById("helpPanel"),
 		button: document.getElementById("helpBtn"),
-		closeButton: document.getElementById("helpClose")
+		closeButton: document.getElementById("helpClose"),
+		onTabChange: (tab) => {
+			if (tab === "agent" && agentPanel) agentPanel.refresh();
+		}
 	});
 	const controls = createControls({
 		store,
@@ -4315,8 +5845,8 @@ var getPad = () => PAD;
 	}
 	const binopBtns = [...document.querySelectorAll("[data-binop]")];
 	const binopSet = document.getElementById("binopSet");
-	function chooseBinop(op) {
-		if (!S.showB) return;
+	function chooseBinop(op, { force = false, focus = true } = {}) {
+		if (!S.showB && !force) return;
 		store.patch(() => {
 			setBinop(curSlot(), op);
 			controls.syncEditUi();
@@ -4324,7 +5854,7 @@ var getPad = () => PAD;
 			evaluate();
 			updateReadouts();
 		});
-		binopSet.querySelector(`[data-binop="${op}"]`)?.focus();
+		if (focus) binopSet.querySelector(`[data-binop="${op}"]`)?.focus();
 	}
 	binopBtns.forEach((b) => {
 		b.addEventListener("click", () => chooseBinop(b.dataset.binop));
@@ -4416,10 +5946,10 @@ var getPad = () => PAD;
 	});
 	function slotExprText(sl, withViewPrefix) {
 		const hasCsv = DEMO.rows.length > 0;
-		const lhs = hasCsv && sl.colA >= 0 && DEMO.cols[sl.colA] ? shortCol(DEMO.cols[sl.colA], 14) : frameName(sl.key, "a");
-		const rhs = hasCsv && sl.colB >= 0 && DEMO.cols[sl.colB] ? shortCol(DEMO.cols[sl.colB], 14) : frameName(sl.key, "b");
+		const lhs = hasCsv && sl.colA >= 0 && DEMO.cols[sl.colA] ? shortCol(DEMO.cols[sl.colA], 14) : frameName$1(sl.key, "a");
+		const rhs = hasCsv && sl.colB >= 0 && DEMO.cols[sl.colB] ? shortCol(DEMO.cols[sl.colB], 14) : frameName$1(sl.key, "b");
 		const sym = OPSYM[sl.binop] || "⊕";
-		return `${withViewPrefix ? `LANE ${laneLabel(sl.key)} \u00B7 ` : ""}${lhs} ${sym} ${rhs} \u2192 ${frameName(sl.key, "z")}`;
+		return `${withViewPrefix ? `LANE ${laneLabel(sl.key)} \u00B7 ` : ""}${lhs} ${sym} ${rhs} \u2192 ${frameName$1(sl.key, "z")}`;
 	}
 	function enableBOnSlot(sl = curSlot()) {
 		if (sl.showB) return;
@@ -4528,6 +6058,44 @@ var getPad = () => PAD;
 			refreshActiveSlotUi();
 		});
 	});
+	function setViewMode(mode) {
+		if (mode === "2d") {
+			if (!S.view3d) return;
+			if (S.copyArmed) copyMenu.close(false);
+			store.patch(() => {
+				S.view3d = false;
+				S.split3d = false;
+				refreshActiveSlotUi();
+			});
+			return;
+		}
+		if (mode === "3d") {
+			if (S.view3d && !S.split3d) return;
+			if (S.copyArmed) copyMenu.close(false);
+			store.patch(() => {
+				S.view3d = true;
+				S.split3d = false;
+				enableBOnSlot(curSlot());
+				refreshActiveSlotUi();
+			});
+			return;
+		}
+		if (mode !== "split") return;
+		if (S.view3d && S.split3d) return;
+		if (S.copyArmed) copyMenu.close(false);
+		if (!S.view3d) store.patch(() => {
+			S.view3d = true;
+			enableBOnSlot(curSlot());
+			refreshActiveSlotUi();
+		});
+		setSplitMode(true);
+	}
+	const lfoModeSel = document.getElementById("lfoMode");
+	const lfoRateSel = document.getElementById("lfoRate");
+	function syncLfoUi() {
+		if (lfoModeSel) lfoModeSel.value = S.lfo.mode;
+		if (lfoRateSel) lfoRateSel.value = String(S.lfo.rate);
+	}
 	const csv = createCsvImport({
 		store,
 		resizeRegister,
@@ -4682,6 +6250,55 @@ var getPad = () => PAD;
 		}
 		setSourceStatus("no dataset loaded");
 	}
+	(function setupAgentAttributes() {
+		const annotate = () => {
+			const stageEl = document.getElementById("stageBar");
+			if (stageEl) for (const btn of stageEl.querySelectorAll("[data-slot]")) {
+				const pane = btn.closest(".pane-head");
+				const value = pane && pane.hidden ? null : laneLabel(btn.dataset.slot);
+				if (value === null) {
+					if (btn.hasAttribute("data-agent-lane")) btn.removeAttribute("data-agent-lane");
+				} else if (btn.getAttribute("data-agent-lane") !== value) btn.setAttribute("data-agent-lane", value);
+			}
+			const rowsEl = document.getElementById("framesBody");
+			if (rowsEl) for (const row of rowsEl.querySelectorAll(".frame-row[data-frame]")) {
+				const value = frameName$1(S.slot, row.dataset.frame);
+				if (row.getAttribute("data-agent-frame") !== value) row.setAttribute("data-agent-frame", value);
+			}
+		};
+		const observe = (el) => {
+			if (!el || typeof MutationObserver !== "function") return;
+			new MutationObserver(annotate).observe(el, {
+				childList: true,
+				subtree: true,
+				attributes: true
+			});
+		};
+		observe(document.getElementById("stageBar"));
+		observe(document.getElementById("framesBody"));
+		annotate();
+	})();
+	function installAgentSurface() {
+		createAgentBridge({
+			store,
+			share,
+			selectSlot,
+			selectFrame: (slotKey, frame) => frameNav.selectFrame(slotKey, frame),
+			setView: setViewMode,
+			resizeRegister,
+			setSize: (index) => controls.setSize(index),
+			chooseBinop,
+			lfoStart: () => controls.lfoStart(),
+			lfoStop: () => controls.lfoStop(),
+			syncLfoUi,
+			loadCSV: (text) => csv.loadCSV(text),
+			applyExample: (index) => csv.applyExample(index, true),
+			resetInstrument,
+			syncEditUi: () => controls.syncEditUi()
+		}).install();
+		agentPanel = createAgentPanel({ root: document.querySelector("[data-agent-panel=\"agent\"]") });
+		agentPanel.refresh();
+	}
 	function boot() {
 		applyPreset(S.slots.A.A, "sine");
 		applyPreset(S.slots.A.B, "square");
@@ -4709,6 +6326,7 @@ var getPad = () => PAD;
 		bootProjectDoc = captureProject();
 		restoreSession();
 		share.start();
+		installAgentSurface();
 		requestAnimationFrame(loop);
 	}
 	function deepFreeze(value) {
@@ -4724,7 +6342,7 @@ var getPad = () => PAD;
 		for (const key of SLOT_KEYS) {
 			const sl = S.slots[key];
 			const lane = Number(laneLabel(key));
-			const names = FRAME_NAMES[key];
+			const names = FRAME_NAMES$1[key];
 			lanes[String(lane)] = {
 				lane,
 				frames: {
@@ -4738,8 +6356,8 @@ var getPad = () => PAD;
 					[names.b]: sl.colB >= 0 && DEMO.cols[sl.colB] ? DEMO.cols[sl.colB] : null
 				},
 				binop: sl.binop,
-				focus: frameName(key, focusKey(sl)),
-				edit: frameName(key, editKey(sl)),
+				focus: frameName$1(key, focusKey(sl)),
+				edit: frameName$1(key, editKey(sl)),
 				lfo: sl.lfoB,
 				visibility: {
 					[names.a]: sl.frameVis.a,
@@ -4758,7 +6376,7 @@ var getPad = () => PAD;
 				nibbles: nibCount()
 			},
 			lane: Number(laneLabel(S.slot)),
-			frame: frameName(S.slot, focusKey()),
+			frame: frameName$1(S.slot, focusKey()),
 			view: {
 				mode,
 				splitPair: S.splitPair.map((key) => Number(laneLabel(key))),
@@ -4829,7 +6447,7 @@ var getPad = () => PAD;
 	function snapshotFrames() {
 		const lanes = {};
 		for (const key of SLOT_KEYS) {
-			const names = FRAME_NAMES[key];
+			const names = FRAME_NAMES$1[key];
 			const lane = Number(laneLabel(key));
 			lanes[String(lane)] = {
 				lane,
@@ -5855,6 +7473,134 @@ var getPad = () => PAD;
 
   .help-list dd { margin: 0; color: var(--dim); }
 
+  /* Help tabs (keys | agent) — ARIA tabs, same panel shell. */
+  .help-tabs { display: flex; align-items: center; gap: 4px; min-width: 0; }
+
+  .help-tab {
+    padding: 4px 9px;
+    font-size: 10px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--dim);
+    background: transparent;
+    border-color: transparent;
+  }
+
+  .help-tab:hover { color: var(--text); background: var(--panel-hover); border-color: var(--line-hi); }
+
+  .help-tab[aria-selected="true"] {
+    color: var(--accent);
+    border-color: rgba(52, 211, 153, 0.5);
+    background: rgba(52, 211, 153, 0.10);
+  }
+
+  /* Two stacked panels share the body area; the visible one scrolls. */
+  .help-panel .help-body { flex: 1 1 auto; min-height: 0; }
+
+  /* Agent tab — status, copy actions, tool catalogue and live state JSON. */
+  .agent-status-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 12px 0 0;
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.05em;
+    color: var(--dim);
+  }
+
+  .agent-dot {
+    flex: 0 0 auto;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--accent);
+    box-shadow: 0 0 0 3px rgba(52, 211, 153, 0.14);
+  }
+
+  .agent-status { color: var(--accent); }
+  .agent-version { margin-left: auto; color: var(--dimmer); font-size: 9.5px; }
+
+  .agent-note { margin: 10px 0 0; font-size: 11px; line-height: 1.45; color: var(--dim); }
+  .agent-note code,
+  .agent-paths code,
+  .agent-tool code { font-family: var(--mono); font-size: 10px; color: var(--text); }
+
+  .agent-actions { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0 0; }
+  .agent-actions .op { padding: 4px 8px; font-size: 10.5px; }
+  .agent-actions .op[aria-disabled="true"] { opacity: 0.42; cursor: default; }
+
+  .agent-copy-status {
+    margin: 6px 0 0;
+    min-height: 12px;
+    font-family: var(--mono);
+    font-size: 9.5px;
+    color: var(--accent-hi);
+  }
+
+  .agent-heading {
+    margin: 14px 0 4px;
+    font-size: 9.5px;
+    font-weight: 600;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--dimmer);
+  }
+
+  .agent-paths {
+    display: grid;
+    grid-template-columns: max-content minmax(0, 1fr);
+    gap: 4px 12px;
+    margin: 0;
+    font-size: 10.5px;
+  }
+
+  .agent-paths dt { font-family: var(--mono); color: var(--dim); }
+  .agent-paths dd { margin: 0; min-width: 0; }
+  .agent-paths code { overflow-wrap: anywhere; }
+
+  .agent-tools { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+
+  .agent-tool {
+    padding: 8px;
+    background: var(--panel-hi);
+    border: 1px solid var(--line-soft);
+    border-radius: 5px;
+  }
+
+  .agent-tool-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+  .agent-tool-name { color: var(--accent); }
+  .agent-tool-title { font-size: 10.5px; color: var(--text); }
+  .agent-tool-desc { margin: 4px 0 0; font-size: 10px; line-height: 1.4; color: var(--dim); }
+
+  .agent-call {
+    display: block;
+    margin-top: 6px;
+    padding: 5px 6px;
+    background: var(--bg);
+    border: 1px solid var(--line-soft);
+    border-radius: 4px;
+    color: var(--dim);
+    font-size: 9.5px;
+    line-height: 1.4;
+    overflow-wrap: anywhere;
+  }
+
+  .agent-state {
+    margin: 0;
+    max-height: 220px;
+    overflow: auto;
+    padding: 8px;
+    background: var(--bg);
+    border: 1px solid var(--line-soft);
+    border-radius: 5px;
+    font-family: var(--mono);
+    font-size: 9.5px;
+    line-height: 1.4;
+    color: var(--dim);
+    white-space: pre;
+  }
+
   @media (max-width: 720px) {
     :root { --pad: 16px; }
     header { flex-wrap: wrap; gap: 12px; padding-top: 12px; padding-bottom: 12px; }
@@ -6071,12 +7817,19 @@ var getPad = () => PAD;
   <span id="liveStatus" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></span>
 </section>
 
-<aside class="help-panel" id="helpPanel" hidden aria-label="Keyboard map">
+<aside class="help-panel" id="helpPanel" hidden aria-label="Help: keyboard map and agent bridge">
   <div class="fp-head">
-    <h2 class="fp-title">keyboard map</h2>
-    <button class="op" id="helpClose" type="button" aria-label="× close keyboard map" title="Close (Esc)">×</button>
+    <div class="help-tabs" role="tablist" aria-label="Help sections">
+      <button class="op help-tab" id="helpTabKeys" type="button" role="tab" data-agent-tab="keys"
+              aria-selected="true" aria-controls="helpPanelKeys" tabindex="0">keys</button>
+      <button class="op help-tab" id="helpTabAgent" type="button" role="tab" data-agent-tab="agent"
+              aria-selected="false" aria-controls="helpPanelAgent" tabindex="-1">agent</button>
+    </div>
+    <button class="op" id="helpClose" type="button" aria-label="× close help" title="Close (Esc)">×</button>
   </div>
-  <div class="help-body">
+  <h2 class="sr-only">help: keyboard map and agent bridge</h2>
+  <div class="help-body" id="helpPanelKeys" role="tabpanel" data-agent-panel="keys"
+       aria-labelledby="helpTabKeys" tabindex="0">
     <dl class="help-list">
       <dt>Tab</dt><dd>enter the strip at the last-focused nibble</dd>
       <dt>← / →</dt><dd>move between nibbles</dd>
@@ -6088,11 +7841,43 @@ var getPad = () => PAD;
       <dt>Alt+1/2/3</dt><dd>select lane 1, 2 or 3</dd>
       <dt>Alt+S</dt><dd>split the 3-D view</dd>
       <dt>← / →</dt><dd>step CSV examples when focus is outside the controls and the strip</dd>
-      <dt>?</dt><dd>this keyboard map</dd>
+      <dt>?</dt><dd>this help panel</dd>
     </dl>
+  </div>
+  <div class="help-body" id="helpPanelAgent" role="tabpanel" data-agent-panel="agent"
+       aria-labelledby="helpTabAgent" tabindex="0" hidden>
+    <div class="agent-status-row" role="status" aria-live="polite">
+      <span class="agent-dot" aria-hidden="true"></span>
+      <span class="agent-status" data-agent-status="bridge-active">bridge active</span>
+      <span class="agent-version" data-agent-version>schema 1 · bridge v1.0.0</span>
+    </div>
+
+    <p class="agent-note">State is the source of truth: read <code>window.bitwave.getState()</code>
+      or the hidden <code>#bitwave-state</code> node, and change the instrument only through the
+      bridge setters.</p>
+
+    <div class="agent-actions">
+      <button class="op" type="button" data-agent-copy="prompt" title="Copy a ready-to-paste prompt for an agent">copy prompt</button>
+      <button class="op" type="button" data-agent-copy="deeplink" title="Copy the canonical #bw= deeplink">copy deeplink</button>
+      <button class="op" type="button" data-agent-copy="state" title="Copy the current state JSON">copy state</button>
+    </div>
+    <p class="agent-copy-status" role="status" aria-live="polite" data-agent-copy-status></p>
+
+    <h3 class="agent-heading">surface</h3>
+    <dl class="agent-paths" data-agent-paths></dl>
+
+    <h3 class="agent-heading">tools</h3>
+    <ul class="agent-tools" data-agent-tools></ul>
+
+    <h3 class="agent-heading">live state</h3>
+    <pre class="agent-state" data-agent-state-json tabindex="0" aria-label="Live UI state JSON"></pre>
   </div>
 </aside>
 </main>
+
+<!-- Agent layer (§6/§7): hidden JSON mirror of getState(), filled on install
+     and after every store transaction. Never rendered; no layout impact. -->
+<pre id="bitwave-state" data-schema-version="1" hidden></pre>
 
 </body>
 </html>

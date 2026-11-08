@@ -49,6 +49,8 @@ import { createSourceTable } from "./ui/source-table.js";
 import { createLiveStatus } from "./ui/live-status.js";
 import { createCopyMenu } from "./ui/copy-menu.js";
 import { createHelpPanel } from "./ui/help.js";
+import { createAgentPanel } from "./ui/agent-panel.js";
+import { createAgentBridge } from "./agent/bridge.js";
 import { createProjectMenu } from "./ui/project-menu.js";
 import { setObservationStatus } from "./io/observations.js";
 import { createAutosave } from "./io/autosave.js";
@@ -95,11 +97,17 @@ import { toHexOf, updateReadouts } from "./render/readouts.js";
     csvStatusEl.classList.toggle("is-error", Boolean(isError));
   }
 
-  /* Keyboard map panel — the one declared shortcut surface (F4 IA). */
+  /* Keyboard map panel — the one declared shortcut surface (F4 IA). It also
+     houses the agent bridge tab (agent layer, additive); the panel stays closed
+     by default so the default rendered instrument is unchanged. */
+  let agentPanel = null;
   const help = createHelpPanel({
     panel: document.getElementById("helpPanel"),
     button: document.getElementById("helpBtn"),
     closeButton: document.getElementById("helpClose"),
+    onTabChange: (tab) => {
+      if (tab === "agent" && agentPanel) agentPanel.refresh();
+    },
   });
 
   const controls = createControls({
@@ -483,8 +491,11 @@ import { toHexOf, updateReadouts } from "./render/readouts.js";
   const binopBtns = [...document.querySelectorAll("[data-binop]")];
   const binopSet = document.getElementById("binopSet");
 
-  function chooseBinop(op) {
-    if (!S.showB) return;          // reserved-space: disabled until B exists
+  /* The UI disables derive while operand B is absent; a bridge setter still
+     records the operator (it is lane state, and Z uses it once B exists), and
+     agent calls never steal keyboard focus. */
+  function chooseBinop(op, { force = false, focus = true } = {}) {
+    if (!S.showB && !force) return;  // reserved-space: disabled until B exists
     store.patch(() => {
       setBinop(curSlot(), op);
       controls.syncEditUi();
@@ -492,7 +503,7 @@ import { toHexOf, updateReadouts } from "./render/readouts.js";
       evaluate();
       updateReadouts();
     });
-    binopSet.querySelector(`[data-binop="${op}"]`)?.focus();
+    if (focus) binopSet.querySelector(`[data-binop="${op}"]`)?.focus();
   }
 
   binopBtns.forEach((b) => {
@@ -736,6 +747,51 @@ import { toHexOf, updateReadouts } from "./render/readouts.js";
     });
   });
 
+  /* Bridge view setter — the same commands the depth button and split control
+     run, so the API and the UI cannot disagree. Idempotent by construction. */
+  function setViewMode(mode) {
+    if (mode === "2d") {
+      if (!S.view3d) return;
+      if (S.copyArmed) copyMenu.close(false);
+      store.patch(() => {
+        S.view3d = false;
+        S.split3d = false;
+        refreshActiveSlotUi();
+      });
+      return;
+    }
+    if (mode === "3d") {
+      if (S.view3d && !S.split3d) return;
+      if (S.copyArmed) copyMenu.close(false);
+      store.patch(() => {
+        S.view3d = true;
+        S.split3d = false;
+        enableBOnSlot(curSlot());
+        refreshActiveSlotUi();
+      });
+      return;
+    }
+    if (mode !== "split") return;
+    if (S.view3d && S.split3d) return;
+    if (S.copyArmed) copyMenu.close(false);
+    if (!S.view3d) {
+      store.patch(() => {
+        S.view3d = true;
+        enableBOnSlot(curSlot());
+        refreshActiveSlotUi();
+      });
+    }
+    setSplitMode(true);
+  }
+
+  /* Bridge LFO setter — mirror the motion controls' values after a patch. */
+  const lfoModeSel = document.getElementById("lfoMode");
+  const lfoRateSel = document.getElementById("lfoRate");
+  function syncLfoUi() {
+    if (lfoModeSel) lfoModeSel.value = S.lfo.mode;
+    if (lfoRateSel) lfoRateSel.value = String(S.lfo.rate);
+  }
+
   /* ── frame navigator ─────────────────────────────────────────
      Pro-Q4-style lane/frame selection: static mini-curves, active lane
      expanded, click a frame to focus it. No animation, no new state. */
@@ -920,6 +976,71 @@ import { toHexOf, updateReadouts } from "./render/readouts.js";
   }
 
   /* ══════════════════════════════════════════════════════════
+     AGENT LAYER — window.bitwave bridge + help-panel agent tab
+     Additive: installed after boot so the instrument is settled.
+     ══════════════════════════════════════════════════════════ */
+
+  /* Contract §7 automation hooks: additive data attributes on the existing
+     lane buttons and frame rows. The modules that build them are untouched;
+     a small observer keeps dynamically rebuilt rows labelled. */
+  (function setupAgentAttributes() {
+    const annotate = () => {
+      const stageEl = document.getElementById("stageBar");
+      if (stageEl) {
+        for (const btn of stageEl.querySelectorAll("[data-slot]")) {
+          const pane = btn.closest(".pane-head");
+          /* Only the panes actually on screen: 2-D has one lane set, split 3-D
+             has two. Duplicate hidden mirrors would confuse selector-driven
+             tooling (`[data-agent-lane]` should be the three live buttons). */
+          const value = pane && pane.hidden ? null : laneLabel(btn.dataset.slot);
+          if (value === null) {
+            if (btn.hasAttribute("data-agent-lane")) btn.removeAttribute("data-agent-lane");
+          } else if (btn.getAttribute("data-agent-lane") !== value) {
+            btn.setAttribute("data-agent-lane", value);
+          }
+        }
+      }
+      const rowsEl = document.getElementById("framesBody");
+      if (rowsEl) {
+        for (const row of rowsEl.querySelectorAll(".frame-row[data-frame]")) {
+          const value = frameName(S.slot, row.dataset.frame);
+          if (row.getAttribute("data-agent-frame") !== value) row.setAttribute("data-agent-frame", value);
+        }
+      }
+    };
+    const observe = (el) => {
+      if (!el || typeof MutationObserver !== "function") return;
+      new MutationObserver(annotate).observe(el, { childList: true, subtree: true, attributes: true });
+    };
+    observe(document.getElementById("stageBar"));
+    observe(document.getElementById("framesBody"));
+    annotate();
+  })();
+
+  function installAgentSurface() {
+    const bridge = createAgentBridge({
+      store,
+      share,
+      selectSlot,
+      selectFrame: (slotKey, frame) => frameNav.selectFrame(slotKey, frame),
+      setView: setViewMode,
+      resizeRegister,
+      setSize: (index) => controls.setSize(index),
+      chooseBinop,
+      lfoStart: () => controls.lfoStart(),
+      lfoStop: () => controls.lfoStop(),
+      syncLfoUi,
+      loadCSV: (text) => csv.loadCSV(text),
+      applyExample: (index) => csv.applyExample(index, true),
+      resetInstrument,
+      syncEditUi: () => controls.syncEditUi(),
+    });
+    bridge.install();
+    agentPanel = createAgentPanel({ root: document.querySelector('[data-agent-panel="agent"]') });
+    agentPanel.refresh();
+  }
+
+  /* ══════════════════════════════════════════════════════════
      BOOT
      ══════════════════════════════════════════════════════════ */
 
@@ -961,6 +1082,10 @@ import { toHexOf, updateReadouts } from "./render/readouts.js";
     bootProjectDoc = captureProject();
     restoreSession();
     share.start();
+
+    /* Agent layer: install the bridge and the help-panel agent tab last, so
+       the instrument is fully settled when the first state is captured. */
+    installAgentSurface();
 
     requestAnimationFrame(loop);
   }

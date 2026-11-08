@@ -340,6 +340,18 @@ async function main() {
     return `${cache.name} · index + manifest + icon cached`;
   });
 
+  await runCheck("agent · hosted build serves the manifest, examples and llms.txt", async () => {
+    const manifest = JSON.parse(await evaluate(`fetch('/agent/manifest.json').then((r) => r.json()).then((m) => JSON.stringify(m))`));
+    assert(manifest.id === "bitwave", `agent manifest id: ${manifest.id}`);
+    assert(Array.isArray(manifest.tools) && manifest.tools.length === 6, `agent tools: ${manifest.tools && manifest.tools.length}`);
+    assert(manifest.ui && manifest.ui.bridge === "window.bitwave", "agent manifest bridge selector missing");
+    const example = await evaluate(`fetch('/agent/examples/evaluate_lane.json').then((r) => r.json()).then((e) => e.ok === true && e.tool === 'evaluate_lane')`);
+    assert(example === true, "agent example envelope did not load");
+    const llms = await evaluate(`fetch('/llms.txt').then((r) => r.ok)`);
+    assert(llms === true, "/llms.txt did not load");
+    return "manifest + example envelope + llms.txt served";
+  });
+
   await runCheck("offline · a reload with the server down still boots from the cache", async () => {
     /* Stronger than network emulation: stop the origin server. If the app still
        boots, the service worker cache is doing the work. */

@@ -17,8 +17,8 @@
  */
 
 import { createHash } from "node:crypto";
-import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ROOT = resolve(fileURLToPath(new URL("..", import.meta.url)));
@@ -193,6 +193,23 @@ function main() {
      download the double-clickable instrument. */
   copyFileSync(ARTIFACT, join(OUT_DIR, "bitwave-v2.html"));
 
+  /* Agent layer: serve the generated manifest/examples and the onboarding docs
+     beside the app, so a hosted instance is agent-readable without a repo
+     checkout. The single-file artifact gains no references to any of this. */
+  const agentDir = resolve(ROOT, "agent");
+  if (existsSync(agentDir)) cpSync(agentDir, join(OUT_DIR, "agent"), { recursive: true });
+  for (const [source, destination] of [
+    [resolve(ROOT, "llms.txt"), "llms.txt"],
+    [resolve(ROOT, "AGENTS.md"), "AGENTS.md"],
+    [resolve(ROOT, "docs/AGENT-INTERFACE.md"), "docs/AGENT-INTERFACE.md"],
+    [resolve(ROOT, "docs/AGENT-SCREENSHOTS.md"), "docs/AGENT-SCREENSHOTS.md"],
+  ]) {
+    if (!existsSync(source)) continue;
+    const target = join(OUT_DIR, destination);
+    mkdirSync(dirname(target), { recursive: true });
+    cpSync(source, target);
+  }
+
   assert(sha256(readFileSync(ARTIFACT)) === before, "the single-file artifact changed during the PWA build");
 
   const size = (name) =>
@@ -201,6 +218,7 @@ function main() {
   console.log(`  cache version: bitwave-${version}`);
   console.log(`  index.html ${size("index.html")} B · sw.js ${size("sw.js")} B · manifest ${size("manifest.webmanifest")} B`);
   console.log(`  icons: ${ICON_FILES.map((name) => `${name} ${size(`icons/${name}`)} B`).join(" · ")}`);
+  console.log(`  agent: ${existsSync(join(OUT_DIR, "agent", "manifest.json")) ? "manifest + examples + docs served" : "not present"}`);
   console.log(`  single-file artifact unchanged (sha256 ${before.slice(0, 16)}…)`);
 }
 

@@ -992,6 +992,134 @@
 
   .help-list dd { margin: 0; color: var(--dim); }
 
+  /* Help tabs (keys | agent) — ARIA tabs, same panel shell. */
+  .help-tabs { display: flex; align-items: center; gap: 4px; min-width: 0; }
+
+  .help-tab {
+    padding: 4px 9px;
+    font-size: 10px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--dim);
+    background: transparent;
+    border-color: transparent;
+  }
+
+  .help-tab:hover { color: var(--text); background: var(--panel-hover); border-color: var(--line-hi); }
+
+  .help-tab[aria-selected="true"] {
+    color: var(--accent);
+    border-color: rgba(52, 211, 153, 0.5);
+    background: rgba(52, 211, 153, 0.10);
+  }
+
+  /* Two stacked panels share the body area; the visible one scrolls. */
+  .help-panel .help-body { flex: 1 1 auto; min-height: 0; }
+
+  /* Agent tab — status, copy actions, tool catalogue and live state JSON. */
+  .agent-status-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 12px 0 0;
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.05em;
+    color: var(--dim);
+  }
+
+  .agent-dot {
+    flex: 0 0 auto;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--accent);
+    box-shadow: 0 0 0 3px rgba(52, 211, 153, 0.14);
+  }
+
+  .agent-status { color: var(--accent); }
+  .agent-version { margin-left: auto; color: var(--dimmer); font-size: 9.5px; }
+
+  .agent-note { margin: 10px 0 0; font-size: 11px; line-height: 1.45; color: var(--dim); }
+  .agent-note code,
+  .agent-paths code,
+  .agent-tool code { font-family: var(--mono); font-size: 10px; color: var(--text); }
+
+  .agent-actions { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0 0; }
+  .agent-actions .op { padding: 4px 8px; font-size: 10.5px; }
+  .agent-actions .op[aria-disabled="true"] { opacity: 0.42; cursor: default; }
+
+  .agent-copy-status {
+    margin: 6px 0 0;
+    min-height: 12px;
+    font-family: var(--mono);
+    font-size: 9.5px;
+    color: var(--accent-hi);
+  }
+
+  .agent-heading {
+    margin: 14px 0 4px;
+    font-size: 9.5px;
+    font-weight: 600;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--dimmer);
+  }
+
+  .agent-paths {
+    display: grid;
+    grid-template-columns: max-content minmax(0, 1fr);
+    gap: 4px 12px;
+    margin: 0;
+    font-size: 10.5px;
+  }
+
+  .agent-paths dt { font-family: var(--mono); color: var(--dim); }
+  .agent-paths dd { margin: 0; min-width: 0; }
+  .agent-paths code { overflow-wrap: anywhere; }
+
+  .agent-tools { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+
+  .agent-tool {
+    padding: 8px;
+    background: var(--panel-hi);
+    border: 1px solid var(--line-soft);
+    border-radius: 5px;
+  }
+
+  .agent-tool-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+  .agent-tool-name { color: var(--accent); }
+  .agent-tool-title { font-size: 10.5px; color: var(--text); }
+  .agent-tool-desc { margin: 4px 0 0; font-size: 10px; line-height: 1.4; color: var(--dim); }
+
+  .agent-call {
+    display: block;
+    margin-top: 6px;
+    padding: 5px 6px;
+    background: var(--bg);
+    border: 1px solid var(--line-soft);
+    border-radius: 4px;
+    color: var(--dim);
+    font-size: 9.5px;
+    line-height: 1.4;
+    overflow-wrap: anywhere;
+  }
+
+  .agent-state {
+    margin: 0;
+    max-height: 220px;
+    overflow: auto;
+    padding: 8px;
+    background: var(--bg);
+    border: 1px solid var(--line-soft);
+    border-radius: 5px;
+    font-family: var(--mono);
+    font-size: 9.5px;
+    line-height: 1.4;
+    color: var(--dim);
+    white-space: pre;
+  }
+
   @media (max-width: 720px) {
     :root { --pad: 16px; }
     header { flex-wrap: wrap; gap: 12px; padding-top: 12px; padding-bottom: 12px; }

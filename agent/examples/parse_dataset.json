@@ -1,0 +1,29 @@
+{
+  "ok": true,
+  "schemaVersion": 1,
+  "tool": "parse_dataset",
+  "data": {
+    "columns": [
+      {
+        "name": "Hex 1",
+        "mode": "bin",
+        "widthBits": 8
+      },
+      {
+        "name": "Hex 2",
+        "mode": "hex",
+        "widthBits": 32
+      }
+    ],
+    "totalRows": 1,
+    "truncated": false,
+    "rows": [
+      [
+        "00000001",
+        "00000002"
+      ]
+    ]
+  },
+  "deeplink": null,
+  "warnings": []
+}

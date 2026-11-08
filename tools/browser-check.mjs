@@ -149,6 +149,10 @@ async function launchChromium(executable, headed) {
     '--disable-gpu',
     '--disable-extensions',
     '--disable-background-networking',
+    /* Glyph rasterization stability: LCD subpixel antialiasing can change by a
+       few edge pixels between two runs of the SAME artifact (observed on the
+       3d-focus-z1 parity state). Grayscale AA makes --compare deterministic. */
+    '--disable-lcd-text',
     `--remote-debugging-port=${port}`,
     `--user-data-dir=${profile}`,
     '--window-size=1440,900',
@@ -1906,8 +1910,17 @@ try {
 
         const mismatches = [];
         for (const state of states) {
-          const reference = await shoot(referenceUrl, state);
-          const rebuilt = await shoot(artifactUrl, state);
+          /* Chromium software compositing can shift a handful of pixels by 1–2
+             levels between identical runs (observed even comparing a file with
+             itself). A real regression is persistent, so retry a mismatching
+             state before failing; a clean pair is still byte-identical. */
+          let reference = null;
+          let rebuilt = null;
+          for (let attempt = 0; attempt < 3; attempt += 1) {
+            reference = await shoot(referenceUrl, state);
+            rebuilt = await shoot(artifactUrl, state);
+            if (sha256(reference) === sha256(rebuilt)) break;
+          }
           if (sha256(reference) !== sha256(rebuilt)) mismatches.push({ state, reference, rebuilt });
         }
 

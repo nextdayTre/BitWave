@@ -22,10 +22,20 @@ npm run check:pwa     # serves dist/hosted on 127.0.0.1, drives headless Chromiu
 ```
 
 `check:pwa` proves: the manifest and all icons load; the worker registers,
-activates and controls the page; the app shell is in a hash-versioned cache; and
-a reload **with the origin server stopped** still boots the instrument from the
-cache with no console errors. It also asserts the single-file artifact stayed
-clean.
+activates and controls the page; the app shell is in a hash-versioned cache; the
+hosted build serves `/agent/manifest.json`, an example envelope and `/llms.txt`;
+and a reload **with the origin server stopped** still boots the instrument from
+the cache with no console errors. It also asserts the single-file artifact
+stayed clean.
+
+### Agent files in the hosted build
+
+`npm run build:pwa` also copies `agent/` (manifest + examples + transport docs),
+`AGENTS.md`, `llms.txt`, `docs/AGENT-INTERFACE.md` and `docs/AGENT-SCREENSHOTS.md`
+into `dist/hosted/`, so a served instance is readable by an agent without a repo
+checkout. These are static read-only files: the single-file artifact gains no
+references to them, and the service worker does not cache them (agent clients use
+the live origin). See [`AGENTS.md`](../AGENTS.md).
 
 `npm run verify` runs the whole gate: unit + typecheck + build + browser +
 hosted build + PWA check.

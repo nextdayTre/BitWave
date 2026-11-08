@@ -1,0 +1,14 @@
+# BitWave — agent index
+
+BitWave: a bit register rendered as a wavetable. Three lanes of `A op B -> Z`,
+CSV/TSV input, stepped LFO, single offline HTML file.
+
+- Canonical app: `bitwave-v2.html` (open directly; no server, no network).
+- Contract: `docs/AGENT-INTERFACE.md` (tools, envelope, deeplink, bridge, CLI, MCP).
+- Onboarding: `AGENTS.md`; manifest: `agent/manifest.json`; examples: `agent/examples/`.
+- Browser bridge: `window.bitwave`; hidden state: `#bitwave-state`;
+  ready: `body[data-agent-ready='true']`; events: `bitwave:ready`, `bitwave:change`.
+- CLI: `node agent/cli.mjs help`; MCP: `node agent/mcp-server.mjs` (stdio, zero deps).
+- Tools: `manifest`, `analyze_register`, `evaluate_lane`, `compare_operands`,
+  `parse_dataset`, `build_deeplink`.
+- Machine setup: Node >= 23.6; no browser needed for CLI/MCP.

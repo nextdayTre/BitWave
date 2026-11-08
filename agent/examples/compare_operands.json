@@ -1,0 +1,61 @@
+{
+  "ok": true,
+  "schemaVersion": 1,
+  "tool": "compare_operands",
+  "data": {
+    "width": 64,
+    "a": {
+      "hex": "8ADEFEDA85210125",
+      "popcount": 30
+    },
+    "b": {
+      "hex": "FFFFFFFF00000000",
+      "popcount": 32
+    },
+    "truthCounts": [
+      23,
+      11,
+      9,
+      21
+    ],
+    "results": [
+      {
+        "op": "and",
+        "z": "8ADEFEDA00000000",
+        "popcount": 21,
+        "carry": null,
+        "borrow": null
+      },
+      {
+        "op": "or",
+        "z": "FFFFFFFF85210125",
+        "popcount": 41,
+        "carry": null,
+        "borrow": null
+      },
+      {
+        "op": "xor",
+        "z": "7521012585210125",
+        "popcount": 20,
+        "carry": null,
+        "borrow": null
+      },
+      {
+        "op": "add",
+        "z": "8ADEFED985210125",
+        "popcount": 30,
+        "carry": true,
+        "borrow": null
+      },
+      {
+        "op": "sub",
+        "z": "8ADEFEDB85210125",
+        "popcount": 31,
+        "carry": null,
+        "borrow": true
+      }
+    ]
+  },
+  "deeplink": null,
+  "warnings": []
+}

@@ -1,0 +1,32 @@
+{
+  "ok": true,
+  "schemaVersion": 1,
+  "tool": "analyze_register",
+  "data": {
+    "width": 64,
+    "hex": "8ADEFEDA85210125",
+    "decimal": "10006715636553679141",
+    "nibbles": [
+      8,
+      10,
+      13,
+      14,
+      15,
+      14,
+      13,
+      10,
+      8,
+      5,
+      2,
+      1,
+      0,
+      1,
+      2,
+      5
+    ],
+    "popcount": 30,
+    "bitLength": 64
+  },
+  "deeplink": null,
+  "warnings": []
+}

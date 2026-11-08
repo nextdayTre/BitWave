@@ -469,6 +469,14 @@ The easing constant is deliberately high (`0.24`) — fast enough to feel like t
   (`edit · A`) plus the whole-word mono hex entry; the width slider itself stays in the
   header. The module is always present; the entry is disabled and explained when the
   focused frame is derived or driven.
+- **Agent tab (help panel)** — the `?` panel gains a `keys | agent` tablist
+  (`role="tablist"`/`tab`/`tabpanel`, ArrowLeft/Right/Home/End, Esc closes and returns
+  focus; `keys` is the default tab). The `agent` tab is additive and only exists while the
+  panel is open: bridge status (`[data-agent-status="bridge-active"]`), copy
+  handoff-prompt/deeplink/state buttons (clipboard with a legacy fallback), the live
+  `#bitwave-state` JSON, and the six read-only tools from `src/core/agent-tools.ts` with
+  one call example each. Drawn only from `--panel`, `--panel-hi`, `--line`, `--text`,
+  `--dim`, `--accent`; no new hue. The panel-closed instrument is pixel-identical.
 
 ---
 
@@ -497,6 +505,11 @@ apply at every zoom level; no control may be removed from the DOM to fit.
 stepper before a load, the LFO's B-phase before B) are rendered **disabled with a visible
 reason** — `aria-disabled` and a title/status — instead of `hidden`. Tab order and module
 height stay stable across mode changes (audit §4 "moving targets").
+
+**Agent tab.** The help panel keeps `keys` as its default tab; `agent` is second. Its
+content exists only while the panel is open, so the default instrument's pixels and tab
+order are unchanged. `?` opens the panel and the tab row is one keyboard path; Esc closes
+and returns focus.
 
 **Targets.** Every interactive target is ≥24×24 CSS px; `.op.mini` gets `min-height: 24px`
 and the `width` range thumb is ≥24 px. Dense glyphs are the visual of a larger semantic
@@ -639,6 +652,22 @@ something that looked fine until it was measured.
     (`dist/hosted/`): the same HTML plus a manifest, icons, a hash-versioned app-shell
     service worker and registration. The worker is same-origin `GET` only; no telemetry,
     fonts, CDNs or third-party requests. Hosted URLs are relative so a subpath deploy works.
+43. **The agent layer is additive and core-derived.** The existing read-only
+    `window.BitWave` (schema 1) is unchanged; `window.bitwave` sits beside it and every
+    state/tool/deeplink it returns comes from `src/core/agent-*.ts`, never from the DOM.
+    The help panel's `agent` tab is hidden with the panel, so the default rendered
+    instrument stays pixel-identical (asserted by `--compare`).
+44. **Pure tools are read-only; writes are explicit bridge setters.** A tool call never
+    mutates the UI, files or the network. Setters validate first, run the instrument's own
+    commands in one transaction, never throw, and return `{ok,state}` or
+    `{ok:false,error,state}`; an invalid setter leaves state unchanged.
+45. **Agent events are state-change events.** Exactly one `bitwave:change` on install;
+    none for a no-op setter; the hidden `#bitwave-state` always equals
+    `JSON.stringify(getState())`; the debounced address-bar mirror refreshes that node
+    silently. The LFO yields to a register setter like any other manual edit (§10.19).
+46. **Canonical links omit `savedAt`.** A view state has exactly one `#bw=` link, equal
+    state gives equal links, and the existing 2000-character budget/dataset-drop rule is
+    unchanged. `getDeeplink()`, the address bar and `build_deeplink` agree.
 
 ---
 
@@ -690,10 +719,18 @@ The visual contract is measurable, so measure it rather than eyeballing:
   refused with a status message and do not replace the current dataset.
 - **Distribution:** `npm run check:pwa` serves `dist/hosted/` on `127.0.0.1` and asserts the
   manifest + every icon load, the worker registers/activates/controls the page, the app shell
-  is in a `bitwave-<hash>` cache, and a reload **with the origin server stopped** still boots
-  from that cache with zero console errors. It also asserts the committed single file has no
+  is in a `bitwave-<hash>` cache, a reload **with the origin server stopped** still boots
+  from that cache with zero console errors, and the hosted build serves the agent manifest,
+  an example envelope and `llms.txt`. It also asserts the committed single file has no
   manifest/icon/service-worker references, and that the hosted page's only external refs are
   the PWA shell.
+- **Agent interface:** `npm test` includes the registry, state-builder and transport suites;
+  `node agent/gen-agent-artifacts.mjs --check` is current; `node agent/selftest.mjs` passes;
+  `node agent/verify-browser.mjs` asserts readiness, `#bitwave-state` === `getState()`,
+  one change event on mount, no-op silence, setter truthfulness/errors, the legacy
+  `window.BitWave` surface, deeplink reloads twice, the agent tab, no overflow at
+  360/720/1440 and zero console errors. The default 2-D view must stay pixel-identical to
+  the pre-agent artifact (`browser-check --compare`).
 - **Automated a11y audit:** axe-core (dev-only, never in the artifact) reports **zero
   critical/serious** violations in the 2-D, A·B, 3-D and source-table states.
 
@@ -762,6 +799,14 @@ them.
   `check:pwa` harness that proves install/offline against the real built output, and
   [`docs/hosting.md`](docs/hosting.md) with deploy/install/privacy guidance. Tauri remains
   deferred (D37).
+- **Agent interface (2026-11-08)** — one DOM-free source of truth for agents
+  (`src/core/agent-tools.ts` six pure tools + one envelope + closed error set + manifest +
+  patch validation; `agent-state.ts` UI state; `agent-share.ts` canonical links), the
+  additive `window.bitwave` bridge beside the untouched read-only `window.BitWave`, a hidden
+  `#bitwave-state` + readiness/change events, a `keys | agent` tab in the `?` help panel,
+  zero-dependency CLI + MCP stdio server, generated `agent/manifest.json` + examples, and
+  AGENTS/contract/screenshot/ecosystem docs. Default rendering pixel-identical; hosted
+  build serves the agent files (8/8 PWA checks).
 
 ### Next
 
