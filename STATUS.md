@@ -384,3 +384,8 @@ infrastructure):
    the artifact check, CLI/MCP selftest and the independent `agent/verify-browser.mjs`);
    regenerate `agent/manifest.json` + examples when `src/core/agent-tools.ts` changes.
    Populate `relatedTools` only when a real, tested handoff exists (ecosystem map).
+5. **External routing (design-stage):** [`docs/EXTERNAL-ROUTING.md`](docs/EXTERNAL-ROUTING.md)
+   pins the Record/log and expression-operand semantics; the Node-only prototype is
+   `node tools/prototype-external-routing.mjs --check` (27 checks) and
+   `tests/external-routing.test.ts`. No app/UI/schema change yet; the source-table
+   `expr` rows + Record toggle are the next UI slice if the design is approved.

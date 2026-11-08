@@ -16,3 +16,5 @@ export * from "./csv.ts";
 export * from "./geometry.ts";
 export * from "./project.ts";
 export * from "./share.ts";
+export * from "./expression.ts";
+export * from "./external-routing.ts";

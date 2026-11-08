@@ -196,6 +196,7 @@ node agent/verify-browser.mjs
 | `docs/AGENT-INTERFACE.md` | contract: tools, envelope, deeplink, state, bridge, CLI, MCP |
 | `docs/AGENT-SCREENSHOTS.md` | reproducible states + headless Chrome recipes |
 | `docs/BITWAVE-ECOSYSTEM-MAP.md` | sibling tools and what a handoff would carry |
+| `docs/EXTERNAL-ROUTING.md` | design note + prototype: Record/log and expression operands (not shipped) |
 | `agent/manifest.json` | generated capability manifest (tools, selectors, errors) |
 | `agent/examples/` | generated example envelopes, one per tool |
 | `agent/README.md` | transports guide: CLI commands, MCP server, selftest, generator |
