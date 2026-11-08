@@ -54,10 +54,16 @@ export function captureProject(now = new Date().toISOString()): ProjectDoc {
 
   const focus: NonNullable<ProjectExtras["focus"]> = {};
   const frameVis: NonNullable<ProjectExtras["frameVis"]> = {};
+  const expressions: NonNullable<ProjectExtras["expressions"]> = {};
   for (const key of SLOT_KEYS) {
     const lane = LANE_OF[key];
-    focus[lane] = S.slots[key].focus;
-    frameVis[lane] = { ...S.slots[key].frameVis };
+    const sl = S.slots[key];
+    focus[lane] = sl.focus;
+    frameVis[lane] = { ...sl.frameVis };
+    const expr: { a?: string; b?: string } = {};
+    if (sl.expressions.a.trim() !== "") expr.a = sl.expressions.a;
+    if (sl.expressions.b.trim() !== "") expr.b = sl.expressions.b;
+    if (Object.keys(expr).length > 0) expressions[lane] = expr;
   }
 
   const dataset = DEMO.rows.length
@@ -73,6 +79,7 @@ export function captureProject(now = new Date().toISOString()): ProjectDoc {
     frameVis,
     lfoMode: S.lfo.mode,
     lfoRate: S.lfo.rate,
+    expressions,
   });
   return { ...unknownFields, ...doc } as ProjectDoc;
 }
@@ -139,6 +146,10 @@ export function applyProject(raw: unknown): ApplyResult {
     sl.colB = src.colB;
     sl.focus = (extras.focus[laneKey] ?? "a") as FrameKey;
     sl.frameVis = { ...extras.frameVis[laneKey] };
+    sl.expressions = {
+      a: extras.expressions[laneKey]?.a ?? "",
+      b: extras.expressions[laneKey]?.b ?? "",
+    };
     syncTarget(sl.A, true);
     syncTarget(sl.B, true);
   }
@@ -159,6 +170,7 @@ export function applyProject(raw: unknown): ApplyResult {
   S.hoverJ = -1;
   S.lfo = { on: false, mode: extras.lfoMode, rate: extras.lfoRate, t: 0, base: null };
   S.lfoAcc = 0;
+  S.record = { on: false, rows: [], nextStep: 1 };
 
   if (dataset) {
     DEMO.cols = dataset.cols.slice();

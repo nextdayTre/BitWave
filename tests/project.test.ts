@@ -69,7 +69,7 @@ test("serialize: format, derived Z never stored, routes and parked bases persist
   const doc = serializeProject(lanes, routing, N, VIEW, null, NOW);
 
   assert.equal(doc.schema, PROJECT_SCHEMA);
-  assert.equal(doc.schema, 2);
+  assert.equal(doc.schema, 3);
   assert.equal(doc.app, "bitwave");
   assert.equal(doc.N, N);
   assert.equal(doc.lanes["1"].a, "0002444281210125");
@@ -168,6 +168,7 @@ test("v2 round-trip preserves focus, frameVis, lfoMode, lfoRate and dataset.inde
     frameVis: EXTRAS.frameVis,
     lfoMode: "slide",
     lfoRate: 8,
+    expressions: { "1": {}, "2": {}, "3": {} },
   });
   assert.equal(loaded.dataset?.index, 1);
 
@@ -182,6 +183,55 @@ test("v2 round-trip preserves focus, frameVis, lfoMode, lfoRate and dataset.inde
     loaded.extras,
   );
   assert.equal(stringifyProject(again), stringifyProject(doc));
+});
+
+test("schema 3: expression sources round-trip additively", () => {
+  const { lanes, routing } = patched();
+  const expressions = {
+    "1": { a: "round(1.2599210498948732 * C)" },
+    "3": { b: "E + log.E" },
+  };
+  const doc = serializeProject(lanes, routing, N, VIEW, null, NOW, { expressions });
+  assert.equal(doc.schema, 3);
+  assert.deepEqual(doc.lanes["1"].expressions, { a: "round(1.2599210498948732 * C)" });
+  assert.deepEqual(doc.lanes["3"].expressions, { b: "E + log.E" });
+  assert.ok(!("expressions" in doc.lanes["2"]), "empty expressions are omitted");
+
+  const loaded = parseProject(stringifyProject(doc));
+  assert.deepEqual(loaded.extras.expressions, {
+    "1": { a: "round(1.2599210498948732 * C)" },
+    "2": {},
+    "3": { b: "E + log.E" },
+  });
+
+  // Schema-2 and schema-1 documents load with empty expression sources.
+  const legacyLanes = Object.fromEntries(
+    Object.entries(doc.lanes).map(([lane, data]) => {
+      const { expressions: _expressions, ...rest } = data;
+      return [lane, rest];
+    }),
+  );
+  const older = deserializeProject({ ...doc, schema: 2, lanes: legacyLanes });
+  assert.deepEqual(older.extras.expressions, { "1": {}, "2": {}, "3": {} });
+});
+
+test("schema 3: expression source values are lenient", () => {
+  const { lanes, routing } = patched();
+  const doc = serializeProject(lanes, routing, N, VIEW, null, NOW);
+  const loaded = deserializeProject({
+    ...doc,
+    lanes: {
+      ...doc.lanes,
+      "1": { ...doc.lanes["1"], expressions: { a: "  C + 1  ", b: 42 } },
+      "2": { ...doc.lanes["2"], expressions: "nope" },
+      "3": { ...doc.lanes["3"], expressions: { a: "x".repeat(5000) } },
+    },
+  });
+  assert.deepEqual(loaded.extras.expressions, {
+    "1": { a: "C + 1" },
+    "2": {},
+    "3": {},
+  });
 });
 
 test("routes and parked bases round-trip byte-identically", () => {

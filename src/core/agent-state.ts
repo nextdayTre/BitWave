@@ -35,6 +35,7 @@ export interface UiLaneState {
   visibility: Record<string, boolean>;
   sources: Record<string, UiSource>;
   driven: Record<string, boolean>;
+  expressions: Record<string, string | null>;
   derived: Record<string, { hex: string; popcount: number; truthCounts: number[] }>;
 }
 
@@ -49,6 +50,7 @@ export interface UiState {
   lfo: { on: boolean; mode: string; rate: number };
   dataset: { columns: string[]; rows: number; index: number; row: string[] } | null;
   editing: { copyArmed: boolean; enabled: boolean };
+  recording: { on: boolean; rows: number };
   deeplink: string;
   bridge: { schemaVersion: number; version: string };
 }
@@ -58,6 +60,7 @@ export interface UiStateOptions {
   lfoOn?: boolean;
   copyArmed?: boolean;
   ready?: boolean;
+  recording?: { on: boolean; rows: number };
 }
 
 interface RouteSource {
@@ -122,6 +125,10 @@ export function buildUiState(doc: ProjectDoc, options: UiStateOptions = {}): UiS
       [names.a]: routeA !== null,
       [names.b]: routeB !== null,
     };
+    const expressions: Record<string, string | null> = {
+      [names.a]: laneDoc.expressions?.a ?? null,
+      [names.b]: laneDoc.expressions?.b ?? null,
+    };
 
     lanes[lane] = {
       lane: Number(lane),
@@ -139,6 +146,7 @@ export function buildUiState(doc: ProjectDoc, options: UiStateOptions = {}): UiS
       visibility,
       sources,
       driven,
+      expressions,
       derived: {
         [names.z]: {
           hex: toHex(zBits, width),
@@ -153,7 +161,12 @@ export function buildUiState(doc: ProjectDoc, options: UiStateOptions = {}): UiS
   const focusedFrame: FrameKey = doc.lanes[focusedLane].focus ?? "a";
   const focusedState = lanes[focusedLane];
   const focusedOperand: "a" | "b" | null = focusedFrame === "z" ? null : focusedFrame;
-  const enabled = focusedOperand !== null && !focusedState.driven[FRAME_NAMES[focusedLane][focusedOperand]];
+  const focusedExpression = focusedOperand !== null
+    ? focusedState.expressions[FRAME_NAMES[focusedLane][focusedOperand]] !== null
+    : false;
+  const enabled = focusedOperand !== null
+    && !focusedState.driven[FRAME_NAMES[focusedLane][focusedOperand]]
+    && !focusedExpression;
 
   const mode: ViewMode = doc.view.split3d ? "split" : doc.view.view3d ? "3d" : "2d";
 
@@ -191,6 +204,10 @@ export function buildUiState(doc: ProjectDoc, options: UiStateOptions = {}): UiS
     editing: {
       copyArmed: options.copyArmed === true,
       enabled,
+    },
+    recording: {
+      on: options.recording?.on === true,
+      rows: options.recording?.rows ?? 0,
     },
     deeplink: options.deeplink ?? "",
     bridge: { schemaVersion: SCHEMA_VERSION, version: TOOLSET_VERSION },

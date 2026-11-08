@@ -1,6 +1,6 @@
 # BitWave — implementation status
 
-**Updated:** 2026-11-08 · **Phase:** F0 **done**, F1 **done**, F2 spine + render + UI modules done (pointer/lane controllers still in `main.js`), F3 source table + frame routing **done**, F4 accessibility + IA **done**, F5 persistence & reach **done**, **F6 distribution done**, and the **agent interface is done** (2026-11-08) — a shared DOM-free registry, `window.bitwave` bridge, hidden state, canonical `#bw=` links, zero-dependency CLI + MCP server, generated manifest/examples and a `keys | agent` help-panel tab, all additive; default rendering is pixel-identical and `window.BitWave` (schema 1) is unchanged. The plan's funded path is complete; Tauri remains deferred (D37).
+**Updated:** 2026-11-08 · **Phase:** F0 **done**, F1 **done**, F2 spine + render + UI modules done (pointer/lane controllers still in `main.js`), F3 source table + frame routing **done**, F4 accessibility + IA **done**, F5 persistence & reach **done**, **F6 distribution done**, the **agent interface done** (2026-11-08), and the **external-routing slice done** (2026-11-08, D40) — expression sources, a DAW-style Record/log, `.bitwave` schema 3, and bridge `setExpression`/`record`/`getLog` (toolset 1.1.0). The plan's funded path is complete; Tauri remains deferred (D37).
 **Source of truth:** [`PLAN.md`](PLAN.md) for the plan, [`DECISIONS.md`](DECISIONS.md) for choices taken, [`DESIGN.md`](DESIGN.md) for the visual contract. `index.html` is still untouched and remains the shipping instrument.
 
 ## Author decisions (2026-11-06)
@@ -38,6 +38,7 @@ cell enough? Confirm before the matrix lands in the app.
 | **F4 A11y + IA** | **Done** | DESIGN amended first (change protocol §13). Shipped: reflow/zoom contract, nibble spinbutton keyboard editing, landmarks/names/radiogroups, canvas alt, live status, reduced motion, 24 px targets, axe gate — then the author-approved IA pass: always-visible stage bar (lane + frames + split), module order `source | register edit | operate | derive | motion | view`, explicit `copy to…` menu, `width` rename + whole-word hex entry, reserved-space disabled placeholders, `?` keyboard map and truth-table semantics. Palette untouched (D10). |
 | **F5 Persistence & reach** | **Done** | `.bitwave` schema 2 (additive focus/frameVis, LFO mode/rate, dataset cursor) with a DOM-free app bridge; explicit `project…` menu (save/open/reset); debounced autosave + boot restore; `#bw=` URL-fragment share that wins over autosave; embedded 8-row demo dataset; visible dataset/status line that refuses empty/non-token CSVs; `?fresh` ephemeral sessions; stale `index.html.bak` deleted. Palette untouched (D10). |
 | **Agent interface** | **Done** | Additive agent layer (2026-11-08): `src/core/agent-*.ts` one registry/state/deeplink source; `window.bitwave` bridge (state/setters/call/subscribe/events) beside the untouched `window.BitWave`; hidden `#bitwave-state` + `body[data-agent-ready]`; `keys | agent` help-panel tab; `agent/cli.mjs` + `agent/mcp-server.mjs` (zero deps); generated `agent/manifest.json` + examples (`--check`); AGENTS/contract/llms/screenshot/ecosystem docs; hosted build serves the agent files. Default rendering pixel-identical (D39). |
+| **External routing** | **Done** | `.bitwave` schema 3 (expressions additive; schema 1/2 load); six source rows gain a validated `expr` editor; DAW-style Record toggle + bounded transient frame log + `export log`; expression-aware clocked pass (routes → expression sources → Z) with the previous row as `log.<frame>`; bridge `setExpression`/`record`/`getLog`, state `recording` + per-lane `expressions`; toolset 1.1.0. Float is a boundary authoring format (converted once to exact values). D40. |
 | **F6 Distribution** | **Done** | Hosted/installable PWA build (`dist/hosted/`): manifest + maskable icons, hash-versioned app-shell service worker, relative URLs, offline reload. The committed single-file `bitwave-v2.html` is untouched and still has zero external references (asserted). `npm run check:pwa` proves install/offline against the real built output; deploy/install/privacy guidance in [`docs/hosting.md`](docs/hosting.md). Tauri 2 deferred (D37). |
 
 ## F4 progress (2026-11-06) — complete
@@ -125,18 +126,18 @@ status line, §10.39–41 persistence invariants, §11 persistence checks, §12 
 
 ## Agent interface (2026-11-08) — done
 
-**Additive; default rendering pixel-identical (D39).** The agentify-local-tool build is
-complete on the existing `.bitwave` schema-2 state and DOM-free core:
+**Additive agent layer (D39).** The agentify-local-tool build is complete on the shared
+`.bitwave` project state and DOM-free core:
 
 - **One source of truth.** `src/core/agent-tools.ts` (6 pure tools, one envelope, closed
-  11-code error set, manifest, bridge patch validation), `agent-state.ts` (UI-state
+  12-code error set, manifest, bridge patch validation), `agent-state.ts` (UI-state
   builder), `agent-share.ts` (canonical `#bw=` links, no `savedAt`) and `agent-defaults.ts`
   (identity, enums, global frame names) are imported by the browser, CLI and MCP server.
-- **Browser.** `window.bitwave` (getState/getManifest/tools/call/getDeeplink, 10 setters,
-  subscribe, `bitwave:ready`/`bitwave:change`) beside the untouched read-only
-  `window.BitWave`; hidden `<pre id="bitwave-state" data-schema-version="1">`; readiness
-  marker; a `keys | agent` tab in the `?` help panel with status/copy controls/live state/
-  tool catalogue.
+- **Browser.** `window.bitwave` (getState/getManifest/tools/call/getDeeplink, 10 setters +
+  setExpression/record/getLog in the external-routing slice, subscribe,
+  `bitwave:ready`/`bitwave:change`) beside the untouched read-only `window.BitWave`; hidden
+  `<pre id="bitwave-state" data-schema-version="1">`; readiness marker; a `keys | agent` tab
+  in the `?` help panel with status/copy controls/live state/tool catalogue.
 - **Headless.** `agent/cli.mjs` (10 commands, envelope-only `--json`, exit 0/2/3/4),
   `agent/mcp-server.mjs` (NDJSON JSON-RPC 2.0, protocol 2025-06-18, zero deps),
   `agent/selftest.mjs` (23 checks) and generated `agent/manifest.json` +
@@ -146,20 +147,40 @@ complete on the existing `.bitwave` schema-2 state and DOM-free core:
 - **Distribution.** `build:pwa` copies `agent/`, `AGENTS.md`, `llms.txt` and the agent docs
   into `dist/hosted/`; `check:pwa` asserts the served manifest/example/llms.txt (8 checks).
 
+## External routing (2026-11-08) — done
+
+**Schema 3 expressions + DAW-style Record (D40).** The approved design note
+[`docs/EXTERNAL-ROUTING.md`](docs/EXTERNAL-ROUTING.md) is implemented as a vertical slice:
+
+- **Core.** `src/core/expression.ts` (deterministic exact-rational evaluator; no `eval`;
+  float is a boundary authoring format converted once), `external-routing.ts` (reference
+  clocked pipeline), schema 3 in `project.ts`, expression hook in `core/routing.ts` and
+  `state/routing.ts` (routes → expression sources → Z; previous row as `log.<frame>`).
+- **State/UI.** `S.slots[*].expressions`, `src/state/record.ts` (bounded transient log),
+  source-table `expr` rows with a validated one-line editor, Record toggle/count/export log,
+  expression-driven inputs read-only locally. Toolset 1.1.0; `window.bitwave` gains
+  `setExpression`/`record`/`getLog`, state gains `recording` + per-lane `expressions`.
+- **Persistence.** `.bitwave` schema 3 additive (schema 1/2 load); expressions round-trip;
+  the record log is session-only and never enters the project or share link.
+- **Float policy.** Float coefficients from audio/DSP tools are legitimate; conversion to
+  exact values happens once at the expression/import boundary with a declared rounding
+  contract. Exact internals are a reproducibility rule, not an anti-float stance.
+
 ## Verified this session
 
-- `npm test` → **112 + 6 tests, all pass, 0 fail** (core/state/actions/bindings/share/
-  project plus the agent registry, state builder and transports; the 6 app-bridge tests
-  run in a separate process because they replace the live singletons);
+- `npm test` → **125 + 7 tests, all pass, 0 fail** (core/state/actions/bindings/share/
+  project, expression routing, the agent registry/state/transports, and the 7 app-bridge
+  tests in a separate process because they replace the live singletons);
   `npm run typecheck` → **clean**.
-- `npm run build` → **`bitwave-v2.html`, 238.5 KB, single file**, no external references
-  (`tools/build-artifact.mjs` gate); the default 2-D view is **pixel-identical** to the
-  pre-agent artifact (`check:browser --compare`, 6/6 states).
+- `npm run build` → **`bitwave-v2.html`, 272.7 KB / 279,237 bytes, single file**, no
+  external references (`tools/build-artifact.mjs` gate). The default control row now
+  intentionally includes Record; pixel parity resumes from this slice's artifact, not the
+  pre-agent one.
 - `npm run check:browser` → **52/52 checks pass** on the built `bitwave-v2.html` (53 with
-  `--shots`/`--compare`), including the F5 persistence groups, the F4 reflow/keyboard/
-  semantics/axe groups and the §11 geometry assertion; the hidden agent node and bridge do
-  not alter the default pixels.
-- `npm run build:pwa` → **`dist/hosted/`** (index 244.7 KB, sw.js 1.6 KB, manifest 0.9 KB,
+  `--shots`/`--compare`), including the F5 persistence groups (now schema 3), the F4
+  reflow/keyboard/semantics/axe groups, the §11 geometry assertion and the source-table/
+  record controls; the hidden agent node and bridge do not alter the rendered stage.
+- `npm run build:pwa` → **`dist/hosted/`** (index 279.7 KB, sw.js 1.6 KB, manifest 0.9 KB,
   4 icons) with a hash cache version; the committed `bitwave-v2.html` was
   **byte-unchanged** (sha256 checked in the build itself); the build also serves `agent/`,
   `AGENTS.md`, `llms.txt` and the agent docs.
@@ -168,23 +189,27 @@ complete on the existing `.bitwave` schema-2 state and DOM-free core:
   served agent manifest + example envelope + `llms.txt`, and a reload with the origin
   server **stopped** still boots from cache with zero console errors; the single-file
   artifact contains no manifest/icon/SW references.
+- **External routing (schema 3):** temp CDP harness **28/28** (source-table `expr` commit
+  → D/Z2 change, invalid text restored/aria-invalid with zero events, bridge
+  `setExpression`/`record`/`getLog` lifecycle, no-op silence while armed, axe with the
+  editor open, export-log click, legacy bridge intact); `tests/share.test.ts` asserts
+  canonical links preserve expression sources (D1 regression); schema-3 project
+  round-trip/lenient tests and the app expression→log integration test pass. Agent
+  `selftest` 23/23 after the state-shape update.
 - **Agent layer:** `node agent/gen-agent-artifacts.mjs --check` → 8 files current;
-  `node agent/selftest.mjs` → 23/23; `node agent/verify-browser.mjs` → **17/17 PASS**
-  against artifact sha256 `478749A6…` (readiness, one change on mount, key set, hidden
-  state === `getState()`, legacy surface, manifest equality, synchronous setters, no-op
-  silence, invalid setter codes, register write, call envelopes, deeplink reload twice,
-  agent tab, no overflow 360/720/1440, subscribe semantics, 0 console errors); the bridge
-  CDP harness (temp) → 69/69 including LFO-yields-to-`setRegister`; axe clean on both help
-  tabs. Screenshots: `docs/agent/{default,ab-xor,width-16,agent-tab}.png` (1440×900,
-  158–247 KB) captured from the byte-identical build and visually inspected.
-- `npm run verify` → **exit 0** on the final tree: 112 + 6 tests, typecheck, single-file
-  build (artifact sha256 `478749A6…`), agent artifacts current, CLI/MCP selftest 23/23,
-  independent `agent/verify-browser.mjs` 17/17, existing browser harness 52/52, hosted
-  build + PWA 8/8. A separate `--compare` run against the pre-agent artifact is
-  **53/53 (6/6 states pixel-identical)**; the default 2-D state was identical in every
-  run (the harness now uses grayscale AA + a retry for Chromium compositing jitter, see
-  gap 11).
-- `npm run verify` wires all of the above into one gate.
+  `node agent/selftest.mjs` → 23/23; `node agent/verify-browser.mjs` → **30/30 PASS**
+  against artifact 279,237 B / sha256 `FE1789B0…`, independently updated for toolset 1.1.0 /
+  schema 3 (23-key bridge, 13-key state, 6 tools, 12 error codes; expression/record/getLog
+  lifecycle, invalid/no-op silence, a real `#bw=` reload twice with autosave cleared proving
+  schema-3 expression sources survive, legacy surface, agent tab, overflow 360/720/1440,
+  0 console errors). Screenshots: `docs/agent/{default,ab-xor,width-16,agent-tab,record}.png`
+  (1440×900, 146–247 KB) visually inspected; `record.png` shows an armed take with an `expr`
+  source open. The shared link now preserves expressions (D1 regression fixed).
+- `npm run verify` → **exit 0** on the final tree: 125 + 7 tests, typecheck, deterministic
+  single-file build, generated artifacts current, CLI/MCP selftest 23/23, independent
+  `agent/verify-browser.mjs` 30/30, existing browser harness 52/52, hosted build + PWA
+  8/8. Pre-slice `--compare` is retired as the baseline because the Record control is an
+  intentional default-view change; compare against this slice's artifact if needed.
 - **F4 slice 1 — reflow/zoom (D27):** parity was 6/6 pixel-identical against the pre-F4
   artifact at normal viewports (measured before the IA slice, which intentionally changes the
   layout); at 640×360 and 360×225 CSS px the page scrolls, the stage stays 220 px and every
@@ -277,10 +302,12 @@ complete on the existing `.bitwave` schema-2 state and DOM-free core:
 | [`src/state/actions.ts`](src/state/actions.ts) | Commands: core unary ops/presets, focus/binop/visibility/bit/nibble/hex/copy/unpair |
 | [`src/state/bindings.ts`](src/state/bindings.ts) | Six input bindings, data/frame/none sources, driven + parked-base helpers |
 | [`src/state/routing.ts`](src/state/routing.ts) | Core `LaneMap` adapter + `evaluate()` running `src/core/routing.ts` |
-| [`src/state/project-bridge.ts`](src/state/project-bridge.ts) | App ↔ `.bitwave` schema-2 bridge: capture/apply, unknown-field preservation |
+| [`src/state/project-bridge.ts`](src/state/project-bridge.ts) | App ↔ `.bitwave` schema-3 bridge: capture/apply, expressions, unknown-field preservation |
+| [`src/state/record.ts`](src/state/record.ts) | Transient DAW-style frame log (bounded ring, `lastLog`, CSV export) |
 | [`src/state/dataset.ts`](src/state/dataset.ts) | Dataset state (columns, rows, cursor) shared by the shell and canvas code |
 | [`src/render/`](src/render/canvas.js) | Canvas + 3-D field, strip, readouts; the only DOM/canvas renderers |
-| [`src/ui/source-table.js`](src/ui/source-table.js) | The six-row matrix panel: data/frame/none source, B-style labels, state chips |
+| [`src/ui/source-table.js`](src/ui/source-table.js) | The six-row matrix panel: data/frame/expr/none source, validated expression editor, B-style labels, state chips |
+| [`src/ui/record.js`](src/ui/record.js) | Record toggle/count/export-log UI + store subscription |
 | [`src/ui/`](src/ui/frame-navigator.js) | Frame navigator, stage bar (lane/frames/split), copy menu, project menu, keyboard map + map panel, CSV stepper, controls + LFO, committed-change live status |
 | [`src/ui/copy-menu.js`](src/ui/copy-menu.js) | Explicit `copy to…` menu: focus-in, arrow nav, Esc, spoken copy confirmation |
 | [`src/ui/project-menu.js`](src/ui/project-menu.js) | `project…` menu: save/open/reset with the same focus contract |
@@ -289,7 +316,9 @@ complete on the existing `.bitwave` schema-2 state and DOM-free core:
 | [`testcsv.xlsx`](testcsv.xlsx), [`examples/testcsv.csv`](examples/testcsv.csv) | The four-column layout sample; CSV twin for the importer |
 | [`vite.config.mjs`](vite.config.mjs) | Vite 8 build: `src/` → `dist/index.html`, no minification |
 | [`tools/build-artifact.mjs`](tools/build-artifact.mjs) | Single-file gate: verifies no external refs, writes `bitwave-v2.html` |
-| [`src/core/`](src/core/index.ts) | DOM-free engine (13 modules, ~1,700 lines), lanes 1/2/3, project schema + share codec |
+| [`src/core/`](src/core/index.ts) | DOM-free engine, lanes 1/2/3, schema-3 project + share codec, exact expression evaluator |
+| [`src/core/expression.ts`](src/core/expression.ts) | Deterministic rational register-expression evaluator (no `eval`; float is a boundary format) |
+| [`src/core/external-routing.ts`](src/core/external-routing.ts) | Reference clocked pipeline and prototype checks |
 | [`src/core/agent-tools.ts`](src/core/agent-tools.ts) | Agent registry, one envelope, closed error set, manifest, canonical deeplink, bridge patch validation |
 | [`src/core/agent-state.ts`](src/core/agent-state.ts) | Pure UI-state builder shared by bridge, `#bitwave-state` and CLI `state` |
 | [`src/core/agent-share.ts`](src/core/agent-share.ts) | Canonical `#bw=` link builder (no `savedAt`, dataset-drop budget) |
@@ -300,7 +329,7 @@ complete on the existing `.bitwave` schema-2 state and DOM-free core:
 | [`docs/AGENT-SCREENSHOTS.md`](docs/AGENT-SCREENSHOTS.md) | Reproducible agent-state screenshots + headless extraction recipes |
 | [`docs/BITWAVE-ECOSYSTEM-MAP.md`](docs/BITWAVE-ECOSYSTEM-MAP.md) | Honest cross-tool map (live = none; planned handoffs) |
 | [`AGENTS.md`](AGENTS.md), [`llms.txt`](llms.txt) | Agent onboarding + compact machine index |
-| [`tests/`](tests/design-invariants.test.ts) | 12 test files: core/state/app plus agent registry, state and transports |
+| [`tests/`](tests/design-invariants.test.ts) | 13 test files: core/state/app, expression routing, plus agent registry, state and transports |
 | [`examples/demo.bitwave.json`](examples/demo.bitwave.json) | Versioned project document (lanes 1/2/3; routes + parked bases; dataset) |
 | [`spike/routing-matrix.html`](spike/routing-matrix.html) | The reference housing prototype that F3 implements (360 lines) |
 | [`spike/f4-ia.html`](spike/f4-ia.html) | The author-approved F4 IA layout mockup (annotated, 1440/720/360 screenshots) |
@@ -312,7 +341,7 @@ complete on the existing `.bitwave` schema-2 state and DOM-free core:
 | [`docs/hosting.md`](docs/hosting.md) | Share/deploy/install/offline/privacy guidance for researchers |
 | [`tools/make-example-project.ts`](tools/make-example-project.ts) | Regenerates the example |
 | `window.BitWave` in [`bitwave-v2.html`](bitwave-v2.html) | Legacy read-only, schema-1 state/geometry/bindings surface; contract in [`AGENTS.md`](AGENTS.md) |
-| [`DECISIONS.md`](DECISIONS.md) | D1–D39, including the author decisions, F4–F6 passes and the agent-layer decision (D39) |
+| [`DECISIONS.md`](DECISIONS.md) | D1–D40, including the author decisions, F4–F6 passes, the agent layer (D39) and external routing (D40) |
 
 ## Known gaps and blockers
 
@@ -335,7 +364,7 @@ complete on the existing `.bitwave` schema-2 state and DOM-free core:
    app path is not yet driven by the browser check.
 6. **A newer `.bitwave` schema is refused, not opened read-only.** The plan's "open read-only"
    path for a future schema is not built; the UI reports a clear error and leaves the current
-   instrument untouched. Low risk while schema 2 is the only shipped format.
+   instrument untouched. Low risk while schema 3 is the only shipped format.
 7. **Project save is not browser-asserted end-to-end.** Open/apply/reset, autosave and share
    are driven in Chromium; the `save project` download path is exercised by the unit-tested
    façade but not captured by the harness (no download interception).
@@ -353,8 +382,21 @@ complete on the existing `.bitwave` schema-2 state and DOM-free core:
     AA and retries a mismatching state up to three times: Chromium software compositing can
     shift a handful of glyph-edge pixels by 1–2 levels between two runs of the *same*
     artifact (reproduced on 2026-11-08; the 3d-focus-z1 state showed a 21-pixel text-AA
-    difference). A persistent difference still fails the gate; the default 2-D state was
-    identical in every run. This is test-tooling robustness, not an app change.
+    difference). A persistent difference still fails the gate. This is test-tooling
+    robustness, not an app change. Since the external-routing slice adds the Record control,
+    pre-slice `--compare` runs are no longer the baseline; compare against this artifact.
+12. **Expressions are ordered by the route graph, not by their own references.** In v1 an
+    expression reads the current frames of lanes already settled in route-topo order; a
+    forward reference to a lane not yet visited sees its previous-transaction value. The
+    documented Z1→C / D / Z2→E / F / Z3 pipeline is correct; arbitrary expression-only
+    dependency chains need a future dependency pass.
+13. **Float input is a boundary format, not a float-valued expression mode.** Float
+    coefficients are converted once to exact rationals/declared precision; a full
+    float-valued expression mode with its own rounding/precision contract is not shipped.
+14. **Agent route/source setters are deferred.** The bridge exposes
+    `setExpression`/`record`/`getLog`, but not a `setSource`/`setRoute`; routes are still
+    edited in the source table or a project document. A future bridge setter (and an optional
+    pure `evaluate_expression` tool) would let an agent build the whole pipeline headlessly.
 
 ## Errata found
 
@@ -384,8 +426,10 @@ infrastructure):
    the artifact check, CLI/MCP selftest and the independent `agent/verify-browser.mjs`);
    regenerate `agent/manifest.json` + examples when `src/core/agent-tools.ts` changes.
    Populate `relatedTools` only when a real, tested handoff exists (ecosystem map).
-5. **External routing (design-stage):** [`docs/EXTERNAL-ROUTING.md`](docs/EXTERNAL-ROUTING.md)
-   pins the Record/log and expression-operand semantics; the Node-only prototype is
+5. **External routing (shipped 2026-11-08, D40):** expressions, Record/log, schema 3 and the
+   bridge/state surface are live; the design record is
+   [`docs/EXTERNAL-ROUTING.md`](docs/EXTERNAL-ROUTING.md), with the Node reference model at
    `node tools/prototype-external-routing.mjs --check` (27 checks) and
-   `tests/external-routing.test.ts`. No app/UI/schema change yet; the source-table
-   `expr` rows + Record toggle are the next UI slice if the design is approved.
+   `tests/external-routing.test.ts`. Follow-ups: bridge `setSource`/`setRoute` (gap 14),
+   expression dependency ordering (gap 12), a float-valued mode only if requested (gap 13),
+   and optional log export through the observation CSV path.

@@ -1,14 +1,17 @@
 #!/usr/bin/env node
 /**
- * Independent browser verification for the BitWave agent layer.
+ * Independent browser verification for the BitWave agent layer (toolset 1.1.0).
  *
  * Drives the built single-file artifact (`bitwave-v2.html`) over `file://` in a
  * fresh-profile headless Chrome/Edge over the DevTools Protocol, then asserts the
- * contract in docs/AGENT-INTERFACE.md. Zero dependencies.
+ * contract in docs/AGENT-INTERFACE.md — including the external-routing slice:
+ * expression sources (`setExpression`), the transient Record take (`record`,
+ * `getLog`) and the schema-3 state fields (`expressions`, `recording`).
  *
- * Expectations are derived from `src/core` (the tool registry, the envelope, the
- * document codec) — never from the page's own helpers — so this check would catch
- * a page that agrees with itself but not with the contract.
+ * Expectations are derived from `src/core` (the tool registry, the manifest, the
+ * state builder, the project codec, the expression evaluator) — never from the
+ * page's own helpers — so this check would catch a page that agrees with itself
+ * but not with the contract.
  *
  * Usage:
  *   node agent/verify-browser.mjs
@@ -33,8 +36,13 @@ import {
   getManifest,
   normalizeAgentPatch,
 } from "../src/core/agent-tools.ts";
-import { deserializeProject } from "../src/core/project.ts";
+import { FRAME_NAMES, bootProjectDoc } from "../src/core/agent-defaults.ts";
+import { buildUiState } from "../src/core/agent-state.ts";
+import { evaluateExpression } from "../src/core/expression.ts";
+import { PROJECT_SCHEMA, deserializeProject } from "../src/core/project.ts";
 import { parseShareHash } from "../src/core/share.ts";
+import { computeZ } from "../src/core/derive.ts";
+import { bigToReg, fromHex, regToBig, toHex } from "../src/core/registers.ts";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const argv = process.argv.slice(2);
@@ -47,7 +55,7 @@ function flag(name, fallback) {
 const artifactPath = resolve(flag("--artifact", join(ROOT, "bitwave-v2.html")));
 const artifactUrl = pathToFileURL(artifactPath).href;
 
-/** The bridge surface the contract promises (docs/AGENT-INTERFACE.md §7). */
+/** The bridge surface the contract promises: v1 base + toolset 1.1.0 additions. */
 const BRIDGE_KEYS = [
   "schemaVersion",
   "version",
@@ -66,10 +74,17 @@ const BRIDGE_KEYS = [
   "setBinop",
   "setLfo",
   "setDataset",
+  "setExpression",
+  "record",
+  "getLog",
   "stepDataset",
   "reset",
   "subscribe",
 ].sort();
+
+/** The nine global frame names, in lane order; derived from the shared core. */
+const FRAME_LIST = ["1", "2", "3"].flatMap((lane) => Object.values(FRAME_NAMES[lane]));
+const LANE_KEYS = ["1", "2", "3"];
 
 const CHROME_CANDIDATES = [
   process.env.BITWAVE_CHROME,
@@ -108,6 +123,70 @@ function findChrome() {
   return CHROME_CANDIDATES.find((candidate) => existsSync(candidate)) ?? null;
 }
 
+/** Every global frame word of the boot document, as a name → BigInt map. */
+function bootFrameWords() {
+  const doc = bootProjectDoc();
+  const width = doc.N;
+  const frames = {};
+  for (const laneKey of LANE_KEYS) {
+    const lane = doc.lanes[laneKey];
+    const names = FRAME_NAMES[laneKey];
+    frames[names.a] = regToBig(fromHex(lane.a, width), width);
+    frames[names.b] = regToBig(fromHex(lane.b, width), width);
+    frames[names.z] = regToBig(
+      computeZ(fromHex(lane.a, width), fromHex(lane.b, width), width, lane.binop),
+      width,
+    );
+  }
+  return frames;
+}
+
+/**
+ * The register value an expression source must produce from the boot document
+ * (the page under test starts from its boot state in the fresh session).
+ */
+function expectedExpressionHex(source) {
+  const doc = bootProjectDoc();
+  const width = doc.N;
+  const value = evaluateExpression(source, { width, frames: bootFrameWords() });
+  const bits = new Uint8Array(width);
+  bigToReg(value, bits, width);
+  return toHex(bits, width);
+}
+
+/** Expected frames after `setExpression("D", "C + 1")`: D from the expression, Z2 derived. */
+function expectedPairExpression() {
+  const doc = bootProjectDoc();
+  const width = doc.N;
+  const dHex = expectedExpressionHex("C + 1");
+  const dBits = fromHex(dHex, width);
+  const z2 = computeZ(fromHex(doc.lanes["2"].a, width), dBits, width, doc.lanes["2"].binop);
+  return { d: dHex, z2: toHex(z2, width) };
+}
+
+/** State key sets derived from the shared builder, not from the page. */
+function expectedStateShapes() {
+  const expected = buildUiState(bootProjectDoc(), {
+    deeplink: "expected://state",
+    lfoOn: false,
+    copyArmed: false,
+    recording: { on: false, rows: 0 },
+  });
+  return {
+    state: Object.keys(expected).sort(),
+    lane: Object.keys(expected.lanes["1"]).sort(),
+    laneKeys: LANE_KEYS,
+    expected,
+  };
+}
+
+/** Page state split into the deterministic body (no live URL) plus deeplink. */
+function stateBody(state) {
+  const copy = JSON.parse(JSON.stringify(state));
+  delete copy.deeplink;
+  return copy;
+}
+
 class Protocol {
   constructor() {
     this.port = null;
@@ -116,7 +195,7 @@ class Protocol {
     this.profile = null;
     this.nextId = 0;
     this.pending = new Map();
-    this.events = [];
+    this.rawEvents = [];
   }
 
   async start(chromePath) {
@@ -164,7 +243,7 @@ class Protocol {
         else waiter.done(message.result);
         return;
       }
-      this.events.push(message);
+      this.rawEvents.push(message);
     };
     await this.send("Page.enable");
     await this.send("Runtime.enable");
@@ -198,8 +277,13 @@ class Protocol {
     return result.result.value;
   }
 
+  /** A real navigation (no same-URL short-circuit) followed by readiness. */
   async navigate(url, timeoutMs = 20000) {
-    await this.send("Page.navigate", { url });
+    if (url !== "about:blank") {
+      await this.send("Page.navigate", { url });
+    } else {
+      await this.send("Page.navigate", { url });
+    }
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
       const ready = await this.evaluate(`(() => {
@@ -212,7 +296,6 @@ class Protocol {
         );
       })()`);
       if (ready) {
-        // Let the first render settle (fonts + the install transaction).
         await this.evaluate("document.fonts.ready.then(() => true)");
         await sleep(100);
         return;
@@ -222,10 +305,21 @@ class Protocol {
     throw new Error(`page never became agent-ready: ${url}`);
   }
 
+  /** Force a real document load (used to prove a deeplink really reloads). */
+  async reload(url) {
+    await this.send("Page.navigate", { url: "about:blank" });
+    await sleep(150);
+    await this.navigate(url);
+  }
+
+  async eventCounters() {
+    return this.evaluate(`window.__bitwaveVerify`);
+  }
+
   /** Console errors, page exceptions and error-level log entries since start. */
   errorEvents() {
     const errors = [];
-    for (const event of this.events) {
+    for (const event of this.rawEvents) {
       if (event.method === "Runtime.consoleAPICalled" && event.params.type === "error") {
         errors.push({ kind: "console.error", text: event.params.args.map(describeRemote).join(" ") });
       } else if (event.method === "Runtime.exceptionThrown") {
@@ -295,7 +389,6 @@ async function main() {
   const browser = new Protocol();
   const results = [];
   let fatal = null;
-
   const run = async (name, fn) => {
     try {
       await fn();
@@ -304,30 +397,40 @@ async function main() {
       results.push({ name, ok: false, detail: error instanceof Error ? error.message : String(error) });
     }
   };
+  const freshUrl = `${artifactUrl}?fresh`;
+  const state = () => browser.evaluate("document.querySelector('#bitwave-state').textContent").then(JSON.parse);
+  const liveState = () => browser.evaluate("window.bitwave.getState()");
+  const changeCount = async () => (await browser.eventCounters()).changes;
 
   try {
     await browser.start(chromePath);
-    await browser.navigate(artifactUrl);
+    /* A fresh session makes the boot state deterministic (no autosave/URL carry-over). */
+    await browser.navigate(freshUrl);
+
     await run("supplied artifact boots and mounts the bridge", async () => {
       assertEqual(await browser.evaluate("typeof window.bitwave"), "object");
       assertEqual(await browser.evaluate("document.body.dataset.agentReady"), "true");
     });
 
     await run("exactly one bitwave:ready and one bitwave:change on mount", async () => {
-      const events = await browser.evaluate("window.__bitwaveVerify");
-      assertEqual(events, { ready: 1, changes: 1 });
+      assertEqual(await browser.eventCounters(), { ready: 1, changes: 1 });
     });
 
     await run("bridge identity matches the contract", async () => {
       assertEqual(await browser.evaluate("window.bitwave.schemaVersion"), SCHEMA_VERSION);
       assertEqual(await browser.evaluate("window.bitwave.version"), TOOLSET_VERSION);
       assertEqual(await browser.evaluate("window.bitwave.ready"), true);
-      assertEqual(await browser.evaluate("document.querySelector('#bitwave-state').dataset.schemaVersion"), String(SCHEMA_VERSION));
+      assertEqual(
+        await browser.evaluate("document.querySelector('#bitwave-state').dataset.schemaVersion"),
+        String(SCHEMA_VERSION),
+      );
     });
 
-    await run("bridge exposes exactly the contract surface", async () => {
-      const keys = await browser.evaluate("Object.keys(window.bitwave).sort()");
-      assertEqual(keys, BRIDGE_KEYS);
+    await run("bridge exposes exactly the contract surface (v1 + 1.1.0 additions)", async () => {
+      assertEqual(await browser.evaluate("Object.keys(window.bitwave).sort()"), BRIDGE_KEYS);
+      assertEqual(await browser.evaluate("typeof window.bitwave.setExpression"), "function");
+      assertEqual(await browser.evaluate("typeof window.bitwave.record"), "function");
+      assertEqual(await browser.evaluate("typeof window.bitwave.getLog"), "function");
     });
 
     await run("#bitwave-state parses and === JSON.stringify(getState())", async () => {
@@ -338,6 +441,28 @@ async function main() {
       assertEqual(parsed.schemaVersion, SCHEMA_VERSION);
       assertEqual(parsed.ready, true);
       assertEqual(parsed.bridge, { schemaVersion: SCHEMA_VERSION, version: TOOLSET_VERSION });
+    });
+
+    await run("state matches the core UI-state builder on the boot document", async () => {
+      const pageState = await state();
+      const { expected } = expectedStateShapes();
+      assertEqual(stateBody(pageState), stateBody(expected));
+      assertEqual(pageState.recording, { on: false, rows: 0 });
+      for (const lane of LANE_KEYS) {
+        assertEqual(pageState.lanes[lane].expressions, {
+          [FRAME_NAMES[lane].a]: null,
+          [FRAME_NAMES[lane].b]: null,
+        });
+      }
+    });
+
+    await run("state carries the 1.1.0 keys (recording, per-lane expressions)", async () => {
+      const { state: expectedStateKeys, lane: expectedLaneKeys } = expectedStateShapes();
+      assertEqual(Object.keys(await state()).sort(), expectedStateKeys);
+      assert((await state()).recording && typeof (await state()).recording.on === "boolean", "recording.on missing");
+      for (const lane of LANE_KEYS) {
+        assertEqual(Object.keys((await state()).lanes[lane]).sort(), expectedLaneKeys, `lane ${lane} keys`);
+      }
     });
 
     await run("legacy window.BitWave read-only surface is unchanged", async () => {
@@ -362,8 +487,10 @@ async function main() {
     await run("getManifest() deep-equals the core manifest", async () => {
       const pageManifest = await browser.evaluate("window.bitwave.getManifest()");
       assertEqual(pageManifest, getManifest());
+      assertEqual(pageManifest.version, TOOLSET_VERSION);
       assertEqual(pageManifest.relatedTools, []);
       assertEqual(pageManifest.tools.length, TOOLS.length);
+      assert(pageManifest.errorCodes.includes("E_INVALID_EXPRESSION"), "manifest lacks E_INVALID_EXPRESSION");
     });
 
     await run("setState({lane:2}) is truthful synchronously", async () => {
@@ -383,7 +510,7 @@ async function main() {
     });
 
     await run("a no-op setter emits no bitwave:change", async () => {
-      const before = await browser.evaluate("window.__bitwaveVerify.changes");
+      const before = await changeCount();
       const result = await browser.evaluate(`(() => {
         const result = window.bitwave.setState({ lane: 2 });
         return { ok: result.ok, changes: window.__bitwaveVerify.changes };
@@ -411,13 +538,15 @@ async function main() {
             ok: result.ok,
             code: result.error && result.error.code,
             responseError: result.error && typeof result.error.message === "string",
-            responseStateWidth: result.state && result.state.width,
             stateUnchanged: JSON.stringify(after) === before,
             immediateWidth: after.width,
           };
         })()`);
         assertEqual(result.ok, false);
-        assert(typeof result.code === "string" && result.code.startsWith("E_"), `expected a closed E_* code, got ${result.code}`);
+        assert(
+          typeof result.code === "string" && result.code.startsWith("E_"),
+          `expected a closed E_* code, got ${result.code}`,
+        );
         assertEqual(result.code, expected);
         assert(result.responseError, "failure envelope has no error message");
         assert(result.stateUnchanged, `${JSON.stringify(patch)} mutated the state`);
@@ -432,7 +561,7 @@ async function main() {
       })()`);
       assertEqual(result.ok, true);
       assertEqual(result.value, "00000000DEADBEEF");
-      await browser.evaluate("window.bitwave.setState({ reset: true })");
+      await browser.evaluate("window.bitwave.reset()");
     });
 
     await run("call() envelopes equal the core registry (success + unknown + bad args)", async () => {
@@ -449,30 +578,266 @@ async function main() {
       }
     });
 
-    await run("a #bw= deeplink reload reproduces the state twice", async () => {
+    /* ── external routing: expression sources (toolset 1.1.0) ───────────── */
+
+    await run("setExpression computes D/Z2, records the source and emits one change", async () => {
+      await browser.navigate(freshUrl);
+      const before = await changeCount();
+      const result = await browser.evaluate(`(() => {
+        const result = window.bitwave.setExpression("D", "C + 1");
+        const state = window.bitwave.getState();
+        return {
+          ok: result.ok,
+          d: state.lanes["2"].frames.D,
+          z2: state.lanes["2"].frames.Z2,
+          expressions: state.lanes["2"].expressions,
+          hiddenMatches: document.querySelector("#bitwave-state").textContent === JSON.stringify(state),
+          changes: window.__bitwaveVerify.changes,
+        };
+      })()`);
+      const expected = expectedPairExpression();
+      assertEqual(result.ok, true);
+      assertEqual(result.d, expected.d);
+      assertEqual(result.z2, expected.z2);
+      assertEqual(result.expressions, { C: null, D: "C + 1" });
+      assertEqual(result.hiddenMatches, true);
+      assertEqual(result.changes, before + 1);
+    });
+
+    await run("a no-op expression emits no bitwave:change", async () => {
+      const before = await changeCount();
+      const result = await browser.evaluate(`(() => {
+        const result = window.bitwave.setExpression("D", "C + 1");
+        return { ok: result.ok, changes: window.__bitwaveVerify.changes };
+      })()`);
+      assertEqual(result.ok, true);
+      assertEqual(result.changes, before);
+    });
+
+    await run("invalid expression returns E_INVALID_EXPRESSION and mutates nothing", async () => {
+      const expected = normalizeAgentPatch({ expression: { frame: "D", text: "C +" } });
+      assertEqual(expected.ok, false);
+      assertEqual(expected.error.code, "E_INVALID_EXPRESSION");
+      const before = await changeCount();
+      const result = await browser.evaluate(`(() => {
+        const beforeState = JSON.stringify(window.bitwave.getState());
+        const result = window.bitwave.setExpression("D", "C +");
+        return {
+          ok: result.ok,
+          code: result.error && result.error.code,
+          unchanged: JSON.stringify(window.bitwave.getState()) === beforeState,
+          changes: window.__bitwaveVerify.changes,
+        };
+      })()`);
+      assertEqual(result.ok, false);
+      assertEqual(result.code, "E_INVALID_EXPRESSION");
+      assertEqual(result.unchanged, true);
+      assertEqual(result.changes, before);
+    });
+
+    await run("an expression source rejects derived and unknown frames", async () => {
+      const before = await changeCount();
+      const derived = await browser.evaluate(`(() => {
+        const result = window.bitwave.setExpression("Z1", "1");
+        return { ok: result.ok, code: result.error && result.error.code };
+      })()`);
+      const unknown = await browser.evaluate(`(() => {
+        const result = window.bitwave.setExpression("Q", "1");
+        return { ok: result.ok, code: result.error && result.error.code };
+      })()`);
+      assertEqual(derived.ok, false);
+      assertEqual(derived.code, "E_BAD_ENUM");
+      assertEqual(unknown.ok, false);
+      assertEqual(unknown.code, "E_BAD_ENUM");
+      assertEqual(await changeCount(), before);
+    });
+
+    await run("clearing an expression source keeps the frame and clears the source", async () => {
+      const result = await browser.evaluate(`(() => {
+        const result = window.bitwave.setExpression("D", "");
+        const state = window.bitwave.getState();
+        return { ok: result.ok, expressions: state.lanes["2"].expressions };
+      })()`);
+      assertEqual(result.ok, true);
+      assertEqual(result.expressions, { C: null, D: null });
+    });
+
+    /* ── external routing: the transient Record take ────────────────────── */
+
+    await run("record(true) arms a fresh take; re-arming is a silent no-op", async () => {
+      await browser.navigate(freshUrl);
+      const dataset = await browser.evaluate(
+        `window.bitwave.setDataset({ csv: "Hex 1,Hex 2\\n00000001,00000002\\n00000003,00000004" })`,
+      );
+      assertEqual(dataset.ok, true);
+      const before = await changeCount();
+      const armed = await browser.evaluate(`(() => {
+        const result = window.bitwave.record(true);
+        return { ok: result.ok, recording: result.state.recording, log: window.bitwave.getLog().rows.length, changes: window.__bitwaveVerify.changes };
+      })()`);
+      assertEqual(armed.ok, true);
+      assertEqual(armed.recording, { on: true, rows: 0 });
+      assertEqual(armed.log, 0);
+      assertEqual(armed.changes, before + 1);
+      const beforeAgain = await changeCount();
+      const again = await browser.evaluate(`(() => {
+        const result = window.bitwave.record(true);
+        return { ok: result.ok, rows: result.state.recording.rows, changes: window.__bitwaveVerify.changes };
+      })()`);
+      assertEqual(again.ok, true);
+      assertEqual(again.rows, 0);
+      assertEqual(again.changes, beforeAgain);
+    });
+
+    await run("recorded updates append rows with all nine frames", async () => {
+      const step = await browser.evaluate(`(() => {
+        const result = window.bitwave.stepDataset(1);
+        return { ok: result.ok, recording: result.state.recording };
+      })()`);
+      assertEqual(step.ok, true);
+      assertEqual(step.recording, { on: true, rows: 1 });
+      const registered = await browser.evaluate(`(() => {
+        const result = window.bitwave.setRegister("A", "0123456789ABCDEF");
+        return { ok: result.ok, recording: result.state.recording };
+      })()`);
+      assertEqual(registered.ok, true);
+      assertEqual(registered.recording, { on: true, rows: 2 });
+
+      const log = await browser.evaluate("window.bitwave.getLog()");
+      assertEqual(log.ok, true);
+      assertEqual(log.rows.length, 2);
+      assertEqual(log.rows.map((row) => row.step), [1, 2]);
+      for (const row of log.rows) {
+        assertEqual(Object.keys(row.frames).sort(), [...FRAME_LIST].sort());
+        for (const name of FRAME_LIST) {
+          assert(/^[0-9A-F]+$/.test(row.frames[name]), `row frame ${name} is not uppercase hex: ${row.frames[name]}`);
+        }
+      }
+      const pageState = await state();
+      const stateFrames = {};
+      for (const lane of LANE_KEYS) Object.assign(stateFrames, pageState.lanes[lane].frames);
+      const last = log.rows[log.rows.length - 1];
+      assertEqual(last.frames, stateFrames);
+      assertEqual(pageState.recording, { on: true, rows: 2 });
+    });
+
+    await run("getLog limit/error semantics", async () => {
+      const result = await browser.evaluate(`(() => {
+        const full = window.bitwave.getLog();
+        return {
+          one: window.bitwave.getLog({ limit: 1 }).rows,
+          zero: window.bitwave.getLog({ limit: 0 }).rows.length,
+          many: window.bitwave.getLog({ limit: 99 }).rows.length,
+          none: window.bitwave.getLog(),
+          nullish: window.bitwave.getLog(null),
+          string: window.bitwave.getLog("x"),
+          fraction: window.bitwave.getLog({ limit: 1.5 }),
+          negative: window.bitwave.getLog({ limit: -1 }),
+          unknown: window.bitwave.getLog({ bogus: 1 }),
+          lastFull: full.rows[full.rows.length - 1],
+        };
+      })()`);
+      assertEqual(result.one.length, 1);
+      assertEqual(result.one[0], result.lastFull);
+      assertEqual(result.zero, 0);
+      assertEqual(result.many, 2);
+      assertEqual(result.none.ok, true);
+      assertEqual(result.nullish.ok, true);
+      assertEqual(result.string.error.code, "E_BAD_ARGS");
+      assertEqual(result.fraction.error.code, "E_BAD_ARGS");
+      assertEqual(result.negative.error.code, "E_OUT_OF_RANGE");
+      assertEqual(result.unknown.error.code, "E_BAD_ARGS");
+    });
+
+    await run("a no-op setter does not grow the recorded take", async () => {
+      const before = await changeCount();
+      const result = await browser.evaluate(`(() => {
+        const lane = window.bitwave.getState().lane;
+        const result = window.bitwave.setState({ lane });
+        return { ok: result.ok, recording: result.state.recording, changes: window.__bitwaveVerify.changes };
+      })()`);
+      assertEqual(result.ok, true);
+      assertEqual(result.recording.rows, 2);
+      assertEqual(result.changes, before);
+    });
+
+    await run("record(false) freezes the take and the record UI reflects it", async () => {
+      const result = await browser.evaluate(`(() => {
+        const result = window.bitwave.record(false);
+        const button = document.getElementById("recordBtn");
+        const count = document.getElementById("recordCount");
+        return {
+          ok: result.ok,
+          recording: result.state.recording,
+          pressed: button && button.getAttribute("aria-pressed"),
+          count: count && count.textContent.trim(),
+          exportDisabled: document.getElementById("exportLogBtn")?.disabled,
+        };
+      })()`);
+      assertEqual(result.ok, true);
+      assertEqual(result.recording, { on: false, rows: 2 });
+      assertEqual(result.pressed, "false");
+      assertEqual(result.count, "2 rows");
+      assertEqual(result.exportDisabled, false);
+      const stepped = await browser.evaluate(`(() => {
+        const result = window.bitwave.stepDataset(1);
+        return { ok: result.ok, recording: result.state.recording, log: window.bitwave.getLog().rows.length };
+      })()`);
+      assertEqual(stepped.ok, true);
+      assertEqual(stepped.recording, { on: false, rows: 2 });
+      assertEqual(stepped.log, 2);
+      const before = await changeCount();
+      const again = await browser.evaluate(`window.bitwave.record(false)`);
+      assertEqual(again.ok, true);
+      assertEqual(await changeCount(), before);
+    });
+
+    await run("re-arming record starts a fresh take", async () => {
+      const result = await browser.evaluate(`(() => {
+        const result = window.bitwave.record(true);
+        return { ok: result.ok, recording: result.state.recording, log: window.bitwave.getLog().rows.length };
+      })()`);
+      assertEqual(result.ok, true);
+      assertEqual(result.recording, { on: true, rows: 0 });
+      assertEqual(result.log, 0);
+      await browser.evaluate("window.bitwave.record(false)");
+    });
+
+    /* ── deeplink: schema 3, expression sources, real reload ────────────── */
+
+    await run("a #bw= deeplink carries schema-3 expression sources and reloads twice", async () => {
       await browser.navigate(artifactUrl);
+      await browser.evaluate("window.bitwave.reset()");
       await browser.evaluate("window.bitwave.setState({ lane: 2, width: 16 })");
+      const expression = await browser.evaluate(
+        `window.bitwave.setExpression("D", "C + 1")`,
+      );
+      assertEqual(expression.ok, true);
+      const beforeState = stateBody(await liveState());
       const link = await browser.evaluate("window.bitwave.getDeeplink()");
       assert(link.startsWith(artifactUrl + "#bw="), `getDeeplink() is not the canonical app link: ${link}`);
-      // Independent decode: the fragment must carry the very state we set.
+
+      /* Independent decode: the fragment must be a schema-3 doc with the expression. */
       const doc = parseShareHash(new URL(link).hash);
       assert(doc !== null, "fragment did not decode");
+      assertEqual(doc.schema, PROJECT_SCHEMA);
+      assertEqual(doc.lanes["2"].expressions, { b: "C + 1" });
       const engine = deserializeProject(doc);
       assertEqual(engine.N, 16);
       assertEqual(engine.view.lane, "2");
+      assertEqual(engine.extras.expressions["2"].b, "C + 1");
+      /* Recording is a transient session artifact: never in the document. */
+      assertEqual(doc.recording, undefined);
 
-      await browser.navigate(link);
-      const first = JSON.parse(await browser.evaluate("document.querySelector('#bitwave-state').textContent"));
-      await browser.navigate(link);
-      const second = JSON.parse(await browser.evaluate("document.querySelector('#bitwave-state').textContent"));
-      assertEqual(first.width, 16);
-      assertEqual(first.lane, 2);
-      const strip = (state) => {
-        const copy = JSON.parse(JSON.stringify(state));
-        delete copy.deeplink;
-        return copy;
-      };
-      assertEqual(strip(second), strip(first));
+      /* Real reloads with autosave cleared: only the link can supply the state. */
+      await browser.evaluate("localStorage.clear()");
+      await browser.reload(link);
+      const first = stateBody(await liveState());
+      await browser.evaluate("localStorage.clear()");
+      await browser.reload(link);
+      const second = stateBody(await liveState());
+      assertEqual(first, beforeState);
+      assertEqual(second, first);
     });
 
     await run("the help panel agent tab opens and reports an active bridge", async () => {
@@ -488,7 +853,6 @@ async function main() {
         const status = document.querySelector('[data-agent-status]');
         const body = document.querySelector('[data-agent-panel="agent"]');
         return {
-          tabSelected: tab ? tab.getAttribute("aria-selected") : null,
           statusAttribute: status ? status.getAttribute("data-agent-status") : null,
           statusText: status ? status.textContent.trim() : null,
           panelVisible: body ? !body.hidden : false,
@@ -516,7 +880,10 @@ async function main() {
           document: document.documentElement.scrollWidth,
           body: document.body.scrollWidth,
         })`);
-        assert(metrics.document <= metrics.inner, `documentElement overflows at ${width}px (${metrics.document} > ${metrics.inner})`);
+        assert(
+          metrics.document <= metrics.inner,
+          `documentElement overflows at ${width}px (${metrics.document} > ${metrics.inner})`,
+        );
         assert(metrics.body <= metrics.inner, `body overflows at ${width}px (${metrics.body} > ${metrics.inner})`);
       }
       await browser.send("Emulation.setDeviceMetricsOverride", {
@@ -525,14 +892,6 @@ async function main() {
         deviceScaleFactor: 1,
         mobile: false,
       });
-    });
-
-    await run("the page logged no console errors", async () => {
-      const errors = browser.errorEvents();
-      assert(
-        errors.length === 0,
-        `${errors.length} console error(s): ${errors.map((error) => `${error.kind}: ${error.text}`).join(" | ")}`,
-      );
     });
 
     await run("subscribe fires once immediately, then only on genuine changes", async () => {
@@ -556,16 +915,26 @@ async function main() {
       assertEqual(report.afterChange, 2);
       assertEqual(report.afterUnsubscribe, 2);
     });
+
+    await run("the page logged no console errors", async () => {
+      const errors = browser.errorEvents();
+      assert(
+        errors.length === 0,
+        `${errors.length} console error(s): ${errors.map((error) => `${error.kind}: ${error.text}`).join(" | ")}`,
+      );
+    });
   } catch (error) {
     fatal = error instanceof Error ? error.message : String(error);
   } finally {
     await browser.close();
   }
 
-  console.log("BitWave agent browser verification");
+  console.log("BitWave agent browser verification (toolset 1.1.0 / schema 3)");
   console.log(`  artifact: ${artifactPath} (${existsSync(artifactPath) ? readFileSync(artifactPath).length : 0} bytes)`);
   console.log(`  browser:  ${chromePath}`);
-  console.log(`  surface:  window.bitwave, #bitwave-state, ${TOOLS.length} tools, schema ${SCHEMA_VERSION}, toolset ${TOOLSET_VERSION}`);
+  console.log(
+    `  surface:  window.bitwave, #bitwave-state, ${TOOLS.length} tools, schema ${SCHEMA_VERSION}, toolset ${TOOLSET_VERSION}, project schema ${PROJECT_SCHEMA}`,
+  );
   console.log("");
   let failed = 0;
   for (const result of results) {
@@ -582,8 +951,9 @@ async function main() {
     console.log(`FAIL  browser session`);
     console.log(`      ${fatal}`);
   }
+  const total = results.length + (fatal ? 1 : 0);
   console.log("");
-  console.log(`${results.length - (failed - (fatal ? 1 : 0))} passed, ${failed} failed`);
+  console.log(`${total - failed} passed, ${failed} failed`);
   return failed === 0 ? 0 : 1;
 }
 

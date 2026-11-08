@@ -25,6 +25,7 @@ import {
 import { buildShareLink, type ShareLink } from "./agent-share.ts";
 import { columnMode, columnWidth, parseDataset } from "./csv.ts";
 import { carryOrBorrow, computeZ, popcountZ, truthCounts } from "./derive.ts";
+import { EXPRESSION_LIMITS, ExpressionError, compileExpression } from "./expression.ts";
 import { ProjectError, type ProjectDoc } from "./project.ts";
 import { fromHex, nibAt, nibCount, popcount, regToBig, toHex, type RegisterSize } from "./registers.ts";
 import { SHARE_MAX_CHARS } from "./share.ts";
@@ -43,6 +44,7 @@ export const ERROR_CODES = [
   "E_INPUT_TOO_LARGE",
   "E_DRIVEN_INPUT",
   "E_BAD_STATE",
+  "E_INVALID_EXPRESSION",
   "E_INTERNAL",
 ] as const;
 
@@ -546,6 +548,8 @@ export interface NormalizedPatch {
   binop?: BinOp;
   lfo?: { on?: boolean; mode?: string; rate?: number };
   dataset?: { csv?: string; index?: number };
+  expression?: { frame: string; text: string };
+  record?: boolean;
   reset?: true;
 }
 
@@ -557,7 +561,7 @@ export interface PatchError {
 
 export type PatchResult = { ok: true; patch: NormalizedPatch } | { ok: false; error: PatchError };
 
-const PATCH_KEYS = ["lane", "frame", "view", "width", "register", "binop", "lfo", "dataset", "reset"] as const;
+const PATCH_KEYS = ["lane", "frame", "view", "width", "register", "binop", "lfo", "dataset", "expression", "record", "reset"] as const;
 
 /** Validate a bridge patch without applying it; never throws. */
 export function normalizeAgentPatch(value: unknown): PatchResult {
@@ -643,6 +647,35 @@ export function normalizeAgentPatch(value: unknown): PatchResult {
       }
       if (Object.keys(patchDataset).length === 0) bad("E_BAD_ARGS", "dataset patch has no keys");
       patch.dataset = patchDataset;
+    }
+
+    if (input.expression !== undefined) {
+      const expression = objectValue(input.expression, "expression");
+      onlyKeys(expression, ["frame", "text"], "expression");
+      const frame = frameRefFromName(expression.frame);
+      if (!frame) bad("E_BAD_ENUM", "expression.frame must be an operand frame (A–F)");
+      if (frame.frame === "z") bad("E_BAD_ENUM", "Z is derived and cannot carry an expression");
+      if (typeof expression.text !== "string") bad("E_BAD_ARGS", "expression.text must be a string");
+      const text = expression.text.trim();
+      if (text.length > EXPRESSION_LIMITS.source) {
+        bad("E_INPUT_TOO_LARGE", `expression exceeds ${EXPRESSION_LIMITS.source} characters`);
+      }
+      if (text !== "") {
+        try {
+          compileExpression(text);
+        } catch (error) {
+          if (error instanceof ExpressionError) {
+            bad("E_INVALID_EXPRESSION", error.message, error.hint);
+          }
+          throw error;
+        }
+      }
+      patch.expression = { frame: frame.name, text };
+    }
+
+    if (input.record !== undefined) {
+      if (typeof input.record !== "boolean") bad("E_BAD_ARGS", "record must be a boolean");
+      patch.record = input.record;
     }
 
     if (input.reset !== undefined) {

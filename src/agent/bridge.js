@@ -13,6 +13,10 @@
  *   - a setter that changes nothing emits nothing;
  *   - the debounced address-bar mirror (`bitwave:urlsettled` from io/share-url)
  *     refreshes the hidden state node silently — a URL write is not a UI change.
+ *
+ * Toolset 1.1.0 adds external routing: expression sources (`setExpression`,
+ * patch key `expression`), the transient recorded take (`record(on)`,
+ * `getLog({limit?})`) and `recording` / per-lane `expressions` in `getState()`.
  */
 
 import {
@@ -70,6 +74,11 @@ export function createAgentBridge(deps) {
     applyExample,
     resetInstrument,
     syncEditUi,
+    setExpression: applyExpressionSource,
+    startRecording,
+    stopRecording,
+    skipRecordSnapshot,
+    readLog,
   } = deps;
 
   /** Subscriber set; each listener is wrapped so one thrower cannot break others. */
@@ -88,6 +97,8 @@ export function createAgentBridge(deps) {
       deeplink: location.href,
       lfoOn: S.lfo.on,
       copyArmed: S.copyArmed,
+      /* The take is transient session state, reported but never persisted. */
+      recording: { on: S.record.on, rows: S.record.rows.length },
       /* Kept for parity with the contract wording; buildUiState derives the
          same boolean from the captured document. */
       enabled: focusEditable() && !isFocusDriven(),
@@ -253,6 +264,20 @@ export function createAgentBridge(deps) {
     if (syncEditUi) syncEditUi();
   }
 
+  /** Expression source write: the app owns binding + evaluation + UI sync. */
+  function applyExpression(expression) {
+    if (typeof applyExpressionSource === "function") {
+      applyExpressionSource(expression.frame, expression.text);
+    }
+  }
+
+  /** The record toggle is idempotent at the bridge: arming an armed take does
+      not clear it, disarming a stopped take does nothing. */
+  function applyRecord(on) {
+    if (on && !S.record.on) startRecording();
+    else if (!on && S.record.on) stopRecording();
+  }
+
   /** Apply a validated patch in the instrument's canonical key order. */
   function applyNormalized(patch) {
     if (patch.reset) resetInstrument();
@@ -270,6 +295,8 @@ export function createAgentBridge(deps) {
     if (patch.binop !== undefined) chooseBinop(patch.binop, { force: true, focus: false });
     if (patch.lfo) applyLfo(patch.lfo);
     if (patch.dataset) applyDataset(patch.dataset);
+    if (patch.expression) applyExpression(patch.expression);
+    if (patch.record !== undefined) applyRecord(patch.record);
   }
 
   /** One transaction; the address bar is mirrored in the same pass when it changed. */
@@ -284,6 +311,14 @@ export function createAgentBridge(deps) {
             share.update();
           } catch (_) {
             /* The share link is best-effort; state is already truthful. */
+          }
+        } else if (typeof skipRecordSnapshot === "function") {
+          /* A no-op setter must not grow the take, but the transaction still
+             notifies: tell the recorder UI to skip this one snapshot. */
+          try {
+            skipRecordSnapshot();
+          } catch (_) {
+            /* Recording is a side surface; never fail a setter for it. */
           }
         }
       });
@@ -331,7 +366,51 @@ export function createAgentBridge(deps) {
   const setBinop = (binop) => setState({ binop });
   const setLfo = (lfo) => setState({ lfo });
   const setDataset = (dataset) => setState({ dataset });
+  const setExpression = (frame, text) => setState({ expression: { frame, text } });
+  const record = (on) => setState({ record: on });
   const reset = () => setState({ reset: true });
+
+  /**
+   * Read the transient recorded take (newest rows last). `limit` keeps the most
+   * recent N rows; the log is in memory only, so this is never a file read.
+   */
+  function getLog(options) {
+    let limit = null;
+    if (options !== undefined && options !== null) {
+      if (typeof options !== "object" || Array.isArray(options)) {
+        return { ok: false, error: { code: "E_BAD_ARGS", message: "getLog(options) expects an object" }, warnings: [] };
+      }
+      for (const key of Object.keys(options)) {
+        if (key !== "limit") {
+          return {
+            ok: false,
+            error: { code: "E_BAD_ARGS", message: `getLog has an unknown option: ${key}` },
+            warnings: [],
+          };
+        }
+      }
+      if (options.limit !== undefined) {
+        if (typeof options.limit !== "number" || !Number.isInteger(options.limit)) {
+          return {
+            ok: false,
+            error: { code: "E_BAD_ARGS", message: "getLog({limit}) expects an integer" },
+            warnings: [],
+          };
+        }
+        if (options.limit < 0) {
+          return {
+            ok: false,
+            error: { code: "E_OUT_OF_RANGE", message: "getLog({limit}) must be >= 0" },
+            warnings: [],
+          };
+        }
+        limit = options.limit;
+      }
+    }
+    const rows = typeof readLog === "function" ? readLog() : [];
+    const selected = limit === null ? rows : rows.slice(Math.max(0, rows.length - limit));
+    return { ok: true, rows: selected, warnings: [] };
+  }
 
   function getDeeplink() {
     try {
@@ -393,6 +472,9 @@ export function createAgentBridge(deps) {
       setBinop,
       setLfo,
       setDataset,
+      setExpression,
+      record,
+      getLog,
       stepDataset,
       reset,
       subscribe,

@@ -27,6 +27,7 @@ test("state has the contract keys and the focused defaults", () => {
     "lfo",
     "dataset",
     "editing",
+    "recording",
     "deeplink",
     "bridge",
   ]);
@@ -39,8 +40,9 @@ test("state has the contract keys and the focused defaults", () => {
   assert.deepEqual(s.lfo, { on: false, mode: "rotcw", rate: 4 });
   assert.equal(s.dataset, null);
   assert.equal(s.editing.enabled, true);
+  assert.deepEqual(s.recording, { on: false, rows: 0 });
   assert.equal(s.deeplink, "file:///bitwave-v2.html#bw=abc");
-  assert.deepEqual(s.bridge, { schemaVersion: 1, version: "1.0.0" });
+  assert.deepEqual(s.bridge, { schemaVersion: 1, version: "1.1.0" });
   assert.deepEqual(Object.keys(s.lanes), ["1", "2", "3"]);
 });
 
@@ -108,6 +110,18 @@ test("dataset state carries columns, count, clamped index and row", () => {
   doc.dataset.index = 99;
   const clamped = buildUiState(doc, {});
   assert.equal(clamped.dataset?.index, 1);
+});
+
+test("expression sources and the record toggle are exposed", () => {
+  const doc = exampleProjectDoc();
+  doc.lanes["1"].expressions = { a: "round(2 * C)", b: "log.C" };
+  const s = buildUiState(doc, {
+    deeplink: "x",
+    recording: { on: true, rows: 7 },
+  });
+  assert.deepEqual(s.lanes["1"].expressions, { A: "round(2 * C)", B: "log.C" });
+  assert.deepEqual(s.lanes["2"].expressions, { C: null, D: null });
+  assert.deepEqual(s.recording, { on: true, rows: 7 });
 });
 
 test("state serialization is deterministic and timestamp-free", () => {

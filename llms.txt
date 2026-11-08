@@ -8,6 +8,13 @@ CSV/TSV input, stepped LFO, single offline HTML file.
 - Onboarding: `AGENTS.md`; manifest: `agent/manifest.json`; examples: `agent/examples/`.
 - Browser bridge: `window.bitwave`; hidden state: `#bitwave-state`;
   ready: `body[data-agent-ready='true']`; events: `bitwave:ready`, `bitwave:change`.
+- Toolset 1.1.0; `.bitwave` schema 3 (schema 1/2 load). Bridge additions:
+  `setExpression(frame, text)`, `record(on)`, `getLog({limit})`; state additions:
+  `recording:{on,rows}`, `lanes[*].expressions`.
+- Expression sources are deterministic in the shared core: routes -> expressions -> Z;
+  each expression sees the current frames plus the previous recorded row as `log.<frame>`.
+  Record is a transient in-memory DAW take (not saved in `.bitwave`/links); float is a
+  legitimate authoring format converted once at the boundary to exact values.
 - CLI: `node agent/cli.mjs help`; MCP: `node agent/mcp-server.mjs` (stdio, zero deps).
 - Tools: `manifest`, `analyze_register`, `evaluate_lane`, `compare_operands`,
   `parse_dataset`, `build_deeplink`.

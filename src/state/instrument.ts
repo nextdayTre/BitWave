@@ -74,8 +74,24 @@ export interface Slot {
   frameVis: Record<FrameKey, boolean>;
   seededB: boolean;
   lfoB: string;
+  /** Expression sources per operand ("" = not an expression source). */
+  expressions: { a: string; b: string };
   colA: number;
   colB: number;
+}
+
+/** One recorded update: every global frame name -> N-bit word as uppercase hex. */
+export interface RecordRow {
+  /** 1-based update number. */
+  step: number;
+  frames: Record<string, string>;
+}
+
+export interface RecordState {
+  on: boolean;
+  rows: RecordRow[];
+  /** Next step number; monotonic across a session and cap eviction. */
+  nextStep: number;
 }
 
 export interface LfoState {
@@ -98,6 +114,7 @@ export interface Instrument {
   view3d: boolean;
   lfo: LfoState;
   lfoAcc: number;
+  record: RecordState;
   drag: number;
   hoverReg: EditKey | null;
   hoverJ: number;
@@ -128,6 +145,7 @@ export const makeSlot = (key: SlotKey, N: number, binop: BinOp = "xor"): Slot =>
   frameVis: { a: true, b: true, z: true },
   seededB: false,
   lfoB: "0",
+  expressions: { a: "", b: "" },
   colA: -1,
   colB: -1,
 });
@@ -148,6 +166,7 @@ export const S: Instrument = {
   view3d: false,
   lfo: { on: false, mode: "rotcw", rate: 4, t: 0, base: null },
   lfoAcc: 0,
+  record: { on: false, rows: [], nextStep: 1 },
   drag: -1,
   hoverReg: null,
   hoverJ: -1,

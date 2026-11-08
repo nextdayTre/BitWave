@@ -33,6 +33,7 @@ import { createStore } from "./state/store.ts";
 
 import { DEMO } from "./state/dataset.ts";
 import {
+  bindExpression,
   bindNone,
   isFocusDriven,
   isInputDriven,
@@ -40,12 +41,14 @@ import {
   remapParkedBases,
   updateParkedBase,
 } from "./state/bindings.ts";
+import { readLog } from "./state/record.ts";
 import { createFrameNavigator } from "./ui/frame-navigator.js";
 import { createStageBar } from "./ui/stage-bar.js";
 import { attachKeyboard } from "./ui/keyboard.js";
 import { createControls } from "./ui/controls.js";
 import { createCsvImport } from "./ui/csv-import.js";
 import { createSourceTable } from "./ui/source-table.js";
+import { createRecordUI } from "./ui/record.js";
 import { createLiveStatus } from "./ui/live-status.js";
 import { createCopyMenu } from "./ui/copy-menu.js";
 import { createHelpPanel } from "./ui/help.js";
@@ -58,6 +61,7 @@ import { createShareUrl } from "./io/share-url.js";
 import { downloadProject, readProjectFile } from "./io/project-file.js";
 import { applyProject, captureProject, rememberUnknownFields } from "./state/project-bridge.ts";
 import { evalSpline } from "./core/spline.ts";
+import { frameRefFromName } from "./core/agent-defaults.ts";
 import { G, canvasEl as canvas, draw, fitCanvas, getPad, shortCol } from "./render/canvas.js";
 import { focusNibble, nibsEl, patchNibble, renderStrip, syncHoverClasses } from "./render/strip.js";
 import { toHexOf, updateReadouts } from "./render/readouts.js";
@@ -820,6 +824,27 @@ import { toHexOf, updateReadouts } from "./render/readouts.js";
     updateReadouts,
   });
 
+  /* DAW-style record (EXTERNAL-ROUTING §3): one row per settled transaction,
+     in memory only. Subscribed before the agent bridge installs, so
+     `getState().recording` sees each new row in the same transaction pass. */
+  const recordUi = createRecordUI({ store });
+
+  /** External-routing expression write through the instrument's own commands. */
+  function applyExpressionSource(frame, text) {
+    const ref = frameRefFromName(frame);
+    if (!ref || ref.frame === "z") return false;
+    const sl = S.slots[ref.slotKey];
+    store.patch(() => {
+      bindExpression(sl, ref.frame, text);
+      evaluate();
+      controls.syncEditUi();
+      renderStrip();
+      updateReadouts();
+    });
+    if (sources.isOpen()) sources.render();
+    return true;
+  }
+
   /* Keyboard shortcuts: Alt+1/2/3 switch views, Alt+S toggles split,
      and Arrow keys step CSV examples when focus isn't in a control. */
   attachKeyboard({
@@ -1034,6 +1059,11 @@ import { toHexOf, updateReadouts } from "./render/readouts.js";
       applyExample: (index) => csv.applyExample(index, true),
       resetInstrument,
       syncEditUi: () => controls.syncEditUi(),
+      setExpression: applyExpressionSource,
+      startRecording: () => recordUi.start(),
+      stopRecording: () => recordUi.stop(),
+      skipRecordSnapshot: () => recordUi.skipNextSnapshot(),
+      readLog,
     });
     bridge.install();
     agentPanel = createAgentPanel({ root: document.querySelector('[data-agent-panel="agent"]') });

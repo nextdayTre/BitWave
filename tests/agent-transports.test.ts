@@ -81,7 +81,7 @@ test("manifest --json prints exactly one envelope on stdout", () => {
   assert.equal(envelope.schemaVersion, 1);
   assert.equal(envelope.tool, "manifest");
   assert.equal(envelope.data.id, "bitwave");
-  assert.equal(envelope.data.version, "1.0.0");
+  assert.equal(envelope.data.version, "1.1.0");
   assert.equal(envelope.deeplink, null);
   assert.deepEqual(envelope.warnings, []);
 });
@@ -204,7 +204,7 @@ test("MCP initialize / ping / tools-list", () => {
   assert.equal(initialize.result.protocolVersion, PROTOCOL_VERSION);
   assert.equal(PROTOCOL_VERSION, "2025-06-18");
   assert.deepEqual(initialize.result.capabilities, { tools: {} });
-  assert.deepEqual(initialize.result.serverInfo, { name: "bitwave", version: "1.0.0" });
+  assert.deepEqual(initialize.result.serverInfo, { name: "bitwave", version: "1.1.0" });
 
   assert.equal(handleMessage({ jsonrpc: "2.0", method: "notifications/initialized" }), null);
   assert.deepEqual(handleMessage({ jsonrpc: "2.0", id: 2, method: "ping" }).result, {});

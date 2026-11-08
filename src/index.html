@@ -127,6 +127,10 @@
       <button class="op" id="exportObsBtn" title="Export observations to CSV">export</button>
     </div>
     <span class="excount" id="obsCount">0 obs</span>
+    <button class="op" id="recordBtn" type="button" aria-pressed="false"
+            title="Record every settled update into an in-memory log (not saved in the project)">record</button>
+    <span class="excount" id="recordCount" aria-live="polite">0 rows</span>
+    <button class="op" id="exportLogBtn" type="button" title="Download the recorded log as CSV" disabled>export log</button>
     <span id="csvStatus" class="src-status" role="status" aria-live="polite" aria-atomic="true">no dataset loaded</span>
   </div>
 

@@ -382,10 +382,12 @@ The easing constant is deliberately high (`0.24`) — fast enough to feel like t
   data group) — six fixed rows, one per operand frame A–F. DESTINATION shows the frame
   and its label carries the assignment (`A · Hex 1` for a data column, `A · Z3` for a
   frame), matching the column names the import dropdown shows. SOURCE is one native
-  select: `—`, `data · <column>`, `frame · A…Z3`; STATE reads `data`, `1:1`, `z⁻¹` or
-  `—`. It is a **transient panel, not a mode**: Esc or an outside click closes it, and
-  the stage view is unchanged. A fresh import rebuilds the board; driven inputs are
-  locked and unplugging restores the parked base (D2).
+  select: `—`, `data · <column>`, `frame · A…Z3`, or `expr · expression`; STATE reads
+  `data`, `1:1`, `z⁻¹`, `expr` or `—`. Choosing `expr` reveals a one-line mono expression
+  editor (validated on Enter/blur; Esc reverts; invalid input restores the previous valid
+  text with an error in the panel status). It is a **transient panel, not a mode**: Esc or
+  an outside click closes it, and the stage view is unchanged. A fresh import rebuilds the
+  board; driven inputs are locked and unplugging restores the parked base (D2).
 - **Example stepper** (`data` group) — `import csv`, `demo`, `project…`, `◀ n/total ▶`,
   `sources`, and an **Observation Logger** (`log` and `export`).
   Stepping writes the row's cells into A (and B if mapped) for **undriven** inputs.
@@ -393,8 +395,11 @@ The easing constant is deliberately high (`0.24`) — fast enough to feel like t
   `←/→` for nibble focus); a file dropped anywhere loads. The
   observation logger records live waveform snapshots (example name, A hex, B hex, Op,
   Z hex, Pop-Z, truth table counts, timestamp) and downloads them directly as
-  `bitwave_observations.csv`. This is the daily-use path, so it is the first group in
-  the controls row.
+  `bitwave_observations.csv`. To its right, **Record** (`#recordBtn`, `aria-pressed`) is a
+  DAW-style take: starting clears the buffer, each settled evaluation appends one row of
+  all nine frame registers (no timestamps, in memory only), `export log` downloads
+  `bitwave_recording.csv`, and the row count sits beside it. This is the daily-use path,
+  so it is the first group in the controls row.
 - **Demo dataset** (`demo`) — an embedded eight-row, four-column table (rotated sine,
   ramp, 16-bit mask). It goes through the same parser/typing/binding path as a CSV
   import, so it is data, not onboarding; the status line names it.
@@ -656,7 +661,9 @@ something that looked fine until it was measured.
     `window.BitWave` (schema 1) is unchanged; `window.bitwave` sits beside it and every
     state/tool/deeplink it returns comes from `src/core/agent-*.ts`, never from the DOM.
     The help panel's `agent` tab is hidden with the panel, so the default rendered
-    instrument stays pixel-identical (asserted by `--compare`).
+    instrument stays pixel-identical to the pre-agent artifact — the later external-routing
+    slice intentionally adds the Record control (D40), and parity is measured against the
+    artifact that introduced that slice.
 44. **Pure tools are read-only; writes are explicit bridge setters.** A tool call never
     mutates the UI, files or the network. Setters validate first, run the instrument's own
     commands in one transaction, never throw, and return `{ok,state}` or
@@ -668,6 +675,27 @@ something that looked fine until it was measured.
 46. **Canonical links omit `savedAt`.** A view state has exactly one `#bw=` link, equal
     state gives equal links, and the existing 2000-character budget/dataset-drop rule is
     unchanged. `getDeeplink()`, the address bar and `build_deeplink` agree.
+47. **Expression sources are deterministic register functions.** An expression is text in
+    `.bitwave` schema 3, evaluated by the shared DOM-free evaluator on every clocked pass
+    after routes and before Z. It sees the current frame words plus the *previous* recorded
+    row as `log.<frame>`; exact rationals are internal (float authoring input is converted
+    once at the boundary), the result must reduce to an integer, and it wraps modulo 2^N.
+    Invalid text never alters registers; the source table reports it and the bridge rejects
+    it with `E_INVALID_EXPRESSION`.
+48. **Record is a transient take, not a catalog.** One row of all nine frames is appended
+    per settled evaluation while armed (the pointer-drag stream is skipped; the row lands on
+    release); the buffer is a bounded in-memory ring, cleared by starting a take and never
+    stored in `.bitwave` or the share link. Expressions read the previous row, one update
+    late, so a snapshot cannot include its own result.
+49. **Schema 3 is additive.** Expressions ride on `lanes.<n>.expressions`; schema-1/2
+    documents load with no expressions, unknown fields survive, and the version refusal is
+    `> 3`. `E_BAD_ENUM` rejects derived frames; `E_DRIVEN_INPUT` rejects writes to a routed
+    or expression-driven operand.
+50. **Float is a valid authoring format.** Float coefficients from audio/DSP tools and
+    JSON numbers are converted once, at the expression/import boundary, with a declared
+    precision/rounding contract; the internal exact-rational arithmetic is a reproducibility
+    rule for the register bits, not a ban on float workflows (D40, `docs/EXTERNAL-ROUTING.md`
+    §4.1).
 
 ---
 
@@ -710,12 +738,12 @@ The visual contract is measurable, so measure it rather than eyeballing:
   load; starting it caps at 4/s and commits without easing; the hint does not fade.
 - **Targets:** `.op.mini` ≥24 px tall, `width` thumb ≥24 px, and the nibble semantic target
   covers the whole nibble.
-- **Persistence:** `save project` downloads a schema-2 document; `open project…` applies one
-  (lanes, routes/parked bases, focus/frameVis, LFO mode/rate, dataset cursor) and a refresh
-  shows the restored width/lane/view; `reset instrument` returns to the boot state. A
-  document with a newer schema is refused with a readable error. Autosave survives a reload;
-  a shared `#bw=` link restores the same state (and wins over autosave); the link stays
-  ≤ ~2 KB at 256 bits; `?fresh` writes neither. Non-token CSV files and empty files are
+- **Persistence:** `save project` downloads a schema-3 document; `open project…` applies one
+  (lanes, routes/parked bases, focus/frameVis, LFO mode/rate, dataset cursor, expressions)
+  and a refresh shows the restored width/lane/view; `reset instrument` returns to the boot
+  state. A document with a newer schema is refused with a readable error. Autosave survives
+  a reload; a shared `#bw=` link restores the same state (and wins over autosave); the link
+  stays ≤ ~2 KB at 256 bits; `?fresh` writes neither. Non-token CSV files and empty files are
   refused with a status message and do not replace the current dataset.
 - **Distribution:** `npm run check:pwa` serves `dist/hosted/` on `127.0.0.1` and asserts the
   manifest + every icon load, the worker registers/activates/controls the page, the app shell
@@ -729,8 +757,15 @@ The visual contract is measurable, so measure it rather than eyeballing:
   `node agent/verify-browser.mjs` asserts readiness, `#bitwave-state` === `getState()`,
   one change event on mount, no-op silence, setter truthfulness/errors, the legacy
   `window.BitWave` surface, deeplink reloads twice, the agent tab, no overflow at
-  360/720/1440 and zero console errors. The default 2-D view must stay pixel-identical to
-  the pre-agent artifact (`browser-check --compare`).
+  360/720/1440 and zero console errors. The default 2-D view is compared against the
+  artifact that introduced the current UI slice (`browser-check --compare`); the
+  external-routing slice intentionally adds the Record control.
+- **External routing (schema 3):** the source table offers `expr` rows; a valid expression
+  changes the operand and Z on the next evaluation, an invalid one restores the previous
+  text and leaves the registers alone (`E_INVALID_EXPRESSION` from the bridge); Record
+  appends one row per settled update and `export log` downloads the CSV; `getLog()` and
+  `getState().recording` agree; a project/link round-trip preserves expressions but not the
+  transient log; the float policy is documented, not tested as a ban.
 - **Automated a11y audit:** axe-core (dev-only, never in the artifact) reports **zero
   critical/serious** violations in the 2-D, A·B, 3-D and source-table states.
 
@@ -807,6 +842,13 @@ them.
   zero-dependency CLI + MCP stdio server, generated `agent/manifest.json` + examples, and
   AGENTS/contract/screenshot/ecosystem docs. Default rendering pixel-identical; hosted
   build serves the agent files (8/8 PWA checks).
+- **External routing (2026-11-08)** — deterministic expression sources in the six-row
+  source table (one-line editor, validated, `expr` state), a DAW-style Record toggle +
+  bounded transient frame log + `export log`, `.bitwave` schema 3 (expressions additive;
+  schema 1/2 still load), and bridge/CLI-visible `setExpression`/`record`/`getLog` with
+  `recording` and per-lane `expressions` in the agent state. Float is accepted as an
+  authoring boundary and converted once to exact values; the register engine stays exact.
+  Toolset 1.1.0; the default control row intentionally gains the Record control (D40).
 
 ### Next
 

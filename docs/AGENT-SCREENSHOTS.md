@@ -8,14 +8,20 @@ also exposes its machine-readable state at `#bitwave-state` (see
 So prefer a **deeplink + state JSON pair** over prose, and never infer state from pixels.
 The images in `docs/agent/` are reproducibility fixtures, not the source of truth.
 
-This page records the recipes behind four stable states:
+Since the external-routing slice (toolset `1.1.0`, `.bitwave` schema 3) the default view
+also contains the **Record** control and the source table can carry **`expr`** rows. The
+Record take is transient session state, so its screenshot is driven over CDP rather than
+through a deeplink; everything else is still a link.
+
+This page records the recipes behind five states:
 
 | state | file | what it shows |
 |---|---|---|
-| default | `docs/agent/default.png` | boot instrument, 64-bit lane 1, defaults |
+| default | `docs/agent/default.png` | boot instrument, 64-bit lane 1, defaults (Record idle) |
 | A·B pair | `docs/agent/ab-xor.png` | lane 1 `8ADEFEDA85210125 ⊕ FFFFFFFF00000000`, both operands visible |
 | width change | `docs/agent/width-16.png` | the same instrument at 16 bits (4 nibbles) |
 | agent tab | `docs/agent/agent-tab.png` | `?` help panel with the `agent` tab selected |
+| record | `docs/agent/record.png` | an armed take with three appended rows and an `expr` source visible |
 
 ## Prerequisites
 
@@ -72,8 +78,8 @@ function Save-BitWaveShot {
 
 ## State 1 — default 64-bit view
 
-No fragment: the boot instrument at its defaults (64-bit, lane 1, 2-D). `?fresh` makes
-the session ephemeral so a leftover autosave cannot leak into the shot.
+No fragment: the boot instrument at its defaults (64-bit, lane 1, 2-D, Record idle).
+`?fresh` makes the session ephemeral so a leftover autosave cannot leak into the shot.
 
 ```powershell
 Save-BitWaveShot -Url ($app + "?fresh") -Out (Join-Path $root "docs\agent\default.png")
@@ -81,18 +87,21 @@ Save-BitWaveShot -Url ($app + "?fresh") -Out (Join-Path $root "docs\agent\defaul
 
 Expected (`#bitwave-state`): `width: 64`, `lane: 1`, `view.mode: "2d"`,
 lane 1 `A = 8ADEFEDA85210125`, `B = FFFFFFFF00000000`, `Z1 = 7521012585210125`,
-`binop: "xor"`, `lfo.on: false`. The header reads **64 bits · 16 nibbles**.
+`binop: "xor"`, `lfo.on: false`, `recording: { on: false, rows: 0 }`, and every
+`lanes[*].expressions` entry `null`. The header reads **64 bits · 16 nibbles**; the
+source group shows the Record toggle off with **0 rows** (export disabled).
 
 ## State 2 — A·B pair (`8ADEFEDA85210125 XOR FFFFFFFF00000000`)
 
-The pair is a `.bitwave` schema-2 document; `build_deeplink` canonicalises it (drops
-`savedAt`) and appends the fragment to the app URL. All three lanes need the schema-1
-fields, so the fixture includes them even though only lane 1 is on screen.
+The pair is a `.bitwave` schema-3 document; `build_deeplink` canonicalises it (drops
+`savedAt`, keeps expression sources) and appends the fragment to the app URL. All three
+lanes need the schema-1 fields, so the fixture includes them even though only lane 1 is
+on screen.
 
 ```powershell
 $abXor = @'
 {
-  "schema": 2,
+  "schema": 3,
   "app": "bitwave",
   "N": 64,
   "view": { "lane": "1", "view3d": false, "split3d": false, "splitPair": ["1", "2"], "activePane": 0 },
@@ -128,7 +137,7 @@ three lanes, so every lane carries a 16-bit value.
 ```powershell
 $width16 = @'
 {
-  "schema": 2,
+  "schema": 3,
   "app": "bitwave",
   "N": 16,
   "view": { "lane": "1", "view3d": false, "split3d": false, "splitPair": ["1", "2"], "activePane": 0 },
@@ -155,12 +164,12 @@ Expected: header **16 bits · 4 nibbles**; lane 1 `Z1 = 7521` with
 `popcount: 7`, `truthCounts: [0, 7, 0, 9]`; lanes 2/3 read `0F0F AND 1234 = 0204` and
 `BEEF OR 0FFF = BFFF`. Confirm all of it in the state JSON, not by eye.
 
-## State 4 — help panel, `agent` tab
+## Scripted states — CDP driver (agent tab, Record)
 
-The help panel (opened with `?`, or the header `?` button) is an interactive surface, so
-the one-shot `--screenshot` flag cannot reach it — it captures the initial load only.
-Drive the page over the DevTools protocol instead. Save this as
-`$env:TEMP\capture-cdp.mjs` (zero dependencies; Node ≥ 22 ships `fetch` and `WebSocket`):
+The help panel and the Record toggle are interactive surfaces, so the one-shot
+`--screenshot` flag cannot reach them — it captures the initial load only. Drive the page
+over the DevTools protocol instead. Save this as `$env:TEMP\capture-cdp.mjs` (zero
+dependencies; Node ≥ 22 ships `fetch` and `WebSocket`):
 
 ```js
 // capture-cdp.mjs — headless Chrome + CDP screenshot of one post-load state.
@@ -234,6 +243,8 @@ ws.close();
 child.kill();
 ```
 
+## State 4 — help panel, `agent` tab
+
 Open the panel and select the agent tab through their real handlers:
 
 ```powershell
@@ -246,6 +257,34 @@ Expected: the help panel is open, the `agent` tab is selected, and the panel car
 `[data-agent-status="bridge-active"]` plus the bridge/deeplink/copy controls, the live
 state JSON and the tool catalogue. Reaching the tab proves the `keys|agent` tablist works
 with the same click path a user takes.
+
+## State 5 — Record take (`docs/agent/record.png`)
+
+The take is **session state** (in memory only, never in `.bitwave` or a share link), so it
+is captured by driving the bridge after a deterministic boot: a fresh `?fresh` session,
+one expression source, then arm Record and make three settled register writes. Opening
+the source table at the end also exercises the new `expr` row.
+
+```powershell
+$recordAction = @'
+window.bitwave.setExpression("D", "C + 1");
+window.bitwave.record(true);
+window.bitwave.setRegister("A", "1111111122222222");
+window.bitwave.setRegister("A", "3333333344444444");
+window.bitwave.setRegister("A", "5555555566666666");
+document.getElementById("sourcesBtn").click();
+true
+'@
+node $cdp ($app + "?fresh") (Join-Path $root "docs\agent\record.png") $recordAction
+```
+
+Expected (`#bitwave-state`): `width: 64`, `recording: { on: true, rows: 3 }`, lane 2
+`expressions.D = "C + 1"` (D/Z2 follow the expression), and `window.bitwave.getLog()`
+returns three rows whose `step` values are `[1, 2, 3]` and whose `frames` each hold the
+nine global names (`A B Z1 C D Z2 E F Z3`). The Record toggle reads **on** with **3 rows**
+and `export log` is enabled; the open source table shows lane 2 `D` reading an
+`expr · expression` source. A deeplink built from this state carries the expression
+(schema 3) but **not** the take, by design.
 
 ## Extract the state JSON (`#bitwave-state`) — no driver needed
 
@@ -261,6 +300,8 @@ $state = [System.Net.WebUtility]::HtmlDecode($match.Groups[1].Value) | ConvertFr
 $state | ConvertTo-Json -Depth 12          # full UI state (schema 1)
 $state | Select-Object schemaVersion, ready, width, lane, frame
 $state.lanes.'1'.derived.Z1                # { hex, popcount, truthCounts }
+$state.recording                           # { on, rows } — transient take
+$state.lanes.'2'.expressions               # { C, D } — null unless an expr source is bound
 ```
 
 > On Windows, capture Chrome's stdout through a pipe (`| Out-String` above) or let
@@ -278,6 +319,9 @@ $state.deeplink -like "*#bw=*"             # the page mirrors the canonical link
 $state.lanes.'1'.frames.A -eq "8ADEFEDA85210125"
 $state.lanes.'1'.frames.B -eq "FFFFFFFF00000000"
 $state.lanes.'1'.derived.Z1.hex -eq "7521012585210125"
+# Record only:
+$state.recording.on -eq $true
+$state.recording.rows -eq 3
 ```
 
 On non-Windows systems the same flags work with `bash`/`zsh`; replace `$env:TEMP` and the
@@ -287,10 +331,11 @@ Chrome path.
 
 | file | state | produced by | sanity check |
 |---|---|---|---|
-| `docs/agent/default.png` | default 64-bit, lane 1 | State 1 | 1440×900, header "64 bits · 16 nibbles" |
+| `docs/agent/default.png` | default 64-bit, lane 1, Record idle | State 1 | 1440×900, header "64 bits · 16 nibbles", "0 rows" |
 | `docs/agent/ab-xor.png` | A·B pair, `Z1` focused | State 2 | state `Z1 = 7521012585210125`, truth counts `23 11 9 21` |
 | `docs/agent/width-16.png` | 16-bit resize | State 3 | state `width = 16`, `Z1 = 7521` |
 | `docs/agent/agent-tab.png` | help panel, agent tab | State 4 | `[data-agent-status="bridge-active"]` |
+| `docs/agent/record.png` | armed take, three rows, `expr` source | State 5 | state `recording = {on:true, rows:3}`, `expressions.D = "C + 1"` |
 
 Each file should be well over 50 KB (a blank/near-empty capture is a failed run) and
 exactly 1440×900 at device scale factor 1. Inspect the PNGs with an image viewer (or the
@@ -305,6 +350,9 @@ visual check.
   only when it is opened against the same `bitwave-v2.html` path. For a portable link,
   build the fragment with an `http(s)` `--base` (see [`hosting.md`](hosting.md)) —
   `build_deeplink` only appends the fragment to the base you pass.
+- **Links are schema 3 and carry expression sources.** A link restores the `expr` text, so
+  the same computation resumes. It never carries the Record take: the log is a session
+  artifact (in memory, cleared on reload).
 - **`?fresh` does not read a shared link.** Boot priority is shared link → autosave →
   defaults, and `?fresh` short-circuits the whole restore path (in `src/main.js`), so it
   is for default-state captures and throwaway sessions only. For a `#bw=` capture use a
@@ -325,4 +373,5 @@ visual check.
 | `deeplink failed: E_INPUT_TOO_LARGE` | Project + dataset exceeds the share budget; remove the dataset (the tool would have dropped it, but an oversized non-dataset payload is refused). |
 | `no Chrome/Edge found` | Install Chrome/Edge or set `$env:BITWAVE_CHROME` to the executable. |
 | Agent tab never found by the CDP script | Stale artifact or a pre-agent build; the tab markup and `data-agent-tab` attributes ship with the agent layer. |
+| Record shot shows "0 rows" or the toggle off | The action ran before the bridge was ready or the artifact predates the slice — rebuild and retry; the take is transient, so a deeplink cannot produce it. |
 | State JSON disagrees with the picture | Trust the JSON — the URL/state is the contract, the HTML mirrors it. Rebuild and file the drift. |

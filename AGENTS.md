@@ -12,7 +12,8 @@ disagree: one implementation, one envelope, deterministic output.
 
 Onboarding path: this file → the normative contract
 [`docs/AGENT-INTERFACE.md`](docs/AGENT-INTERFACE.md). User docs:
-[`README.md`](README.md). Version: toolset `1.0.0`, schema `1`.
+[`README.md`](README.md). Version: toolset `1.1.0`, state schema `1`, `.bitwave` schema
+`3` (schema 1/2 still load).
 
 ## Quick start
 
@@ -38,8 +39,11 @@ server. The browser layer works directly from the committed single file.
 
 A lane is three frames: operand `A`, derived `Z`, operand `B`. One shared register width
 (`8/16/32/64/128/256` bits). Frame names are global: lane 1 `A/B/Z1`, lane 2 `C/D/Z2`,
-lane 3 `E/F/Z3`. A CSV/TSV dataset can drive any of the six operands; a routed input is
-*driven* and read-only.
+lane 3 `E/F/Z3`. A CSV/TSV dataset can drive any of the six operands; a routed input is *driven* and
+read-only. An operand can also be a deterministic **expression source** (`expr`),
+evaluated on every clocked update with the current frames plus the previous
+`log.<frame>` snapshot; **Record** appends one transient row of all nine frames per
+settled update (in memory only, not in the project or link).
 
 | step | object | what happens |
 |---|---|---|
@@ -66,7 +70,8 @@ saw-up/sine `AND` lane 3.
 
 ### 1. URL deep links
 
-The URL fragment is the whole view state, encoded by the `.bitwave` schema-2 codec:
+The URL fragment is the whole view state, encoded by the `.bitwave` schema-3 codec
+(schema 1/2 still load):
 
 ```
 bitwave-v2.html#bw=<unpadded base64url(UTF-8 JSON document)>
@@ -86,13 +91,17 @@ bitwave-v2.html#bw=<unpadded base64url(UTF-8 JSON document)>
 
 ```js
 window.bitwave.schemaVersion            // 1
-window.bitwave.version                  // "1.0.0"
+window.bitwave.version                  // "1.1.0"
 window.bitwave.getState()               // full UI state (§6 of the contract)
 window.bitwave.getManifest()            // manifest data
 window.bitwave.tools()                  // tool definitions
 window.bitwave.call("compare_operands", { a: "8ADEFEDA85210125", b: "FFFFFFFF00000000" })
 window.bitwave.setState({ lane: 2 })    // setters never throw
 window.bitwave.setRegister("A", "DEADBEEF")
+window.bitwave.setExpression("D", "round(1.2599210498948732 * C)") // expr source
+window.bitwave.record(true)             // arm a transient take
+window.bitwave.getLog({ limit: 8 })     // recorded frame rows
+window.bitwave.record(false)
 window.bitwave.setLfo({ on: true })
 window.bitwave.stepDataset(+1)
 window.bitwave.reset()
@@ -176,7 +185,9 @@ Rules:
 2. Deterministic output; no timestamps, randomness or locale formatting.
 3. Fixed envelope; closed error-code set.
 4. Pure tools are read-only; UI changes only through bridge setters.
-5. Additive changes only; the default rendered instrument must stay pixel-identical.
+5. Additive changes only; the default instrument's visual/behavioral contract stays
+   unless a reviewed UI slice explicitly changes it (the external-routing slice added the
+   Record control and expression editors by design).
 
 Acceptance checks:
 
@@ -196,7 +207,7 @@ node agent/verify-browser.mjs
 | `docs/AGENT-INTERFACE.md` | contract: tools, envelope, deeplink, state, bridge, CLI, MCP |
 | `docs/AGENT-SCREENSHOTS.md` | reproducible states + headless Chrome recipes |
 | `docs/BITWAVE-ECOSYSTEM-MAP.md` | sibling tools and what a handoff would carry |
-| `docs/EXTERNAL-ROUTING.md` | design note + prototype: Record/log and expression operands (not shipped) |
+| `docs/EXTERNAL-ROUTING.md` | shipped slice: Record/log and expression operands (schema 3, toolset 1.1.0) |
 | `agent/manifest.json` | generated capability manifest (tools, selectors, errors) |
 | `agent/examples/` | generated example envelopes, one per tool |
 | `agent/README.md` | transports guide: CLI commands, MCP server, selftest, generator |

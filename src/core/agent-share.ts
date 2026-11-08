@@ -38,6 +38,7 @@ export function canonicalShareDocument(doc: ProjectDoc): ProjectDoc {
       frameVis: loaded.extras.frameVis,
       lfoMode: loaded.extras.lfoMode,
       lfoRate: loaded.extras.lfoRate,
+      expressions: loaded.extras.expressions,
     },
   );
   delete (out as { savedAt?: string }).savedAt;

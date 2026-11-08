@@ -1,4 +1,4 @@
-# Agent Interface Contract — bitwave v1
+# Agent Interface Contract — bitwave v1 (toolset 1.1.0)
 
 Normative contract for BitWave's agent layer. The human-facing onboarding is
 [`AGENTS.md`](../AGENTS.md); this file is the precise spec the browser bridge, CLI and
@@ -24,12 +24,12 @@ Design rules:
 |---|---|
 | tool id | `bitwave` |
 | title | `BitWave` |
-| toolset version | `1.0.0` |
+| toolset version | `1.1.0` |
 | `schemaVersion` | `1` |
 | browser bridge | `window.bitwave` |
 | legacy surface | `window.BitWave` (schema 1, read-only, unchanged) |
 | app artifact | `bitwave-v2.html` (single file, no external references) |
-| project document | `.bitwave` schema 2 (`src/core/project.ts`) |
+| project document | `.bitwave` schema 3 (`src/core/project.ts`; schema 1/2 still load) |
 
 Keep the id stable across the manifest, CLI, MCP `serverInfo.name`, the bridge global and
 the hidden state node.
@@ -40,7 +40,7 @@ Exports:
 
 ```ts
 export const SCHEMA_VERSION: 1
-export const TOOLSET_VERSION: "1.0.0"
+export const TOOLSET_VERSION: "1.1.0"
 export const TOOL_ID: "bitwave"
 export class AgentToolError extends Error { code; hint? }
 export const TOOLS: ToolDef[]              // definition order is canonical
@@ -154,7 +154,7 @@ Caps: `text` ≤ 262144 characters (`E_INPUT_TOO_LARGE`), at most 64 columns
 `totalRows > maxRows`.
 
 ### `build_deeplink`
-Args: `{ project: object, base?: string }` (`project` is a `.bitwave` schema 2 document).
+Args: `{ project: object, base?: string }` (`project` is a `.bitwave` schema 2 or 3 document).
 
 Validates with `deserializeProject` (throws `E_INVALID_PROJECT` on malformed/newer/
 foreign documents), re-serializes canonically **without `savedAt`** (so a state has one
@@ -189,8 +189,9 @@ Success / failure exactly as §2. Closed v1 error set:
 | `E_BAD_ENUM` | enum value not in the documented set (width, op, view, frame, …) |
 | `E_OUT_OF_RANGE` | bounded integer outside its range (index, rate, maxRows) |
 | `E_INPUT_TOO_LARGE` | over a documented cap (text length, columns, share budget) |
-| `E_DRIVEN_INPUT` | tried to write an operand that a route drives |
+| `E_DRIVEN_INPUT` | tried to write an operand that a route or expression drives |
 | `E_BAD_STATE` | a well-formed patch that cannot apply (no dataset for an index, CSV with no numeric columns) |
+| `E_INVALID_EXPRESSION` | expression did not parse or type-check (message/hint carry the evaluator's reason) |
 | `E_INTERNAL` | unexpected failure; never leak a stack |
 
 Setters may also return `E_BAD_STATE` for a well-formed patch that cannot apply. All codes are exported in the manifest (`errorCodes`).
@@ -201,7 +202,7 @@ BitWave's view state is already the URL fragment (`#bw=`), produced by
 `shareFragment(doc)` (`src/core/share.ts`):
 
 ```
-bitwave-v2.html#bw=<unpadded base64url(UTF-8 JSON .bitwave schema 2)>
+bitwave-v2.html#bw=<unpadded base64url(UTF-8 JSON .bitwave schema 3)>
 ```
 
 - Parse/validate with `parseShareHash(hash)`; a corrupt payload is refused; a hash
@@ -239,38 +240,45 @@ once mounted and contains `JSON.stringify(getState())`. `getState()` returns:
         "B": { "kind": "frame", "source": "2:1", "lane": 2, "frame": "C" }
       },
       "driven": { "A": false, "B": true },
+      "expressions": { "A": null, "B": "round(1.2599210498948732 * C)" },
       "derived": { "Z1": { "hex": "7521012585210125", "popcount": 20, "truthCounts": [23, 11, 9, 21] } }
     }
   },
   "lfo": { "on": false, "mode": "rotcw", "rate": 4 },
   "dataset": { "columns": ["Hex 1"], "rows": 8, "index": 0, "row": ["00000001"] },
   "editing": { "copyArmed": false, "enabled": true },
+  "recording": { "on": false, "rows": 0 },
   "deeplink": "file:///…/bitwave-v2.html#bw=…",
-  "bridge": { "schemaVersion": 1, "version": "1.0.0" }
+  "bridge": { "schemaVersion": 1, "version": "1.1.0" }
 }
 ```
 
 - Keys `schemaVersion, ready, width, lane, frame, view, lanes, lfo, dataset, editing,
-  deeplink, bridge` are always present; `dataset` is `null` when empty.
+  recording, deeplink, bridge` are always present; `dataset` is `null` when empty.
 - Frame names are global: lane 1 `A/B/Z1`, lane 2 `C/D/Z2`, lane 3 `E/F/Z3`.
 - `derived` is computed from the shared core (`computeZ`, `truthCounts`, `popcountZ`),
   never copied from the DOM.
 - `frame` is the focused frame's global name; `lane` is the focused lane.
 - `lfo.on` is transient app state (not stored in `.bitwave`).
-- `sources.kind` is `"data"`, `"frame"` or `"none"`; `driven` is true when a route
-  targets that operand.
+- `sources.kind` is `"data"`, `"frame"`, `"expr"` or `"none"`; `driven` is true when a
+  route targets that operand. `expressions` carries the expression text per operand
+  (`null` when not an expression source); an expression source is read-only locally and
+  sets `editing.enabled` false when focused.
+- `recording` is transient: the armed flag and the current row count (the rows themselves
+  are available only via `getLog()`); the log is not persisted in `.bitwave`/links.
 - The shape is stable; add keys, never repurpose them without a schema bump.
 
 ## 7. Browser bridge — `window.bitwave`
 
 ```js
 window.bitwave = {
-  schemaVersion: 1, version: "1.0.0", ready: true,
+  schemaVersion: 1, version: "1.1.0", ready: true,
   getState(), getManifest(), tools(), call(name, args),
   getDeeplink(),
   setState(patch), setLane(n), setFrame(name), setView(mode), setWidth(bits),
   setRegister(frame, hex), setBinop(op), setLfo(patch), setDataset(patch),
   stepDataset(delta), reset(),
+  setExpression(frame, text), record(on), getLog({ limit } = {}),
   subscribe(fn),
 };
 ```
@@ -301,9 +309,14 @@ unknown key → `E_BAD_ARGS`; all validation happens before any mutation):
 | `binop` | `and \| or \| xor \| add \| sub` | lane operator |
 | `lfo` | `{ on?: boolean, mode?: "rotcw"\|"rotccw"\|"slide"\|"csvStep", rate?: 1\|2\|4\|8 }` | start/stop keeps the snapshot/restore discipline; mode/rate restart the shape |
 | `dataset` | `{ csv?: string, index?: integer }` | load CSV/TSV text and/or step to a row; `index` requires a dataset |
+| `expression` | `{ frame: A–F, text: string }` | bind/clear a deterministic expression source (`""` clears; `E_INVALID_EXPRESSION` on bad text; clears any route/data on that operand) |
+| `record` | `boolean` | `true` arms a fresh transient take, `false` freezes; rows are read via `getLog()` |
 | `reset` | `true` | boot state, same as `reset instrument` |
 
 Individual setters are thin wrappers: `setLane(n)` = `setState({lane:n})`, etc.
+`getLog({limit})` returns the newest recorded rows (default all, newest-last), each
+`{step, frames:{A,B,Z1,C,D,Z2,E,F,Z3}}` as uppercase hex; `limit` must be a non-negative
+integer. Recording is transient and never stored in the project/link.
 
 Automation hooks (additive attributes only):
 
@@ -320,7 +333,7 @@ Automation hooks (additive attributes only):
 
 ```json
 {
-  "id": "bitwave", "title": "BitWave", "version": "1.0.0", "schemaVersion": 1,
+  "id": "bitwave", "title": "BitWave", "version": "1.1.0", "schemaVersion": 1,
   "description": "…",
   "urls": { "app": "bitwave-v2.html", "manifest": "agent/manifest.json",
             "agents": "AGENTS.md", "interface": "docs/AGENT-INTERFACE.md" },
@@ -377,7 +390,7 @@ Commands: `manifest`, `analyze_register`, `evaluate_lane`, `compare_operands`,
 Newline-delimited JSON-RPC 2.0 over stdio, zero dependencies.
 
 - `initialize` → `{ protocolVersion: "2025-06-18", capabilities: { tools: {} },
-  serverInfo: { name: "bitwave", version: "1.0.0" } }`
+  serverInfo: { name: "bitwave", version: "1.1.0" } }`
 - `notifications/initialized` → no response.
 - `ping` → `{}`.
 - `tools/list` → `{ tools: [{ name, description, inputSchema }] }` (pure tools only).
@@ -417,14 +430,17 @@ node agent/selftest.mjs
 node agent/verify-browser.mjs
 ```
 
-Plus the existing gates: `npm run check:browser`, `npm run check:pwa`, and a
-`--compare` pixel-parity run of the new artifact against the pre-agent artifact
-(default view must be identical).
+Plus the existing gates: `npm run check:browser` and `npm run check:pwa`. Pixel parity is
+compared against the artifact that introduced the current UI slice (the external-routing
+slice intentionally adds the Record control, so pre-slice parity no longer applies).
 
 Browser checks must include: readiness marker, hidden state === `getState()`, one
 `bitwave:change` on mount, no event for a no-op setter, synchronous setter reads,
 invalid setter errors, a deeplink reload reproducing state twice, the agent panel
-status, and no horizontal overflow at 360/720/1440.
+status, no horizontal overflow at 360/720/1440, and for the external-routing slice:
+expression text in `lanes[*].expressions`, `setExpression` changing D/Z2 with one event,
+`E_INVALID_EXPRESSION` on bad text with no mutation, `record`/`getLog` rows and
+`recording.rows` in state, and the source-table expression editor + Record toggle.
 
 ## 13. File ownership (when multiple agents build this)
 

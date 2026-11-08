@@ -21,6 +21,7 @@ import type {
   DestinationPort,
   FrameKey,
   MixOp,
+  OperandKey,
   Route,
   Lane,
   LaneKey,
@@ -222,11 +223,27 @@ function combine(values: Uint8Array[], N: number, mix: MixOp): Uint8Array {
 }
 
 /**
- * The single evaluation entry point. Applies all routes, then derives Z for
- * every lane. Base writes (drag, preset, op, CSV, LFO) must complete first;
- * renderers sync targets afterwards. Never call per animation frame.
+ * Optional per-evaluation hooks. `applyExpression` runs after a lane's incoming
+ * routes have been written and before its Z is derived; the hook writes the
+ * operand bits itself (the app owns expression text and the log). Lanes are
+ * visited in route dependency order, so a lane may read frames from lanes
+ * upstream of it; expression-only forward references are not reordered.
  */
-export function evaluateAll(routing: RoutingState, lanes: LaneMap, N: number): void {
+export interface EvaluateHooks {
+  applyExpression?: (lane: LaneKey, frame: OperandKey, lanes: LaneMap, N: number) => void;
+}
+
+/**
+ * The single evaluation entry point. Applies all routes, optional expression
+ * hooks, then derives Z for every lane. Base writes (drag, preset, op, CSV, LFO)
+ * must complete first; renderers sync targets afterwards. Never call per frame.
+ */
+export function evaluateAll(
+  routing: RoutingState,
+  lanes: LaneMap,
+  N: number,
+  hooks?: EvaluateHooks,
+): void {
   markDelays(routing);
   const order = topoOrder(routing);
 
@@ -250,6 +267,10 @@ export function evaluateAll(routing: RoutingState, lanes: LaneMap, N: number): v
         r.delay ? delayed.get(r.id)! : readPort(lanes, r.from.lane, r.from.frame),
       );
       operandReg(lane, frame).bits.set(combine(values, N, into[into.length - 1].mix));
+    }
+
+    if (hooks?.applyExpression) {
+      for (const frame of ["a", "b"] as const) hooks.applyExpression(laneKey, frame, lanes, N);
     }
 
     lane.Z.bits = computeZ(lane.A.bits, lane.B.bits, N, lane.binop);

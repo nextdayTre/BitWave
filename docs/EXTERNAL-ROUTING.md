@@ -1,6 +1,10 @@
 # External routing — record/log and expression operands
 
-**Status: design note + Node-only prototype. Not shipped, no app/UI/schema change yet.**
+**Status: shipped slice (2026-11-08) — toolset 1.1.0, `.bitwave` schema 3.** The
+expression evaluator, expression-aware clocked pass, schema-3 project mapping, source-table
+`expr` editor, DAW-style Record toggle/log/export, and bridge `setExpression`/`record`/
+`getLog` are implemented. This note remains the design record; the Node prototype below is
+kept as a reproducible reference model.
 
 This note records the next seam after the agent interface: a simple, DAW-style
 **Record** control and a deterministic **expression operand** for the six input frames.
@@ -104,7 +108,7 @@ primary    := number | name | name '(' args ')' | '(' expression ')'
 
 ### Value semantics
 
-1. Values are **exact rationals** internally (`n/d` BigInt, normalized). No floats.
+1. Values are **exact rationals** internally (`n/d` BigInt, normalized). Floats are a valid authoring format; exact rationals are a reproducibility rule, not a ban (see §4.1).
 2. Arithmetic is exact; `+ - * /` and decimal literals stay rational.
 3. Bitwise/shift operators coerce operands to unsigned N-bit **words** (mod 2^N);
    shifts require a non-negative integer count.
@@ -114,6 +118,25 @@ primary    := number | name | name '(' args ')' | '(' expression ')'
 6. Constants such as ∛2, ∛3, φ, π are **literals or rational approximations supplied by
    the expression**; the core does not pretend to know π. A user's agent can generate a
    high-precision rational, and the same text always gives the same bits.
+
+### 4.1 Float policy — not anti-float
+
+Float is a first-class **authoring and transport** format in this design, not a forbidden
+one. Audio tools, DSP libraries, JavaScript/JSON, and many agents speak `f32`/`f64`;
+those workflows are welcome.
+
+The only rule is about **where conversion happens**: a float that enters a register
+expression is converted **once, at the boundary**, into an exact rational (or a declared
+fixed-point value) with an explicit precision/rounding contract. That makes the resulting
+bits reproducible across browser, CLI and MCP and keeps the wave a function of state.
+Exact rational arithmetic is a property of the *register expression engine*, not a claim
+that float workflows are inferior.
+
+If a future feature wants a float-valued expression mode, it gets its own declared
+precision and rounding semantics and its own tests — it is not excluded by this design.
+Agents may accept JSON numbers and convert with a documented decimal representation;
+the recommendation is to pass decimal/hex **strings** when exactness matters, because
+JSON numbers are already float64 before the expression engine sees them.
 
 ### Errors and limits
 
@@ -132,7 +155,7 @@ D = round((C + log.C) / 2)                           // previous snapshot
 D = min(round(1.6180339887498948 * C), 0xFFFFFFFFFFFFFFFF)
 ```
 
-## 5. Schema 3 sketch (not implemented)
+## 5. Schema 3 (implemented)
 
 Additive over `.bitwave` schema 2; schema 2 still loads with none of these fields.
 
@@ -151,7 +174,7 @@ and pure tools `evaluate_expression` / `log_state`. CLI: `node agent/cli.mjs
 evaluate_expression --expr "…" --frame C --hex … --json`. None of this ships until the
 design is approved.
 
-## 6. UI deltas (when implemented)
+## 6. UI deltas (implemented)
 
 - Source table: the six operation rows gain an `expr` option and a one-line text field
   (mono, right-padded); the result is still shown as the driven register. No symbol
@@ -176,14 +199,24 @@ Deterministic first/last rows at 64-bit (`xor`, the two ∛ expressions above):
 | 1 | `000000008ADEFEDA` | `0000000001234567` | `000000008BFDBBBD` | `00000000B060B6F2` | `000000003B9D0D4F` | `0000000055FA3EE4` | `000000006E6733AB` |
 | 8 | `00000000A8ADEFED` | `00000000789ABCDE` | `00000000D0375333` | `000000010655FB2F` | `00000001D662A81C` | `00000002A669C17F` | `00000003700B6963` |
 
-## 8. Open decisions
+## 8. Decisions after implementation
 
-1. Record cadence: settled updates (prototype assumption) vs every transaction.
-2. Is the log routeable as a source row (`log · C`) or expressions/agent-only in v1?
-3. Schema field names and whether expressions are per-lane or per-operand.
-4. Expression editor surface: source-table text field vs a transient panel; keyboard path.
-5. Whether the prototype's evaluator becomes `src/core/expression.ts` as-is or is
-   restricted further before schema 3.
+Resolved in the shipped slice:
+
+1. **Record cadence:** settled evaluation updates (CSV step, LFO tick, commit-on-release);
+   the pointer-drag stream is skipped and the row lands on release.
+2. **Log access:** expressions and the agent only (`log.<frame>` / `getLog()`); the log is
+   not a routeable source row in v1.
+3. **Schema fields:** expressions are per-lane/per-operand (`lanes.<n>.expressions.a|b`);
+   the recording flag and rows stay transient (not in the project or link).
+4. **Editor surface:** a one-line mono editor inside the source table's `expr` option;
+   Enter/blur commits, Esc reverts, invalid text is rejected and restored.
+5. **Evaluator:** the prototype's `src/core/expression.ts` is the shipped evaluator,
+   with the same grammar/limits/rounding.
+
+Still open: a future float-valued expression mode (declared precision/rounding contract),
+and optional expression-only dependency ordering (v1 documents the route-topo-order
+limitation).
 
 **Non-goals:** arbitrary code execution in the page, a full scripting language, automated
 background logging/catalogs, changing the visual language, or replacing the source matrix.

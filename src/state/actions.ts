@@ -118,6 +118,7 @@ export function copyLane(src: Slot, dst: Slot): void {
   dst.focus = src.focus;
   dst.frameVis = { ...src.frameVis };
   dst.lfoB = src.lfoB;
+  dst.expressions = { ...src.expressions };
   dst.colA = src.colA;
   dst.colB = src.colB;
 }

@@ -127,9 +127,11 @@ BitWave is also driveable by software. Everything the agent layer exposes is der
 the same DOM-free core (`src/core/*.ts`) as the UI, so the page, `window.bitwave`, the CLI
 and the MCP server cannot disagree: one implementation, one result envelope
 (`{ ok, schemaVersion, tool, data, deeplink, warnings }`), deterministic output. The layer
-is **additive** — the default rendered instrument is unchanged, and the legacy read-only
-`window.BitWave` surface above stays exactly as documented (schema 1); writes go through
-the new setters on `window.bitwave` only.
+is **additive** — the stage rendering and the legacy read-only `window.BitWave` surface
+above stay exactly as documented (schema 1); writes go through the new setters on
+`window.bitwave` only. The external-routing slice later adds expression source rows and
+the Record control to the transient source panel by design (D40); the stage itself is
+unchanged.
 
 Onboarding: [`AGENTS.md`](AGENTS.md) → normative contract
 [`docs/AGENT-INTERFACE.md`](docs/AGENT-INTERFACE.md). Machine-readable identity:
@@ -137,9 +139,26 @@ Onboarding: [`AGENTS.md`](AGENTS.md) → normative contract
 [`llms.txt`](llms.txt). The agent transports need **Node ≥ 23.6** (native TypeScript
 type-stripping) and zero extra dependencies.
 
+### Expressions and Record (toolset 1.1.0)
+
+Each of the six source rows can be a deterministic **expression** (`expr`) instead of a
+data column or route. Expressions are text in the `.bitwave` schema-3 document, evaluated
+in the shared core on every clocked update after routes and before `Z`, with the current
+frames plus the previous recorded row as `log.<frame>`. Coefficients from float/DSP tooling
+are welcome: a float is converted once at the boundary to an exact value, so the register
+bits remain reproducible. Invalid text never mutates registers (the bridge reports
+`E_INVALID_EXPRESSION`).
+
+**Record** is the DAW-style take beside the observation log: arm it, and one row of all
+nine frame registers is appended per settled update (in memory only; starting clears the
+take; the pointer-drag stream is skipped). `export log` downloads CSV. Expressions can
+read the previous row, so a recorded feedback loop is well-defined. See
+[`docs/EXTERNAL-ROUTING.md`](docs/EXTERNAL-ROUTING.md) for the full model and work-in-progress
+boundaries (route setters and expression-only dependency ordering are follow-ups).
+
 ### 1. URL deep links
 
-The URL fragment is the whole view state, encoded by the `.bitwave` schema-2 codec. Build
+The URL fragment is the whole view state, encoded by the `.bitwave` schema-3 codec. Build
 canonical links headlessly:
 
 ```powershell
@@ -160,13 +179,17 @@ this in the console:
 
 ```js
 window.bitwave.schemaVersion            // 1
-window.bitwave.version                  // "1.0.0"
+window.bitwave.version                  // "1.1.0"
 window.bitwave.getState()               // full UI state (schema 1)
 window.bitwave.getManifest()            // manifest data
 window.bitwave.tools()                  // tool definitions
 window.bitwave.call("compare_operands", { a: "8ADEFEDA85210125", b: "FFFFFFFF00000000" })
 window.bitwave.setLane(2)               // setters never throw
 window.bitwave.setRegister("A", "DEADBEEF")
+window.bitwave.setExpression("D", "round(1.2599210498948732 * C)") // expr source
+window.bitwave.record(true)             // arm a transient take
+window.bitwave.getLog({ limit: 8 })     // recorded frame rows
+window.bitwave.record(false)
 window.bitwave.getDeeplink()            // absolute current URL
 const off = window.bitwave.subscribe(state => console.log(state));
 ```

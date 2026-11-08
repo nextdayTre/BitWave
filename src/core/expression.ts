@@ -5,7 +5,9 @@
  * The rule that matters: this is a **deterministic register expression**, not a
  * scripting engine. Values are exact rationals internally, frame operands are
  * unsigned N-bit words, bitwise operators coerce to those words, and the final
- * value must be an integer before it wraps modulo 2^N. No floats, no `eval`, no
+ * value must be an integer before it wraps modulo 2^N. Float is a legitimate
+ * authoring/transport format: callers convert a float to an exact rational once,
+ * at the boundary (see `docs/EXTERNAL-ROUTING.md` §4.1). There is no `eval` and no
  * ambient state — the same text and environment always produce the same bits in
  * the browser, the CLI and plain Node.
  *

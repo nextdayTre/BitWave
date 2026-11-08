@@ -27,6 +27,7 @@ import {
   parseShareHash,
   shareFragment,
 } from "../src/core/share.ts";
+import { buildShareLink } from "../src/core/agent-share.ts";
 import type { Dataset } from "../src/core/csv.ts";
 import type { ProjectDoc, ProjectExtras, ProjectViewState } from "../src/core/project.ts";
 
@@ -147,4 +148,32 @@ test("a 256-bit document without a dataset fits SHARE_MAX_CHARS", () => {
   const decoded = decodeShare(p256) as Record<string, unknown>;
   assert.ok(!("dataset" in decoded));
   assert.equal(decoded.N, 256);
+});
+
+test("canonical share links preserve schema-3 expression sources", () => {
+  const lanes = makeBootLanes(64);
+  const routing = createRouting();
+  const doc = serializeProject(
+    lanes,
+    routing,
+    64,
+    {
+      lane: "1",
+      view3d: false,
+      split3d: false,
+      splitPair: ["1", "2"],
+      activePane: 0,
+    },
+    null,
+    "2026-11-06T00:00:00.000Z",
+    { expressions: { "2": { b: "round(1.2599210498948732 * C)" } } },
+  );
+
+  const link = buildShareLink(doc);
+  const decoded = deserializeProject(parseShareHash(link.fragment));
+  assert.deepEqual(decoded.extras.expressions, {
+    "1": {},
+    "2": { b: "round(1.2599210498948732 * C)" },
+    "3": {},
+  });
 });

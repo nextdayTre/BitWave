@@ -5,7 +5,7 @@
   "data": {
     "id": "bitwave",
     "title": "BitWave",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "schemaVersion": 1,
     "description": "BitWave renders a bit register as a wavetable. Compute Z = A op B for any lane, compare operators, parse CSV/TSV datasets and build canonical #bw= deeplinks from one shared, deterministic core.",
     "urls": {
@@ -252,7 +252,7 @@
           {
             "args": {
               "project": {
-                "schema": 2,
+                "schema": 3,
                 "app": "bitwave",
                 "savedAt": "1970-01-01T00:00:00.000Z",
                 "N": 8,
@@ -342,6 +342,7 @@
       "E_INPUT_TOO_LARGE",
       "E_DRIVEN_INPUT",
       "E_BAD_STATE",
+      "E_INVALID_EXPRESSION",
       "E_INTERNAL"
     ],
     "invariants": [

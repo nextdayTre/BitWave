@@ -49,7 +49,7 @@ test("manifest is JSON-safe, versioned and strips run functions", () => {
   const manifest = getManifest();
   assert.equal(manifest.id, "bitwave");
   assert.equal(manifest.schemaVersion, SCHEMA_VERSION);
-  assert.equal(manifest.version, "1.0.0");
+  assert.equal(manifest.version, "1.1.0");
   assert.equal(manifest.tools.length, 6);
   assert.deepEqual(manifest.errorCodes, [...ERROR_CODES]);
   assert.ok(!("run" in manifest.tools[0]));
@@ -275,6 +275,28 @@ test("normalizeAgentPatch rejects invalid patches with a code", () => {
   assert.equal(code({ lfo: { on: "yes" } }), "E_BAD_ARGS");
   assert.equal(code({ dataset: { index: -1 } }), "E_OUT_OF_RANGE");
   assert.equal(code({ reset: false }), "E_BAD_ARGS");
+});
+
+test("normalizeAgentPatch accepts expression and record controls", () => {
+  const expression = normalizeAgentPatch({ expression: { frame: "b", text: "round(2 * C)" } });
+  assert.equal(expression.ok, true);
+  if (expression.ok) {
+    assert.deepEqual(expression.patch.expression, { frame: "B", text: "round(2 * C)" });
+  }
+
+  const cleared = normalizeAgentPatch({ expression: { frame: "A", text: "  " }, record: false });
+  assert.equal(cleared.ok, true);
+  if (cleared.ok) {
+    assert.deepEqual(cleared.patch.expression, { frame: "A", text: "" });
+    assert.equal(cleared.patch.record, false);
+  }
+
+  const invalid = normalizeAgentPatch({ expression: { frame: "A", text: "1 +" } });
+  assert.equal(invalid.ok, false);
+  if (!invalid.ok) assert.equal(invalid.error.code, "E_INVALID_EXPRESSION");
+
+  assert.equal(normalizeAgentPatch({ expression: { frame: "Z1", text: "C" } }).ok, false);
+  assert.equal(normalizeAgentPatch({ record: 1 }).ok, false);
 });
 
 test("frame references resolve the global names", () => {

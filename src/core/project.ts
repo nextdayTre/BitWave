@@ -30,9 +30,10 @@ import { LANE_KEYS } from "./types.ts";
 import { fromHex, toHex } from "./registers.ts";
 import { makeBootLanes } from "./lanes.ts";
 import { evaluateAll, markDelays, createRouting, type RoutingState } from "./routing.ts";
+import { EXPRESSION_LIMITS } from "./expression.ts";
 import type { Dataset } from "./csv.ts";
 
-export const PROJECT_SCHEMA = 2;
+export const PROJECT_SCHEMA = 3;
 export const PROJECT_APP = "bitwave";
 
 export class ProjectError extends Error {
@@ -55,6 +56,12 @@ export interface ProjectRoute {
 /** Per-lane 2-D frame visibility (schema 2). */
 type FrameVisibility = { a: boolean; b: boolean; z: boolean };
 
+/** Per-operand expression sources (schema 3). Empty/absent = not an expression. */
+interface LaneExpressions {
+  a?: string;
+  b?: string;
+}
+
 export interface ProjectLane {
   a: string;
   b: string;
@@ -69,6 +76,8 @@ export interface ProjectLane {
   focus?: FrameKey;
   /** Schema 2: per-lane 2-D frame visibility (eye toggles). */
   frameVis?: FrameVisibility;
+  /** Schema 3: expression source per operand (`A`/`B` of this lane). */
+  expressions?: LaneExpressions;
 }
 
 export interface ProjectViewState {
@@ -93,6 +102,8 @@ export interface ProjectExtras {
   frameVis?: Partial<Record<LaneKey, { a: boolean; b: boolean; z: boolean }>>;
   lfoMode?: string;
   lfoRate?: number;
+  /** Schema 3: expression sources per lane/operand. */
+  expressions?: Partial<Record<LaneKey, LaneExpressions>>;
 }
 
 export interface ProjectDoc {
@@ -139,6 +150,21 @@ function lenientLfoMode(value: unknown): string {
 
 function lenientLfoRate(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : LFO_DEFAULT_RATE;
+}
+
+/** Schema-3 expression sources: strings only, trimmed, bounded; invalid values drop. */
+function lenientExpressions(value: unknown): LaneExpressions {
+  if (typeof value !== "object" || value === null) return {};
+  const raw = value as Partial<LaneExpressions>;
+  const out: LaneExpressions = {};
+  for (const frame of ["a", "b"] as const) {
+    const text = raw[frame];
+    if (typeof text !== "string") continue;
+    const trimmed = text.trim();
+    if (trimmed === "" || trimmed.length > EXPRESSION_LIMITS.source) continue;
+    out[frame] = trimmed;
+  }
+  return out;
 }
 
 /**
@@ -200,6 +226,13 @@ export function serializeProject(
     if (focus !== undefined) laneDoc.focus = focus;
     const frameVis = extras.frameVis?.[key];
     if (frameVis !== undefined) laneDoc.frameVis = { ...frameVis };
+    const expressions = extras.expressions?.[key];
+    if (expressions !== undefined) {
+      const clean: LaneExpressions = {};
+      if (typeof expressions.a === "string" && expressions.a.trim() !== "") clean.a = expressions.a;
+      if (typeof expressions.b === "string" && expressions.b.trim() !== "") clean.b = expressions.b;
+      if (Object.keys(clean).length > 0) laneDoc.expressions = clean;
+    }
     laneDocs[key] = laneDoc;
   }
 
@@ -281,6 +314,7 @@ export function deserializeProject(doc: unknown): {
     frameVis: Record<LaneKey, FrameVisibility>;
     lfoMode: string;
     lfoRate: number;
+    expressions: Record<LaneKey, LaneExpressions>;
   };
 } {
   if (typeof doc !== "object" || doc === null) {
@@ -303,6 +337,7 @@ export function deserializeProject(doc: unknown): {
   const lanes = makeBootLanes(N); // defaults for fields a document may omit
   const focus = {} as Record<LaneKey, FrameKey>;
   const frameVis = {} as Record<LaneKey, FrameVisibility>;
+  const expressions = {} as Record<LaneKey, LaneExpressions>;
   for (const key of LANE_KEYS) {
     const s = (d.lanes as Record<string, Partial<ProjectLane>>)[key];
     if (!s) throw new ProjectError("malformed", `missing lane ${key}`);
@@ -319,6 +354,7 @@ export function deserializeProject(doc: unknown): {
     lane.colB = requireIndex(s.colB, `lanes.${key}.colB`);
     focus[key] = lenientFocus(s.focus);
     frameVis[key] = lenientFrameVis(s.frameVis);
+    expressions[key] = lenientExpressions(s.expressions);
   }
 
   const routing = createRouting();
@@ -365,10 +401,10 @@ export function deserializeProject(doc: unknown): {
   markDelays(routing);
   evaluateAll(routing, lanes, N);
   const dataset = lenientDataset(d.dataset);
-  /** Schema-2 view fields are additive; a v1 document simply has none. */
+  /** Schema-2/3 view fields are additive; an older document simply has none. */
   const lfoMode = lenientLfoMode(d.view?.lfoMode);
   const lfoRate = lenientLfoRate(d.view?.lfoRate);
-  return { lanes, routing, N, view, dataset, extras: { focus, frameVis, lfoMode, lfoRate } };
+  return { lanes, routing, N, view, dataset, extras: { focus, frameVis, lfoMode, lfoRate, expressions } };
 }
 
 /** Convenience: JSON text -> engine state. */

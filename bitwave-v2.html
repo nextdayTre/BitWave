@@ -285,6 +285,10 @@ var makeSlot = (key, N, binop = "xor") => ({
 	},
 	seededB: false,
 	lfoB: "0",
+	expressions: {
+		a: "",
+		b: ""
+	},
 	colA: -1,
 	colB: -1
 });
@@ -310,6 +314,11 @@ var S = {
 		base: null
 	},
 	lfoAcc: 0,
+	record: {
+		on: false,
+		rows: [],
+		nextStep: 1
+	},
 	drag: -1,
 	hoverReg: null,
 	hoverJ: -1,
@@ -541,6 +550,7 @@ function copyLane(src, dst) {
 	dst.focus = src.focus;
 	dst.frameVis = { ...src.frameVis };
 	dst.lfoB = src.lfoB;
+	dst.expressions = { ...src.expressions };
 	dst.colA = src.colA;
 	dst.colB = src.colB;
 }
@@ -703,11 +713,11 @@ function combine(values, N, mix) {
 	return out;
 }
 /**
-* The single evaluation entry point. Applies all routes, then derives Z for
-* every lane. Base writes (drag, preset, op, CSV, LFO) must complete first;
-* renderers sync targets afterwards. Never call per animation frame.
+* The single evaluation entry point. Applies all routes, optional expression
+* hooks, then derives Z for every lane. Base writes (drag, preset, op, CSV, LFO)
+* must complete first; renderers sync targets afterwards. Never call per frame.
 */
-function evaluateAll(routing, lanes, N) {
+function evaluateAll(routing, lanes, N, hooks) {
 	markDelays(routing);
 	const order = topoOrder(routing);
 	const delayed = /* @__PURE__ */ new Map();
@@ -721,6 +731,7 @@ function evaluateAll(routing, lanes, N) {
 			const values = into.map((r) => r.delay ? delayed.get(r.id) : readPort(lanes, r.from.lane, r.from.frame));
 			operandReg(lane, frame).bits.set(combine(values, N, into[into.length - 1].mix));
 		}
+		if (hooks?.applyExpression) for (const frame of ["a", "b"]) hooks.applyExpression(laneKey, frame, lanes, N);
 		lane.Z.bits = computeZ(lane.A.bits, lane.B.bits, N, lane.binop);
 	}
 }
@@ -731,23 +742,650 @@ function remapParked(routing, oldN, newN) {
 		routing.parked.set(key, nibblesToBits(values, newN));
 	}
 }
+// src/core/expression.ts
+/**
+* Expression evaluator for external routing / Lane Logic (prototype, not yet wired
+* into the app or the `.bitwave` schema).
+*
+* The rule that matters: this is a **deterministic register expression**, not a
+* scripting engine. Values are exact rationals internally, frame operands are
+* unsigned N-bit words, bitwise operators coerce to those words, and the final
+* value must be an integer before it wraps modulo 2^N. Float is a legitimate
+* authoring/transport format: callers convert a float to an exact rational once,
+* at the boundary (see `docs/EXTERNAL-ROUTING.md` §4.1). There is no `eval` and no
+* ambient state — the same text and environment always produce the same bits in
+* the browser, the CLI and plain Node.
+*
+* Grammar (prototype):
+*
+*   expression := or
+*   or         := xor ( '|' xor )*
+*   xor        := and ( '^' and )*
+*   and        := shift ( '&' shift )*
+*   shift      := sum ( ('<<' | '>>') sum )*
+*   sum        := product ( ('+' | '-') product )*
+*   product    := unary ( ('*' | '/' | '%') unary )*
+*   unary      := ('+' | '-' | '~') unary | primary
+*   primary    := number | name | name '(' args ')' | '(' expression ')'
+*
+* `number` is decimal, decimal-fraction or `0x` hex. `name` is a global frame
+* name (`A`–`F`, `Z1`–`Z3`), the register width `N`, or `log.<frame>` for the
+* previous recorded snapshot. Functions: `floor`, `ceil`, `round`, `abs`, `min`,
+* `max` (round is half away from zero).
+*
+* Errors are typed (`ExpressionError.code`) and never leak stacks. Limits bound
+* the source, AST depth, numeric size and shift counts so a bad patch cannot hang
+* the instrument.
+*/
+var EXPRESSION_LIMITS = {
+	/** Maximum source characters. */
+	source: 4096,
+	/** Maximum parser/AST nesting. */
+	depth: 64,
+	/** Maximum decimal digits in one literal. */
+	digits: 128,
+	/** Maximum total bits of a rational numerator + denominator. */
+	bits: 4096,
+	/** Maximum shift count. */
+	shift: 4096,
+	/** Maximum width accepted by the evaluator. */
+	width: 4096
+};
+var ExpressionError = class extends Error {
+	code;
+	hint;
+	position;
+	constructor(code, message, hint, position) {
+		super(message);
+		this.name = "ExpressionError";
+		this.code = code;
+		this.hint = hint;
+		this.position = position;
+	}
+};
+var ZERO = {
+	n: 0n,
+	d: 1n
+};
+function absBig(value) {
+	return value < 0n ? -value : value;
+}
+function bitLength(value) {
+	return value === 0n ? 0 : absBig(value).toString(2).length;
+}
+function gcd(a, b) {
+	let x = absBig(a);
+	let y = absBig(b);
+	while (y !== 0n) {
+		const remainder = x % y;
+		x = y;
+		y = remainder;
+	}
+	return x;
+}
+function fail(code, message, hint, position) {
+	throw new ExpressionError(code, message, hint, position);
+}
+function rational(n, d) {
+	if (d === 0n) fail("E_EXPR_DIV_ZERO", "division by zero");
+	if (d < 0n) {
+		n = -n;
+		d = -d;
+	}
+	if (n === 0n) return ZERO;
+	const g = gcd(n, d);
+	const out = {
+		n: n / g,
+		d: d / g
+	};
+	if (bitLength(out.n) + bitLength(out.d) > EXPRESSION_LIMITS.bits) fail("E_EXPR_TOO_LARGE", "expression value grew beyond the supported size");
+	return out;
+}
+function ratAdd(a, b) {
+	return rational(a.n * b.d + b.n * a.d, a.d * b.d);
+}
+function ratSub(a, b) {
+	return rational(a.n * b.d - b.n * a.d, a.d * b.d);
+}
+function ratMul(a, b) {
+	return rational(a.n * b.n, a.d * b.d);
+}
+function ratDiv(a, b) {
+	if (b.n === 0n) fail("E_EXPR_DIV_ZERO", "division by zero");
+	return rational(a.n * b.d, a.d * b.n);
+}
+function ratNeg(a) {
+	return {
+		n: -a.n,
+		d: a.d
+	};
+}
+function ratCmp(a, b) {
+	const left = a.n * b.d;
+	const right = b.n * a.d;
+	return left < right ? -1 : left > right ? 1 : 0;
+}
+function intOf(value, what) {
+	if (value.d !== 1n) fail("E_EXPR_TYPE", `${what} requires an integer, got a fraction`, "wrap the value in round(), floor() or ceil()");
+	return value.n;
+}
+function floorOf(value) {
+	const q = value.n / value.d;
+	return value.n % value.d !== 0n && value.n < 0n ? q - 1n : q;
+}
+function ceilOf(value) {
+	const q = value.n / value.d;
+	return value.n % value.d !== 0n && value.n > 0n ? q + 1n : q;
+}
+/** Round half away from zero (the usual "round()" in maths, not banker's). */
+function roundOf(value) {
+	const sign = value.n < 0n ? -1n : 1n;
+	const n = absBig(value.n);
+	const q = n / value.d;
+	return sign * (n % value.d * 2n >= value.d ? q + 1n : q);
+}
+var IDENT_START = /[A-Za-z_]/;
+var IDENT_PART = /[A-Za-z0-9_]/;
+function skipWhitespace(source, at) {
+	let i = at;
+	while (i < source.length && /\s/.test(source[i])) i += 1;
+	return i;
+}
+function tokenize(source) {
+	const tokens = [];
+	let i = 0;
+	while (i < source.length) {
+		i = skipWhitespace(source, i);
+		if (i >= source.length) break;
+		const ch = source[i];
+		if (ch === "(") {
+			tokens.push({
+				kind: "lparen",
+				pos: i
+			});
+			i += 1;
+			continue;
+		}
+		if (ch === ")") {
+			tokens.push({
+				kind: "rparen",
+				pos: i
+			});
+			i += 1;
+			continue;
+		}
+		if (ch === ",") {
+			tokens.push({
+				kind: "comma",
+				pos: i
+			});
+			i += 1;
+			continue;
+		}
+		if (ch === "0" && (source[i + 1] === "x" || source[i + 1] === "X")) {
+			const start = i;
+			i += 2;
+			const digitsStart = i;
+			while (i < source.length && /[0-9a-fA-F]/.test(source[i])) i += 1;
+			if (i === digitsStart) fail("E_EXPR_SYNTAX", "hex literal has no digits", void 0, start);
+			tokens.push({
+				kind: "number",
+				value: rational(BigInt("0x" + source.slice(digitsStart, i)), 1n),
+				text: source.slice(start, i),
+				pos: start
+			});
+			continue;
+		}
+		if (/[0-9]/.test(ch)) {
+			const start = i;
+			while (i < source.length && /[0-9]/.test(source[i])) i += 1;
+			if (source[i] === ".") {
+				i += 1;
+				const fracStart = i;
+				while (i < source.length && /[0-9]/.test(source[i])) i += 1;
+				if (i === fracStart) fail("E_EXPR_SYNTAX", "decimal literal has no fraction digits", void 0, start);
+			}
+			const text = source.slice(start, i);
+			const dot = text.indexOf(".");
+			if (dot === -1) tokens.push({
+				kind: "number",
+				value: rational(BigInt(text), 1n),
+				text,
+				pos: start
+			});
+			else {
+				const frac = text.slice(dot + 1);
+				if (frac.length > EXPRESSION_LIMITS.digits) fail("E_EXPR_TOO_LARGE", "decimal literal has too many digits", void 0, start);
+				const digits = text.slice(0, dot) + frac;
+				tokens.push({
+					kind: "number",
+					value: rational(BigInt(digits), 10n ** BigInt(frac.length)),
+					text,
+					pos: start
+				});
+			}
+			continue;
+		}
+		if (IDENT_START.test(ch)) {
+			const start = i;
+			while (i < source.length && IDENT_PART.test(source[i])) i += 1;
+			if (source[i] === "." && i + 1 < source.length && IDENT_START.test(source[i + 1])) {
+				i += 1;
+				while (i < source.length && IDENT_PART.test(source[i])) i += 1;
+			}
+			tokens.push({
+				kind: "name",
+				value: source.slice(start, i),
+				pos: start
+			});
+			continue;
+		}
+		const two = source.slice(i, i + 2);
+		if (two === "<<" || two === ">>") {
+			tokens.push({
+				kind: "op",
+				value: two,
+				pos: i
+			});
+			i += 2;
+			continue;
+		}
+		if ("+-*/%&|^~".includes(ch)) {
+			tokens.push({
+				kind: "op",
+				value: ch,
+				pos: i
+			});
+			i += 1;
+			continue;
+		}
+		fail("E_EXPR_SYNTAX", `unexpected character ${JSON.stringify(ch)}`, void 0, i);
+	}
+	return tokens;
+}
+var Parser = class {
+	tokens;
+	index = 0;
+	constructor(tokens) {
+		this.tokens = tokens;
+	}
+	peek() {
+		return this.tokens[this.index] ?? null;
+	}
+	next() {
+		return this.tokens[this.index++] ?? null;
+	}
+	expect(kind) {
+		const token = this.next();
+		if (!token || token.kind !== kind) fail("E_EXPR_SYNTAX", "expected ')'", void 0, token ? token.pos : void 0);
+		return token;
+	}
+	parse() {
+		if (this.tokens.length === 0) fail("E_EXPR_SYNTAX", "expression is empty");
+		const node = this.parseOr(0);
+		if (this.index !== this.tokens.length) {
+			const token = this.tokens[this.index];
+			fail("E_EXPR_SYNTAX", "unexpected input after expression", void 0, token.pos);
+		}
+		return node;
+	}
+	depthCheck(depth) {
+		if (depth > EXPRESSION_LIMITS.depth) fail("E_EXPR_TOO_LARGE", "expression is nested too deeply");
+	}
+	parseOr(depth) {
+		this.depthCheck(depth);
+		let left = this.parseXor(depth + 1);
+		while (this.peek()?.kind === "op" && this.peek().value === "|") {
+			this.next();
+			left = {
+				kind: "binary",
+				op: "|",
+				left,
+				right: this.parseXor(depth + 1)
+			};
+		}
+		return left;
+	}
+	parseXor(depth) {
+		let left = this.parseAnd(depth + 1);
+		while (this.peek()?.kind === "op" && this.peek().value === "^") {
+			this.next();
+			left = {
+				kind: "binary",
+				op: "^",
+				left,
+				right: this.parseAnd(depth + 1)
+			};
+		}
+		return left;
+	}
+	parseAnd(depth) {
+		let left = this.parseShift(depth + 1);
+		while (this.peek()?.kind === "op" && this.peek().value === "&") {
+			this.next();
+			left = {
+				kind: "binary",
+				op: "&",
+				left,
+				right: this.parseShift(depth + 1)
+			};
+		}
+		return left;
+	}
+	parseShift(depth) {
+		let left = this.parseSum(depth + 1);
+		for (;;) {
+			const token = this.peek();
+			if (token?.kind !== "op" || token.value !== "<<" && token.value !== ">>") break;
+			this.next();
+			left = {
+				kind: "binary",
+				op: token.value,
+				left,
+				right: this.parseSum(depth + 1)
+			};
+		}
+		return left;
+	}
+	parseSum(depth) {
+		let left = this.parseProduct(depth + 1);
+		for (;;) {
+			const token = this.peek();
+			if (token?.kind !== "op" || token.value !== "+" && token.value !== "-") break;
+			this.next();
+			left = {
+				kind: "binary",
+				op: token.value,
+				left,
+				right: this.parseProduct(depth + 1)
+			};
+		}
+		return left;
+	}
+	parseProduct(depth) {
+		let left = this.parseUnary(depth + 1);
+		for (;;) {
+			const token = this.peek();
+			if (token?.kind !== "op" || token.value !== "*" && token.value !== "/" && token.value !== "%") break;
+			this.next();
+			left = {
+				kind: "binary",
+				op: token.value,
+				left,
+				right: this.parseUnary(depth + 1)
+			};
+		}
+		return left;
+	}
+	parseUnary(depth) {
+		this.depthCheck(depth);
+		const token = this.peek();
+		if (token?.kind === "op" && (token.value === "+" || token.value === "-" || token.value === "~")) {
+			this.next();
+			return {
+				kind: "unary",
+				op: token.value,
+				operand: this.parseUnary(depth + 1)
+			};
+		}
+		return this.parsePrimary(depth + 1);
+	}
+	parsePrimary(depth) {
+		this.depthCheck(depth);
+		const token = this.next();
+		if (!token) fail("E_EXPR_SYNTAX", "unexpected end of expression");
+		if (token.kind === "number") return {
+			kind: "number",
+			value: token.value
+		};
+		if (token.kind === "lparen") {
+			const inner = this.parseOr(depth + 1);
+			this.expect("rparen");
+			return inner;
+		}
+		if (token.kind === "name") {
+			if (this.peek()?.kind === "lparen") {
+				this.next();
+				const args = [];
+				if (this.peek()?.kind !== "rparen") for (;;) {
+					args.push(this.parseOr(depth + 1));
+					if (this.peek()?.kind === "comma") {
+						this.next();
+						continue;
+					}
+					break;
+				}
+				this.expect("rparen");
+				return {
+					kind: "call",
+					name: token.value,
+					args
+				};
+			}
+			return {
+				kind: "name",
+				name: token.value
+			};
+		}
+		fail("E_EXPR_SYNTAX", "expected a number, name or '('", void 0, token.pos);
+	}
+};
+var FUNCTIONS = /* @__PURE__ */ new Set([
+	"floor",
+	"ceil",
+	"round",
+	"abs",
+	"min",
+	"max"
+]);
+var NAMES = /* @__PURE__ */ new Set([
+	"A",
+	"B",
+	"C",
+	"D",
+	"E",
+	"F",
+	"Z1",
+	"Z2",
+	"Z3",
+	"N"
+]);
+function lookupName(name, env) {
+	if (name === "N") return rational(BigInt(env.width), 1n);
+	if (name.startsWith("log.")) {
+		const frame = name.slice(4);
+		if (!env.log || !(frame in env.log)) fail("E_EXPR_UNKNOWN_NAME", `log.${frame} is not available`, "the log is empty until the first recorded update");
+		return rational(env.log[frame], 1n);
+	}
+	if (!NAMES.has(name)) fail("E_EXPR_UNKNOWN_NAME", `unknown name: ${name}`, "frame names are A–F, Z1–Z3; the width is N; log frames are log.<name>");
+	if (!(name in env.frames)) fail("E_EXPR_UNKNOWN_NAME", `${name} is not in this expression's frame environment`);
+	return rational(env.frames[name], 1n);
+}
+function wordOf(value, env, what) {
+	const integer = intOf(value, what);
+	const modulus = 1n << BigInt(env.width);
+	return (integer % modulus + modulus) % modulus;
+}
+function shiftCount(value) {
+	const count = intOf(value, "a shift count");
+	if (count < 0n) fail("E_EXPR_DOMAIN", "shift count must be non-negative");
+	if (count > BigInt(EXPRESSION_LIMITS.shift)) fail("E_EXPR_TOO_LARGE", `shift count exceeds ${EXPRESSION_LIMITS.shift}`);
+	return count;
+}
+function callFunction(name, args, env) {
+	if (!FUNCTIONS.has(name)) fail("E_EXPR_UNKNOWN_NAME", `unknown function: ${name}`, "supported: floor, ceil, round, abs, min, max");
+	if (name === "floor" || name === "ceil" || name === "round" || name === "abs") {
+		if (args.length !== 1) fail("E_EXPR_SYNTAX", `${name}() takes exactly one argument`);
+		if (name === "floor") return rational(floorOf(args[0]), 1n);
+		if (name === "ceil") return rational(ceilOf(args[0]), 1n);
+		if (name === "round") return rational(roundOf(args[0]), 1n);
+		return args[0].n < 0n ? ratNeg(args[0]) : args[0];
+	}
+	if (args.length < 1) fail("E_EXPR_SYNTAX", `${name}() takes at least one argument`);
+	let best = args[0];
+	for (const arg of args.slice(1)) {
+		const cmp = ratCmp(arg, best);
+		if (name === "min" ? cmp < 0 : cmp > 0) best = arg;
+	}
+	return best;
+}
+function evalNode(node, env) {
+	switch (node.kind) {
+		case "number": return node.value;
+		case "name": return lookupName(node.name, env);
+		case "unary": {
+			const operand = evalNode(node.operand, env);
+			if (node.op === "+") return operand;
+			if (node.op === "-") return ratNeg(operand);
+			return rational(wordOf(operand, env, "~") ^ (1n << BigInt(env.width)) - 1n, 1n);
+		}
+		case "binary": {
+			const left = evalNode(node.left, env);
+			const right = evalNode(node.right, env);
+			switch (node.op) {
+				case "+": return ratAdd(left, right);
+				case "-": return ratSub(left, right);
+				case "*": return ratMul(left, right);
+				case "/": return ratDiv(left, right);
+				case "%": {
+					const divisor = intOf(right, "%");
+					if (divisor === 0n) fail("E_EXPR_DIV_ZERO", "modulo by zero");
+					return rational(intOf(left, "%") % divisor, 1n);
+				}
+				case "&": return rational(wordOf(left, env, "&") & wordOf(right, env, "&"), 1n);
+				case "|": return rational(wordOf(left, env, "|") | wordOf(right, env, "|"), 1n);
+				case "^": return rational(wordOf(left, env, "^") ^ wordOf(right, env, "^"), 1n);
+				case "<<": {
+					const count = shiftCount(right);
+					const mask = (1n << BigInt(env.width)) - 1n;
+					return rational(wordOf(left, env, "<<") << count & mask, 1n);
+				}
+				case ">>": return rational(wordOf(left, env, ">>") >> shiftCount(right), 1n);
+				default: fail("E_EXPR_SYNTAX", `unknown operator: ${node.op}`);
+			}
+			break;
+		}
+		case "call": {
+			const args = node.args.map((arg) => evalNode(arg, env));
+			return callFunction(node.name, args, env);
+		}
+		default: fail("E_EXPR_SYNTAX", "invalid expression node");
+	}
+}
+function normalizeEnv(env) {
+	if (!Number.isInteger(env.width) || env.width < 1 || env.width > EXPRESSION_LIMITS.width) fail("E_EXPR_RANGE", `width must be an integer in [1, ${EXPRESSION_LIMITS.width}]`);
+	return env;
+}
+/** Parse once; throws ExpressionError on invalid text. */
+function compileExpression(source) {
+	if (typeof source !== "string") fail("E_EXPR_SYNTAX", "expression must be a string");
+	if (source.trim() === "") fail("E_EXPR_SYNTAX", "expression is empty");
+	if (source.length > EXPRESSION_LIMITS.source) fail("E_EXPR_TOO_LARGE", `expression exceeds ${EXPRESSION_LIMITS.source} characters`);
+	return {
+		source,
+		ast: new Parser(tokenize(source)).parse()
+	};
+}
+/** Evaluate a compiled expression to an unsigned N-bit word. */
+function evaluateCompiled(compiled, env) {
+	normalizeEnv(env);
+	const value = evalNode(compiled.ast, env);
+	if (value.d !== 1n) fail("E_EXPR_TYPE", "expression must return an integer", "wrap the result in round(), floor() or ceil()");
+	const modulus = 1n << BigInt(env.width);
+	return (value.n % modulus + modulus) % modulus;
+}
+/** Compile and evaluate in one call (the convenience path used by tests/tools). */
+function evaluateExpression(source, env) {
+	return evaluateCompiled(compileExpression(source), env);
+}
+function recordCount() {
+	return S.record.rows.length;
+}
+/** Start a new take: arm the toggle and clear the buffer. */
+function startRecording() {
+	S.record.on = true;
+	S.record.rows = [];
+	S.record.nextStep = 1;
+}
+function stopRecording() {
+	S.record.on = false;
+}
+/**
+* Append one row if armed and the instrument is settled. Returns true when a row
+* was appended. Call once per completed store transaction.
+*/
+function recordSnapshot() {
+	if (!S.record.on || S.drag >= 0) return false;
+	const frames = {};
+	for (const key of SLOT_KEYS) {
+		const sl = S.slots[key];
+		const names = FRAME_NAMES$1[key];
+		frames[names.a] = toHex(sl.A.bits, S.N);
+		frames[names.b] = toHex(sl.B.bits, S.N);
+		frames[names.z] = toHex(sl.Z.bits, S.N);
+	}
+	S.record.rows.push({
+		step: S.record.nextStep,
+		frames
+	});
+	S.record.nextStep += 1;
+	if (S.record.rows.length > 2048) S.record.rows.shift();
+	return true;
+}
+/**
+* The previous recorded snapshot as frame-name -> BigInt, or null before the
+* first row. This is the one-update-late log expressions read.
+*/
+function lastLog() {
+	const row = S.record.rows[S.record.rows.length - 1];
+	if (!row) return null;
+	const out = {};
+	for (const [name, hex] of Object.entries(row.frames)) out[name] = regToBig$1(fromHex(hex, S.N), S.N);
+	return out;
+}
+/** Recorded rows as a plain array (agent bridge / export). */
+function readLog() {
+	return S.record.rows.map((row) => ({
+		step: row.step,
+		frames: { ...row.frames }
+	}));
+}
+/** Deterministic CSV of the recorded rows (no timestamps). */
+function recordCsv() {
+	const header = [
+		"step",
+		"A",
+		"B",
+		"Z1",
+		"C",
+		"D",
+		"Z2",
+		"E",
+		"F",
+		"Z3"
+	];
+	const lines = [header.join(",")];
+	for (const row of S.record.rows) lines.push([String(row.step), ...header.slice(1).map((name) => row.frames[name] ?? "")].join(","));
+	return `${lines.join("\n")}\n`;
+}
 // src/state/routing.ts
 /**
 * Bridge between the app's state tree and the core routing engine.
 *
-* The core speaks `LaneMap` with numeric keys (`"1"`/`"2"`/`"3"`); the app's
-* slots keep their historical `A`/`B`/`C` keys plus presentation fields. The
-* view objects below share the register objects, so an evaluation that writes
-* `lane.Z.bits` or `operand.bits` mutates the live tree.
-*
 * `evaluate()` is the clocked pass DESIGN §10 describes: apply routes in
-* dependency order, then derive every lane's Z. Call it on transaction
+* dependency order, apply expression operands (which see the previous record row
+* as `log.<frame>`), then derive every lane's Z. Call it on transaction
 * boundaries only (never per animation frame).
 */
 var LANE_KEY$1 = {
 	A: "1",
 	B: "2",
 	C: "3"
+};
+var SLOT_BY_LANE = {
+	"1": "A",
+	"2": "B",
+	"3": "C"
 };
 /** Routes and parked bases for the instrument. Empty until the matrix lands. */
 var routing = createRouting();
@@ -774,14 +1412,44 @@ function coreLanes() {
 		"3": laneView(S.slots.C, "3")
 	};
 }
+/** Every current frame as a name -> BigInt map (for expression environments). */
+function frameWords(lanes, N) {
+	const out = {};
+	for (const laneKey of [
+		"1",
+		"2",
+		"3"
+	]) {
+		const lane = lanes[laneKey];
+		const names = FRAME_NAMES$1[SLOT_BY_LANE[laneKey]];
+		out[names.a] = regToBig$1(lane.A.bits, N);
+		out[names.b] = regToBig$1(lane.B.bits, N);
+		out[names.z] = regToBig$1(lane.Z.bits, N);
+	}
+	return out;
+}
+/** Apply one expression source, if present. Invalid text leaves the base bits. */
+function applyExpression(laneKey, frame, lanes, N) {
+	const sl = S.slots[SLOT_BY_LANE[laneKey]];
+	const text = sl.expressions[frame];
+	if (text.trim() === "") return;
+	const reg = frame === "a" ? sl.A : sl.B;
+	try {
+		bigToReg(evaluateExpression(text, {
+			width: N,
+			frames: frameWords(lanes, N),
+			log: lastLog() ?? void 0
+		}), reg.bits, N);
+	} catch {}
+}
 /** The single evaluation entry point for the app. Writes state only. */
 function evaluate(instant = false) {
-	evaluateAll(routing, coreLanes(), S.N);
+	evaluateAll(routing, coreLanes(), S.N, { applyExpression });
 	for (const key of SLOT_KEYS) {
 		const sl = S.slots[key];
 		const lane = LANE_KEY$1[key];
-		if (isDriven(routing, lane, "a")) syncTarget(sl.A, instant);
-		if (isDriven(routing, lane, "b")) syncTarget(sl.B, instant);
+		if (isDriven(routing, lane, "a") || sl.expressions.a.trim() !== "") syncTarget(sl.A, instant);
+		if (isDriven(routing, lane, "b") || sl.expressions.b.trim() !== "") syncTarget(sl.B, instant);
 		syncTarget(sl.Z, instant);
 	}
 }
@@ -845,6 +1513,8 @@ var LANE_BY_KEY = {
 var laneKeyOf = (slotKey) => LANE_KEY[slotKey];
 var slotKeyOf = (lane) => LANE_BY_KEY[lane];
 var columnIndexOf = (sl, operand) => operand === "a" ? sl.colA : sl.colB;
+var expressionOf = (sl, operand) => operand === "a" ? sl.expressions.a : sl.expressions.b;
+var hasExpression = (sl, operand) => expressionOf(sl, operand).trim() !== "";
 var destinationOf = (sl, operand) => ({
 	lane: laneKeyOf(sl.key),
 	frame: operand
@@ -853,11 +1523,13 @@ var routeFor = (sl, operand) => driverOf(routing, laneKeyOf(sl.key), operand);
 /** The global name of the frame driving this input, or null when local. */
 function driverName(sl, operand) {
 	const route = routeFor(sl, operand);
-	return route ? frameName$1(slotKeyOf(route.from.lane), route.from.frame) : null;
+	if (route) return frameName$1(slotKeyOf(route.from.lane), route.from.frame);
+	return hasExpression(sl, operand) ? "an expression" : null;
 }
 function describeInput(sl, operand) {
 	const route = routeFor(sl, operand);
 	const column = columnIndexOf(sl, operand);
+	const expression = expressionOf(sl, operand).trim();
 	let source = { kind: "none" };
 	let state = "—";
 	if (route) {
@@ -868,6 +1540,12 @@ function describeInput(sl, operand) {
 			name: frameName$1(slotKeyOf(route.from.lane), route.from.frame)
 		};
 		state = route.delay ? "z⁻¹" : "1:1";
+	} else if (expression !== "") {
+		source = {
+			kind: "expr",
+			text: expression
+		};
+		state = "expr";
 	} else if (column >= 0 && DEMO.cols[column]) {
 		source = {
 			kind: "data",
@@ -883,7 +1561,7 @@ function describeInput(sl, operand) {
 		frame: frameName$1(sl.key, operand),
 		source,
 		state,
-		driven: Boolean(route)
+		driven: Boolean(route) || expression !== ""
 	};
 }
 function listInputs() {
@@ -891,16 +1569,16 @@ function listInputs() {
 	for (const key of SLOT_KEYS) for (const operand of ["a", "b"]) out.push(describeInput(S.slots[key], operand));
 	return out;
 }
-/** Is the focused frame an input that a route drives? (editing is locked) */
+/** Is the focused frame an input that a route or expression drives? (editing is locked) */
 function isFocusDriven(sl = curSlot()) {
 	const key = focusKey(sl);
-	return key !== "z" && Boolean(routeFor(sl, key));
+	return key !== "z" && (Boolean(routeFor(sl, key)) || hasExpression(sl, key));
 }
 function isInputDriven(sl, operand) {
-	return Boolean(routeFor(sl, operand));
+	return Boolean(routeFor(sl, operand)) || hasExpression(sl, operand);
 }
 function inputLabel(binding) {
-	const suffix = binding.source.kind === "data" ? ` · ${binding.source.column}` : binding.source.kind === "frame" ? ` · ${binding.source.name}` : "";
+	const suffix = binding.source.kind === "data" ? ` · ${binding.source.column}` : binding.source.kind === "frame" ? ` · ${binding.source.name}` : binding.source.kind === "expr" ? " · expr" : "";
 	return `${binding.frame}${suffix}`;
 }
 /** All frame outputs a given input may read, excluding its own frame. */
@@ -934,17 +1612,29 @@ function dropRoute(sl, operand) {
 /** Bind an input to an imported column, restoring any parked base first. */
 function bindData(sl, operand, column) {
 	dropRoute(sl, operand);
+	sl.expressions[operand] = "";
 	setColumn(sl, operand, column >= 0 && DEMO.cols[column] ? column : -1);
 }
 /** Bind an input to a frame output; its data column mapping is cleared. */
 function bindFrame(sl, operand, from) {
+	sl.expressions[operand] = "";
 	setColumn(sl, operand, -1);
 	addRoute(routing, coreLanes(), from, destinationOf(sl, operand));
 }
 /** Unbind an input (no source); a parked base is restored. */
 function bindNone(sl, operand) {
 	dropRoute(sl, operand);
+	sl.expressions[operand] = "";
 	setColumn(sl, operand, -1);
+}
+/**
+* Bind an input to an expression source. The expression is evaluated on every
+* clocked evaluation (see `state/routing.ts`); an empty string clears it.
+*/
+function bindExpression(sl, operand, text) {
+	dropRoute(sl, operand);
+	setColumn(sl, operand, -1);
+	sl.expressions[operand] = String(text ?? "").trim();
 }
 /** Clear every route and column binding (used by a fresh CSV import). */
 function resetBindings() {
@@ -952,6 +1642,10 @@ function resetBindings() {
 	for (const key of SLOT_KEYS) {
 		S.slots[key].colA = -1;
 		S.slots[key].colB = -1;
+		S.slots[key].expressions = {
+			a: "",
+			b: ""
+		};
 	}
 }
 /** Re-map parked bases around a width change so unroute equals no-route resize. */
@@ -2348,11 +3042,18 @@ function createCsvImport(deps) {
 /**
 * Input source table — the six fixed bindings, one row per operand frame A–F.
 *
-* Moved out of the spike and into the instrument for F3. A row reads one
-* source: an imported CSV column (`data`), a frame output (`1:1` / `z⁻¹`), or
-* nothing. The label carries the assignment (D15 / author note): a data-bound
-* row reads `A · sine`, matching the column name the import dropdown shows.
+* Moved out of the spike and into the instrument for F3, extended with the
+* external-routing `expr` source (EXTERNAL-ROUTING §4/§6). A row reads one
+* source: an imported CSV column (`data`), a frame output (`1:1` / `z⁻¹`), a
+* validated one-line expression (`expr`), or nothing. The label carries the
+* assignment (D15 / author note): a data-bound row reads `A · sine`, matching
+* the column name the import dropdown shows.
+*
+* Expressions are validated with the shared core evaluator before they reach
+* the state tree; invalid text restores the previous valid expression and is
+* reported in the panel's status line.
 */
+var EXPR_PLACEHOLDER = "round(1.2599210498948732 * C)";
 function createSourceTable(deps) {
 	const { store, evaluate, applyRow, fitColumns, syncEditUi, renderStrip, updateReadouts } = deps;
 	const btn = document.getElementById("sourcesBtn");
@@ -2361,10 +3062,28 @@ function createSourceTable(deps) {
 	const closeBtn = document.getElementById("sourcesClose");
 	const statusEl = document.getElementById("sourcesStatus");
 	let rowIndex = -1;
+	const drafts = /* @__PURE__ */ new Map();
+	let committing = false;
+	let suppressBlur = false;
+	const draftKey = (binding) => `${binding.lane}:${binding.operand}`;
 	function sourceLabel(binding) {
 		if (binding.source.kind === "data") return `data · ${binding.source.column}`;
 		if (binding.source.kind === "frame") return `frame · ${binding.source.name}`;
+		if (binding.source.kind === "expr") return `expr · ${binding.source.text}`;
 		return "—";
+	}
+	function stateClass(state) {
+		if (state === "data") return "is-data";
+		if (state === "1:1") return "is-feed";
+		if (state === "z⁻¹") return "is-delay";
+		if (state === "expr") return "is-expr";
+		return "is-none";
+	}
+	function report(text, isError = false) {
+		if (!statusEl) return;
+		statusEl.dataset.userMessage = "1";
+		statusEl.textContent = text;
+		statusEl.classList.toggle("is-error", Boolean(isError));
 	}
 	function option(value, label, disabled = false) {
 		const opt = document.createElement("option");
@@ -2373,8 +3092,96 @@ function createSourceTable(deps) {
 		if (disabled) opt.disabled = true;
 		return opt;
 	}
+	function commitExpression(binding, index, input) {
+		if (committing) return;
+		const sl = S.slots[binding.lane];
+		const key = draftKey(binding);
+		const text = input.value.trim();
+		const previous = expressionOf(sl, binding.operand);
+		input.classList.remove("invalid");
+		input.removeAttribute("aria-invalid");
+		if (text === previous) {
+			drafts.delete(key);
+			const stillExpr = describeInput(sl, binding.operand).source.kind === "expr";
+			if (stillExpr) drafts.set(key, previous);
+			if (!stillExpr) {
+				rowIndex = index;
+				render();
+				focusRow(index);
+			}
+			return;
+		}
+		if (text !== "") try {
+			compileExpression(text);
+		} catch (error) {
+			input.classList.add("invalid");
+			input.setAttribute("aria-invalid", "true");
+			input.value = previous;
+			const message = error && error.message ? error.message : "invalid expression";
+			report(`Lane ${binding.laneNumber} · ${binding.frame} expression: ${message}`, true);
+			return;
+		}
+		committing = true;
+		try {
+			store.patch(() => {
+				bindExpression(sl, binding.operand, text);
+				evaluate();
+				syncEditUi();
+				renderStrip();
+				updateReadouts();
+			});
+		} finally {
+			committing = false;
+		}
+		if (text === "") {
+			drafts.delete(key);
+			report(`Lane ${binding.laneNumber} · ${binding.frame} expression cleared.`);
+			rowIndex = index;
+			render();
+			focusRow(index);
+			return;
+		}
+		drafts.set(key, text);
+		report(`Lane ${binding.laneNumber} · ${binding.frame} now reads expr · ${text}.`);
+		rowIndex = index;
+		render();
+		focusRow(index, "expr");
+	}
+	function makeExpressionInput(binding, index, value) {
+		const input = document.createElement("input");
+		input.type = "text";
+		input.className = "src-expr";
+		input.spellcheck = false;
+		input.autocomplete = "off";
+		input.placeholder = EXPR_PLACEHOLDER;
+		input.value = value;
+		input.setAttribute("aria-label", `Lane ${binding.laneNumber} ${binding.frame} expression`);
+		input.title = "One-line register expression — Enter or blur commits, Esc reverts";
+		input.addEventListener("keydown", (event) => {
+			if (event.key === "Enter") {
+				event.preventDefault();
+				commitExpression(binding, index, input);
+			} else if (event.key === "Escape") {
+				event.preventDefault();
+				event.stopPropagation();
+				input.value = expressionOf(S.slots[binding.lane], binding.operand);
+				input.classList.remove("invalid");
+				input.removeAttribute("aria-invalid");
+			}
+		});
+		input.addEventListener("input", () => {
+			input.classList.remove("invalid");
+			input.removeAttribute("aria-invalid");
+		});
+		input.addEventListener("blur", () => {
+			if (committing || suppressBlur) return;
+			commitExpression(binding, index, input);
+		});
+		return input;
+	}
 	function buildRow(binding, index) {
 		const sl = S.slots[binding.lane];
+		const key = draftKey(binding);
 		const tr = document.createElement("tr");
 		const dest = document.createElement("td");
 		dest.className = "src-dest";
@@ -2392,6 +3199,11 @@ function createSourceTable(deps) {
 			const col = document.createElement("span");
 			col.className = "src-col";
 			col.textContent = ` · ${binding.source.name}`;
+			dest.appendChild(col);
+		} else if (binding.source.kind === "expr") {
+			const col = document.createElement("span");
+			col.className = "src-col";
+			col.textContent = " · expr";
 			dest.appendChild(col);
 		}
 		tr.appendChild(dest);
@@ -2412,9 +3224,29 @@ function createSourceTable(deps) {
 		frameGroup.label = "frame";
 		for (const candidate of availableSources(sl, binding.operand)) frameGroup.appendChild(option(`frame:${candidate.lane}:${candidate.frame}`, `frame · ${candidate.name}`, candidate.disabled));
 		select.appendChild(frameGroup);
-		select.value = binding.source.kind === "data" ? `data:${binding.source.index}` : binding.source.kind === "frame" ? `frame:${binding.source.lane}:${binding.source.frame}` : "";
+		select.appendChild(option("expr", "expr · expression"));
+		if (binding.source.kind === "expr") drafts.set(key, binding.source.text);
+		else if (binding.source.kind !== "none") drafts.delete(key);
+		const editing = binding.source.kind === "expr" || drafts.has(key);
+		select.value = editing ? "expr" : binding.source.kind === "data" ? `data:${binding.source.index}` : binding.source.kind === "frame" ? `frame:${binding.source.lane}:${binding.source.frame}` : "";
 		select.addEventListener("change", () => {
 			const value = select.value;
+			if (value === "expr") {
+				drafts.set(key, expressionOf(sl, binding.operand));
+				store.patch(() => {
+					bindExpression(sl, binding.operand, "");
+					evaluate();
+					syncEditUi();
+					renderStrip();
+					updateReadouts();
+				});
+				report(`Lane ${binding.laneNumber} · ${binding.frame} reads expr — type an expression and press Enter.`);
+				rowIndex = index;
+				render();
+				focusRow(index, "expr");
+				return;
+			}
+			drafts.delete(key);
 			store.patch(() => {
 				if (!value) bindNone(sl, binding.operand);
 				else if (value.startsWith("data:")) {
@@ -2434,37 +3266,46 @@ function createSourceTable(deps) {
 			});
 			if (value.startsWith("data:")) applyRow();
 			const updated = describeInput(sl, binding.operand);
-			if (statusEl) {
-				statusEl.dataset.userMessage = "1";
-				statusEl.textContent = `Lane ${updated.laneNumber} · ${inputLabel(updated)} now reads ${sourceLabel(updated)} (${updated.state}).`;
-			}
+			report(`Lane ${updated.laneNumber} · ${inputLabel(updated)} now reads ${sourceLabel(updated)} (${updated.state}).`);
 			rowIndex = index;
 			render();
 			focusRow(rowIndex);
 		});
 		sourceCell.appendChild(select);
+		if (editing) {
+			const draft = drafts.has(key) ? drafts.get(key) : expressionOf(sl, binding.operand);
+			sourceCell.appendChild(makeExpressionInput(binding, index, draft));
+		}
 		tr.appendChild(sourceCell);
 		const state = document.createElement("td");
-		state.className = `src-state is-${binding.state === "—" ? "none" : binding.state === "data" ? "data" : binding.state === "z⁻¹" ? "delay" : "feed"}`;
+		state.className = `src-state ${stateClass(binding.state)}`;
 		state.textContent = binding.state;
-		if (binding.driven) state.title = `driven by ${binding.source.kind === "frame" ? binding.source.name : "a route"}`;
+		if (binding.driven) state.title = `driven by ${binding.source.kind === "frame" ? binding.source.name : binding.source.kind === "expr" ? "an expression" : "a route"}`;
 		tr.appendChild(state);
 		return tr;
 	}
-	function focusRow(index) {
-		const select = rowsEl.querySelectorAll("tr select")[index];
-		if (select) select.focus();
+	function focusRow(index, target = "select") {
+		const row = rowsEl.querySelectorAll("tr")[index];
+		if (!row) return;
+		const el = target === "expr" ? row.querySelector(".src-expr") : row.querySelector("select");
+		if (el) el.focus();
 	}
 	function render() {
 		rowIndex = -1;
-		rowsEl.textContent = "";
-		const bindings = listInputs();
-		bindings.forEach((binding, index) => rowsEl.appendChild(buildRow(binding, index)));
-		const bound = bindings.filter((binding) => binding.source.kind !== "none").length;
-		if (statusEl && !statusEl.dataset.userMessage) statusEl.textContent = `${bound} / ${bindings.length} bound · one source each`;
+		suppressBlur = true;
+		try {
+			rowsEl.textContent = "";
+			const bindings = listInputs();
+			bindings.forEach((binding, index) => rowsEl.appendChild(buildRow(binding, index)));
+			const bound = bindings.filter((binding) => binding.source.kind !== "none").length;
+			if (statusEl && !statusEl.dataset.userMessage) statusEl.textContent = `${bound} / ${bindings.length} bound · one source each`;
+		} finally {
+			suppressBlur = false;
+		}
 	}
 	function openPanel() {
 		statusEl.dataset.userMessage = "";
+		statusEl.classList.remove("is-error");
 		render();
 		panel.hidden = false;
 		btn.setAttribute("aria-expanded", "true");
@@ -2474,6 +3315,7 @@ function createSourceTable(deps) {
 	function closePanel(returnFocus = false) {
 		if (panel.hidden) return;
 		panel.hidden = true;
+		drafts.clear();
 		btn.setAttribute("aria-expanded", "false");
 		if (returnFocus) btn.focus();
 	}
@@ -2495,6 +3337,85 @@ function createSourceTable(deps) {
 		open: openPanel,
 		close: closePanel,
 		isOpen: () => !panel.hidden
+	};
+}
+// src/ui/record.js
+/**
+* Record UI (EXTERNAL-ROUTING §3) — the DAW-style take and its log export.
+*
+* One toggle (`record`), one row count and one `export log` download. Rows are
+* appended by the shared `src/state/record.ts` module on every settled store
+* transaction (the module itself skips the active pointer-drag stream). Start
+* clears the take; stop freezes it. Arming/disarming itself is a UI preference,
+* not a recorded update, so the transaction that toggles it does not append the
+* row it would otherwise record.
+*
+* The log is a session artifact: in memory only, never in `.bitwave` or the
+* share link, so a shared document stays small and reproducible.
+*/
+function createRecordUI({ store }) {
+	const button = document.getElementById("recordBtn");
+	const countEl = document.getElementById("recordCount");
+	const exportEl = document.getElementById("exportLogBtn");
+	let skipSnapshot = false;
+	function sync() {
+		const rows = recordCount();
+		if (button) {
+			button.setAttribute("aria-pressed", String(S.record.on));
+			button.classList.toggle("on", S.record.on);
+			button.title = S.record.on ? "Recording every settled update — click to stop" : "Record every settled update into an in-memory log (not saved in the project)";
+		}
+		if (countEl) countEl.textContent = `${rows} rows`;
+		if (exportEl) {
+			exportEl.disabled = rows === 0;
+			exportEl.setAttribute("aria-disabled", String(rows === 0));
+		}
+	}
+	/** Arm a fresh take (clears the buffer). Call inside a store transaction. */
+	function start() {
+		skipSnapshot = true;
+		startRecording();
+		sync();
+	}
+	/** Freeze the take. Call inside a store transaction. */
+	function stop() {
+		stopRecording();
+		sync();
+	}
+	function skipNextSnapshot() {
+		skipSnapshot = true;
+	}
+	function toggle() {
+		store.patch(() => {
+			if (S.record.on) stop();
+			else start();
+		});
+	}
+	function exportLog() {
+		if (recordCount() === 0) return;
+		const blob = new Blob([recordCsv()], { type: "text/csv;charset=utf-8;" });
+		const url = URL.createObjectURL(blob);
+		const anchor = document.createElement("a");
+		anchor.href = url;
+		anchor.download = "bitwave_recording.csv";
+		anchor.click();
+		URL.revokeObjectURL(url);
+	}
+	store.subscribe(() => {
+		if (skipSnapshot) skipSnapshot = false;
+		else if (S.record.on) recordSnapshot();
+		sync();
+	});
+	if (button) button.addEventListener("click", toggle);
+	if (exportEl) exportEl.addEventListener("click", exportLog);
+	sync();
+	return {
+		start,
+		stop,
+		toggle,
+		sync,
+		skipNextSnapshot,
+		exportLog
 	};
 }
 // src/ui/live-status.js
@@ -2866,6 +3787,20 @@ function lenientLfoMode(value) {
 function lenientLfoRate(value) {
 	return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : LFO_DEFAULT_RATE;
 }
+/** Schema-3 expression sources: strings only, trimmed, bounded; invalid values drop. */
+function lenientExpressions(value) {
+	if (typeof value !== "object" || value === null) return {};
+	const raw = value;
+	const out = {};
+	for (const frame of ["a", "b"]) {
+		const text = raw[frame];
+		if (typeof text !== "string") continue;
+		const trimmed = text.trim();
+		if (trimmed === "" || trimmed.length > EXPRESSION_LIMITS.source) continue;
+		out[frame] = trimmed;
+	}
+	return out;
+}
 /**
 * The `dataset` field. Schema 2 adds `index` (the CSV cursor). A valid
 * non-negative integer is kept; a missing/malformed one is OMITTED rather than
@@ -2914,6 +3849,13 @@ function serializeProject(lanes, routing, N, view, dataset = null, now = (/* @__
 		if (focus !== void 0) laneDoc.focus = focus;
 		const frameVis = extras.frameVis?.[key];
 		if (frameVis !== void 0) laneDoc.frameVis = { ...frameVis };
+		const expressions = extras.expressions?.[key];
+		if (expressions !== void 0) {
+			const clean = {};
+			if (typeof expressions.a === "string" && expressions.a.trim() !== "") clean.a = expressions.a;
+			if (typeof expressions.b === "string" && expressions.b.trim() !== "") clean.b = expressions.b;
+			if (Object.keys(clean).length > 0) laneDoc.expressions = clean;
+		}
 		laneDocs[key] = laneDoc;
 	}
 	const parked = {};
@@ -2933,7 +3875,7 @@ function serializeProject(lanes, routing, N, view, dataset = null, now = (/* @__
 	if (lfoMode !== void 0) viewDoc.lfoMode = lfoMode;
 	if (lfoRate !== void 0) viewDoc.lfoRate = lfoRate;
 	const doc = {
-		schema: 2,
+		schema: 3,
 		app: PROJECT_APP,
 		savedAt: now,
 		N,
@@ -2978,13 +3920,14 @@ function deserializeProject(doc) {
 	const d = doc;
 	if (d.app !== "bitwave") throw new ProjectError("unsupported-app", `not a BitWave project`);
 	if (typeof d.schema !== "number") throw new ProjectError("malformed", "missing schema version");
-	if (d.schema > 2) throw new ProjectError("newer-schema", `project schema ${d.schema} is newer than supported 2; open it read-only`);
+	if (d.schema > 3) throw new ProjectError("newer-schema", `project schema ${d.schema} is newer than supported 3; open it read-only`);
 	const N = requireIndex(d.N, "N");
 	if (!(N >= 8 && N <= 256 && N % 8 === 0)) throw new ProjectError("malformed", `unsupported width: ${N}`);
 	if (typeof d.lanes !== "object" || d.lanes === null) throw new ProjectError("malformed", "missing lanes");
 	const lanes = makeBootLanes(N);
 	const focus = {};
 	const frameVis = {};
+	const expressions = {};
 	for (const key of LANE_KEYS) {
 		const s = d.lanes[key];
 		if (!s) throw new ProjectError("malformed", `missing lane ${key}`);
@@ -3001,6 +3944,7 @@ function deserializeProject(doc) {
 		lane.colB = requireIndex(s.colB, `lanes.${key}.colB`);
 		focus[key] = lenientFocus(s.focus);
 		frameVis[key] = lenientFrameVis(s.frameVis);
+		expressions[key] = lenientExpressions(s.expressions);
 	}
 	const routing = createRouting();
 	const rawRoutes = Array.isArray(d.routes) ? d.routes : [];
@@ -3050,7 +3994,8 @@ function deserializeProject(doc) {
 			focus,
 			frameVis,
 			lfoMode: lenientLfoMode(d.view?.lfoMode),
-			lfoRate: lenientLfoRate(d.view?.lfoRate)
+			lfoRate: lenientLfoRate(d.view?.lfoRate),
+			expressions
 		}
 	};
 }
@@ -3065,7 +4010,7 @@ var stringifyProject = (doc) => JSON.stringify(doc, null, 2);
 */
 var TOOL_ID = "bitwave";
 var TOOL_TITLE = "BitWave";
-var TOOLSET_VERSION = "1.0.0";
+var TOOLSET_VERSION = "1.1.0";
 /** Fixed timestamp for canonical share documents (links never carry `savedAt`). */
 var CANONICAL_SAVED_AT = "1970-01-01T00:00:00.000Z";
 var WIDTHS = SIZES$1;
@@ -3343,7 +4288,8 @@ function canonicalShareDocument(doc) {
 		focus: loaded.extras.focus,
 		frameVis: loaded.extras.frameVis,
 		lfoMode: loaded.extras.lfoMode,
-		lfoRate: loaded.extras.lfoRate
+		lfoRate: loaded.extras.lfoRate,
+		expressions: loaded.extras.expressions
 	});
 	delete out.savedAt;
 	return out;
@@ -3388,6 +4334,7 @@ var ERROR_CODES = [
 	"E_INPUT_TOO_LARGE",
 	"E_DRIVEN_INPUT",
 	"E_BAD_STATE",
+	"E_INVALID_EXPRESSION",
 	"E_INTERNAL"
 ];
 var AgentToolError = class extends Error {
@@ -3865,6 +4812,8 @@ var PATCH_KEYS = [
 	"binop",
 	"lfo",
 	"dataset",
+	"expression",
+	"record",
 	"reset"
 ];
 /** Validate a bridge patch without applying it; never throws. */
@@ -3940,6 +4889,30 @@ function normalizeAgentPatch(value) {
 			}
 			if (Object.keys(patchDataset).length === 0) bad("E_BAD_ARGS", "dataset patch has no keys");
 			patch.dataset = patchDataset;
+		}
+		if (input.expression !== void 0) {
+			const expression = objectValue(input.expression, "expression");
+			onlyKeys(expression, ["frame", "text"], "expression");
+			const frame = frameRefFromName(expression.frame);
+			if (!frame) bad("E_BAD_ENUM", "expression.frame must be an operand frame (A–F)");
+			if (frame.frame === "z") bad("E_BAD_ENUM", "Z is derived and cannot carry an expression");
+			if (typeof expression.text !== "string") bad("E_BAD_ARGS", "expression.text must be a string");
+			const text = expression.text.trim();
+			if (text.length > EXPRESSION_LIMITS.source) bad("E_INPUT_TOO_LARGE", `expression exceeds ${EXPRESSION_LIMITS.source} characters`);
+			if (text !== "") try {
+				compileExpression(text);
+			} catch (error) {
+				if (error instanceof ExpressionError) bad("E_INVALID_EXPRESSION", error.message, error.hint);
+				throw error;
+			}
+			patch.expression = {
+				frame: frame.name,
+				text
+			};
+		}
+		if (input.record !== void 0) {
+			if (typeof input.record !== "boolean") bad("E_BAD_ARGS", "record must be a boolean");
+			patch.record = input.record;
 		}
 		if (input.reset !== void 0) {
 			if (input.reset !== true) bad("E_BAD_ARGS", "reset must be true");
@@ -4078,7 +5051,8 @@ function createAgentPanel({ root }) {
 			`Tools: ${TOOLS.map((tool) => tool.name).join(", ")}.`,
 			"Try: window.bitwave.getState(); window.bitwave.call(\"manifest\", {});",
 			"Deeplink: window.bitwave.getDeeplink(); setters: setLane, setFrame, setView,",
-			"setWidth, setRegister, setBinop, setLfo, setDataset, stepDataset, reset."
+			"setWidth, setRegister, setBinop, setLfo, setDataset, setExpression, record,",
+			"stepDataset, reset. Read the transient take with window.bitwave.getLog()."
 		].join("\n");
 	}
 	function flashCopyStatus(text) {
@@ -4207,6 +5181,10 @@ function buildUiState(doc, options = {}) {
 			[names.a]: routeA !== null,
 			[names.b]: routeB !== null
 		};
+		const expressions = {
+			[names.a]: laneDoc.expressions?.a ?? null,
+			[names.b]: laneDoc.expressions?.b ?? null
+		};
 		lanes[lane] = {
 			lane: Number(lane),
 			frames: {
@@ -4223,6 +5201,7 @@ function buildUiState(doc, options = {}) {
 			visibility,
 			sources,
 			driven,
+			expressions,
 			derived: { [names.z]: {
 				hex: toHex(zBits, width),
 				popcount: popcountZ(zBits),
@@ -4234,7 +5213,8 @@ function buildUiState(doc, options = {}) {
 	const focusedFrame = doc.lanes[focusedLane].focus ?? "a";
 	const focusedState = lanes[focusedLane];
 	const focusedOperand = focusedFrame === "z" ? null : focusedFrame;
-	const enabled = focusedOperand !== null && !focusedState.driven[FRAME_NAMES[focusedLane][focusedOperand]];
+	const focusedExpression = focusedOperand !== null ? focusedState.expressions[FRAME_NAMES[focusedLane][focusedOperand]] !== null : false;
+	const enabled = focusedOperand !== null && !focusedState.driven[FRAME_NAMES[focusedLane][focusedOperand]] && !focusedExpression;
 	const mode = doc.view.split3d ? "split" : doc.view.view3d ? "3d" : "2d";
 	let dataset = null;
 	if (doc.dataset && doc.dataset.rows.length > 0) {
@@ -4267,6 +5247,10 @@ function buildUiState(doc, options = {}) {
 		editing: {
 			copyArmed: options.copyArmed === true,
 			enabled
+		},
+		recording: {
+			on: options.recording?.on === true,
+			rows: options.recording?.rows ?? 0
 		},
 		deeplink: options.deeplink ?? "",
 		bridge: {
@@ -4327,10 +5311,16 @@ function captureProject(now = (/* @__PURE__ */ new Date()).toISOString()) {
 	};
 	const focus = {};
 	const frameVis = {};
+	const expressions = {};
 	for (const key of SLOT_KEYS) {
 		const lane = LANE_OF[key];
-		focus[lane] = S.slots[key].focus;
-		frameVis[lane] = { ...S.slots[key].frameVis };
+		const sl = S.slots[key];
+		focus[lane] = sl.focus;
+		frameVis[lane] = { ...sl.frameVis };
+		const expr = {};
+		if (sl.expressions.a.trim() !== "") expr.a = sl.expressions.a;
+		if (sl.expressions.b.trim() !== "") expr.b = sl.expressions.b;
+		if (Object.keys(expr).length > 0) expressions[lane] = expr;
 	}
 	const dataset = DEMO.rows.length ? {
 		cols: DEMO.cols.slice(),
@@ -4341,7 +5331,8 @@ function captureProject(now = (/* @__PURE__ */ new Date()).toISOString()) {
 		focus,
 		frameVis,
 		lfoMode: S.lfo.mode,
-		lfoRate: S.lfo.rate
+		lfoRate: S.lfo.rate,
+		expressions
 	});
 	return {
 		...unknownFields,
@@ -4405,6 +5396,10 @@ function applyProject(raw) {
 		sl.colB = src.colB;
 		sl.focus = extras.focus[laneKey] ?? "a";
 		sl.frameVis = { ...extras.frameVis[laneKey] };
+		sl.expressions = {
+			a: extras.expressions[laneKey]?.a ?? "",
+			b: extras.expressions[laneKey]?.b ?? ""
+		};
 		syncTarget(sl.A, true);
 		syncTarget(sl.B, true);
 	}
@@ -4427,6 +5422,11 @@ function applyProject(raw) {
 		base: null
 	};
 	S.lfoAcc = 0;
+	S.record = {
+		on: false,
+		rows: [],
+		nextStep: 1
+	};
 	if (dataset) {
 		DEMO.cols = dataset.cols.slice();
 		DEMO.rows = dataset.rows.map((row) => row.slice());
@@ -4458,6 +5458,10 @@ function applyProject(raw) {
 *   - a setter that changes nothing emits nothing;
 *   - the debounced address-bar mirror (`bitwave:urlsettled` from io/share-url)
 *     refreshes the hidden state node silently — a URL write is not a UI change.
+*
+* Toolset 1.1.0 adds external routing: expression sources (`setExpression`,
+* patch key `expression`), the transient recorded take (`record(on)`,
+* `getLog({limit?})`) and `recording` / per-lane `expressions` in `getState()`.
 */
 var STATE_NODE_ID = "bitwave-state";
 var READY_ATTR = "agent-ready";
@@ -4474,7 +5478,7 @@ function toolDefinitions() {
 	}));
 }
 function createAgentBridge(deps) {
-	const { store, share, selectSlot, selectFrame, setView: applyView, resizeRegister, setSize, chooseBinop, lfoStart, lfoStop, syncLfoUi, loadCSV, applyExample, resetInstrument, syncEditUi } = deps;
+	const { store, share, selectSlot, selectFrame, setView: applyView, resizeRegister, setSize, chooseBinop, lfoStart, lfoStop, syncLfoUi, loadCSV, applyExample, resetInstrument, syncEditUi, setExpression: applyExpressionSource, startRecording, stopRecording, skipRecordSnapshot, readLog } = deps;
 	/** Subscriber set; each listener is wrapped so one thrower cannot break others. */
 	const subscribers = /* @__PURE__ */ new Set();
 	let installed = null;
@@ -4485,6 +5489,10 @@ function createAgentBridge(deps) {
 			deeplink: location.href,
 			lfoOn: S.lfo.on,
 			copyArmed: S.copyArmed,
+			recording: {
+				on: S.record.on,
+				rows: S.record.rows.length
+			},
 			enabled: focusEditable() && !isFocusDriven()
 		});
 	}
@@ -4628,6 +5636,16 @@ function createAgentBridge(deps) {
 		if (dataset.index !== void 0) applyExample(dataset.index);
 		if (syncEditUi) syncEditUi();
 	}
+	/** Expression source write: the app owns binding + evaluation + UI sync. */
+	function applyExpression(expression) {
+		if (typeof applyExpressionSource === "function") applyExpressionSource(expression.frame, expression.text);
+	}
+	/** The record toggle is idempotent at the bridge: arming an armed take does
+	not clear it, disarming a stopped take does nothing. */
+	function applyRecord(on) {
+		if (on && !S.record.on) startRecording();
+		else if (!on && S.record.on) stopRecording();
+	}
 	/** Apply a validated patch in the instrument's canonical key order. */
 	function applyNormalized(patch) {
 		if (patch.reset) resetInstrument();
@@ -4648,6 +5666,8 @@ function createAgentBridge(deps) {
 		});
 		if (patch.lfo) applyLfo(patch.lfo);
 		if (patch.dataset) applyDataset(patch.dataset);
+		if (patch.expression) applyExpression(patch.expression);
+		if (patch.record !== void 0) applyRecord(patch.record);
 	}
 	/** One transaction; the address bar is mirrored in the same pass when it changed. */
 	function runTransaction(mutate) {
@@ -4658,6 +5678,9 @@ function createAgentBridge(deps) {
 				mutate();
 				if (stringify(currentState()) !== before) try {
 					share.update();
+				} catch (_) {}
+				else if (typeof skipRecordSnapshot === "function") try {
+					skipRecordSnapshot();
 				} catch (_) {}
 			});
 		} finally {
@@ -4713,7 +5736,62 @@ function createAgentBridge(deps) {
 	const setBinop = (binop) => setState({ binop });
 	const setLfo = (lfo) => setState({ lfo });
 	const setDataset = (dataset) => setState({ dataset });
+	const setExpression = (frame, text) => setState({ expression: {
+		frame,
+		text
+	} });
+	const record = (on) => setState({ record: on });
 	const reset = () => setState({ reset: true });
+	/**
+	* Read the transient recorded take (newest rows last). `limit` keeps the most
+	* recent N rows; the log is in memory only, so this is never a file read.
+	*/
+	function getLog(options) {
+		let limit = null;
+		if (options !== void 0 && options !== null) {
+			if (typeof options !== "object" || Array.isArray(options)) return {
+				ok: false,
+				error: {
+					code: "E_BAD_ARGS",
+					message: "getLog(options) expects an object"
+				},
+				warnings: []
+			};
+			for (const key of Object.keys(options)) if (key !== "limit") return {
+				ok: false,
+				error: {
+					code: "E_BAD_ARGS",
+					message: `getLog has an unknown option: ${key}`
+				},
+				warnings: []
+			};
+			if (options.limit !== void 0) {
+				if (typeof options.limit !== "number" || !Number.isInteger(options.limit)) return {
+					ok: false,
+					error: {
+						code: "E_BAD_ARGS",
+						message: "getLog({limit}) expects an integer"
+					},
+					warnings: []
+				};
+				if (options.limit < 0) return {
+					ok: false,
+					error: {
+						code: "E_OUT_OF_RANGE",
+						message: "getLog({limit}) must be >= 0"
+					},
+					warnings: []
+				};
+				limit = options.limit;
+			}
+		}
+		const rows = typeof readLog === "function" ? readLog() : [];
+		return {
+			ok: true,
+			rows: limit === null ? rows : rows.slice(Math.max(0, rows.length - limit)),
+			warnings: []
+		};
+	}
 	function getDeeplink() {
 		try {
 			share.update();
@@ -4763,6 +5841,9 @@ function createAgentBridge(deps) {
 			setBinop,
 			setLfo,
 			setDataset,
+			setExpression,
+			record,
+			getLog,
 			stepDataset,
 			reset,
 			subscribe
@@ -6118,6 +7199,22 @@ var getPad = () => PAD;
 		renderStrip,
 		updateReadouts
 	});
+	const recordUi = createRecordUI({ store });
+	/** External-routing expression write through the instrument's own commands. */
+	function applyExpressionSource(frame, text) {
+		const ref = frameRefFromName(frame);
+		if (!ref || ref.frame === "z") return false;
+		const sl = S.slots[ref.slotKey];
+		store.patch(() => {
+			bindExpression(sl, ref.frame, text);
+			evaluate();
+			controls.syncEditUi();
+			renderStrip();
+			updateReadouts();
+		});
+		if (sources.isOpen()) sources.render();
+		return true;
+	}
 	attachKeyboard({
 		applyExample: csv.applyExample,
 		loadCSV: csv.loadCSV,
@@ -6294,7 +7391,12 @@ var getPad = () => PAD;
 			loadCSV: (text) => csv.loadCSV(text),
 			applyExample: (index) => csv.applyExample(index, true),
 			resetInstrument,
-			syncEditUi: () => controls.syncEditUi()
+			syncEditUi: () => controls.syncEditUi(),
+			setExpression: applyExpressionSource,
+			startRecording: () => recordUi.start(),
+			stopRecording: () => recordUi.stop(),
+			skipRecordSnapshot: () => recordUi.skipNextSnapshot(),
+			readLog
 		}).install();
 		agentPanel = createAgentPanel({ root: document.querySelector("[data-agent-panel=\"agent\"]") });
 		agentPanel.refresh();
@@ -7006,6 +8108,24 @@ var getPad = () => PAD;
 
   .src-pick { width: 100%; font-family: var(--mono); font-size: 11px; }
 
+  /* Expression source editor — one mono line under the source picker. */
+  .src-expr {
+    width: 100%;
+    margin-top: 3px;
+    padding: 3px 5px;
+    font-family: var(--mono);
+    font-size: 10.5px;
+    letter-spacing: 0.01em;
+    color: var(--text);
+    background: var(--bg);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+  }
+
+  .src-expr::placeholder { color: var(--dimmer); }
+  .src-expr:focus-visible { outline: none; box-shadow: 0 0 0 2px rgba(52,211,153,0.35); }
+  .src-expr.invalid { border-color: rgba(245,181,68,0.7); }
+
   .src-state {
     font-family: var(--mono);
     font-size: 10px;
@@ -7014,7 +8134,8 @@ var getPad = () => PAD;
     color: var(--dim);
   }
   .src-state.is-feed,
-  .src-state.is-delay { color: var(--accent); }
+  .src-state.is-delay,
+  .src-state.is-expr { color: var(--accent); }
   .src-state.is-none { color: var(--dimmer); }
 
   .sources-panel .fp-foot { font-size: 9.5px; }
@@ -7301,6 +8422,12 @@ var getPad = () => PAD;
      dimmed and non-interactive, instead of disappearing. */
   .op[aria-disabled="true"],
   .seg[aria-disabled="true"] .op {
+    opacity: 0.42;
+    cursor: default;
+  }
+
+  /* The record log export keeps its place before the first recorded row. */
+  button.op:disabled {
     opacity: 0.42;
     cursor: default;
   }
@@ -7736,6 +8863,10 @@ var getPad = () => PAD;
       <button class="op" id="exportObsBtn" title="Export observations to CSV">export</button>
     </div>
     <span class="excount" id="obsCount">0 obs</span>
+    <button class="op" id="recordBtn" type="button" aria-pressed="false"
+            title="Record every settled update into an in-memory log (not saved in the project)">record</button>
+    <span class="excount" id="recordCount" aria-live="polite">0 rows</span>
+    <button class="op" id="exportLogBtn" type="button" title="Download the recorded log as CSV" disabled>export log</button>
     <span id="csvStatus" class="src-status" role="status" aria-live="polite" aria-atomic="true">no dataset loaded</span>
   </div>
 

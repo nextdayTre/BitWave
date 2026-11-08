@@ -11,7 +11,17 @@ import assert from "node:assert/strict";
 
 import { S, SIZES } from "../src/state/instrument.ts";
 import { DEMO } from "../src/state/dataset.ts";
-import { routing } from "../src/state/routing.ts";
+import { evaluate, routing } from "../src/state/routing.ts";
+import { setHexWord } from "../src/state/actions.ts";
+import {
+  clearRecording,
+  recordCount,
+  recordSnapshot,
+  readLog,
+  startRecording,
+  stopRecording,
+} from "../src/state/record.ts";
+import { toHex } from "../src/core/registers.ts";
 import {
   applyProject,
   captureProject,
@@ -105,7 +115,7 @@ test("captureProject round-trips the mapped state", () => {
     dataset: { cols: DEMO.cols.slice(), rows: DEMO.rows.map((r) => r.slice()), i: DEMO.i },
   };
   const captured = captureProject("2026-11-06T01:00:00.000Z");
-  assert.equal(captured.schema, 2);
+  assert.equal(captured.schema, 3);
   assert.equal(captured.N, 16);
   assert.equal(captured.view.lane, "2");
   assert.equal(captured.lanes["1"].focus, "b");
@@ -164,6 +174,40 @@ test("a document without a dataset clears the board", () => {
   assert.equal(result.dataset, false);
   assert.equal(DEMO.rows.length, 0);
   assert.equal(DEMO.i, 0);
+});
+
+test("expressions evaluate through the clocked pass and the Record log", () => {
+  assert.equal(applyProject(doc()).ok, true);
+  const lane2 = S.slots.B;
+  setHexWord(lane2.A, "0005");
+  lane2.expressions.b = "C + 1";
+  evaluate();
+  assert.equal(toHex(lane2.B.bits, S.N), "0006", "D = C + 1");
+  assert.equal(toHex(lane2.Z.bits, S.N), "0003", "Z2 = C xor D");
+
+  startRecording();
+  recordSnapshot();
+  assert.equal(recordCount(), 1);
+  const row = readLog()[0];
+  assert.equal(row.frames["C"], "0005");
+  assert.equal(row.frames["D"], "0006");
+  assert.equal(row.frames["Z2"], "0003");
+
+  // The expression sees the previous recorded row, one update late.
+  lane2.expressions.b = "log.C + 1";
+  setHexWord(lane2.A, "0007");
+  evaluate();
+  assert.equal(toHex(lane2.B.bits, S.N), "0006", "D = previous C + 1");
+  assert.equal(toHex(lane2.Z.bits, S.N), "0001");
+
+  // An invalid expression leaves the last valid bits intact.
+  lane2.expressions.b = "1 +";
+  evaluate();
+  assert.equal(toHex(lane2.B.bits, S.N), "0006");
+
+  stopRecording();
+  clearRecording();
+  assert.equal(recordCount(), 0);
 });
 
 test("every supported width is representable", () => {

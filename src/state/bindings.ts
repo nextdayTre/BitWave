@@ -37,10 +37,14 @@ export interface FrameSource {
   frame: FrameKey;
   name: string;
 }
+export interface ExpressionSource {
+  kind: "expr";
+  text: string;
+}
 export interface NoSource {
   kind: "none";
 }
-export type BindingSource = DataSource | FrameSource | NoSource;
+export type BindingSource = DataSource | FrameSource | ExpressionSource | NoSource;
 
 export interface InputBinding {
   lane: SlotKey;
@@ -50,8 +54,8 @@ export interface InputBinding {
   frame: string;
   /** What the input reads, named the way the CSV dropdown names it. */
   source: BindingSource;
-  /** `data` · `1:1` · `z⁻¹` · `—`. */
-  state: "data" | "1:1" | "z⁻¹" | "—";
+  /** `data` · `1:1` · `z⁻¹` · `expr` · `—`. */
+  state: "data" | "1:1" | "z⁻¹" | "expr" | "—";
   driven: boolean;
 }
 
@@ -64,6 +68,12 @@ export const slotKeyOf = (lane: LaneKey): SlotKey => LANE_BY_KEY[lane];
 export const columnIndexOf = (sl: Slot, operand: Operand): number =>
   operand === "a" ? sl.colA : sl.colB;
 
+export const expressionOf = (sl: Slot, operand: Operand): string =>
+  operand === "a" ? sl.expressions.a : sl.expressions.b;
+
+export const hasExpression = (sl: Slot, operand: Operand): boolean =>
+  expressionOf(sl, operand).trim() !== "";
+
 export const destinationOf = (sl: Slot, operand: Operand): DestinationPort => ({
   lane: laneKeyOf(sl.key),
   frame: operand,
@@ -75,12 +85,14 @@ export const routeFor = (sl: Slot, operand: Operand) =>
 /** The global name of the frame driving this input, or null when local. */
 export function driverName(sl: Slot, operand: Operand): string | null {
   const route = routeFor(sl, operand);
-  return route ? frameName(slotKeyOf(route.from.lane), route.from.frame) : null;
+  if (route) return frameName(slotKeyOf(route.from.lane), route.from.frame);
+  return hasExpression(sl, operand) ? "an expression" : null;
 }
 
 export function describeInput(sl: Slot, operand: Operand): InputBinding {
   const route = routeFor(sl, operand);
   const column = columnIndexOf(sl, operand);
+  const expression = expressionOf(sl, operand).trim();
   let source: BindingSource = { kind: "none" };
   let state: InputBinding["state"] = "—";
 
@@ -92,6 +104,9 @@ export function describeInput(sl: Slot, operand: Operand): InputBinding {
       name: frameName(slotKeyOf(route.from.lane), route.from.frame),
     };
     state = route.delay ? "z⁻¹" : "1:1";
+  } else if (expression !== "") {
+    source = { kind: "expr", text: expression };
+    state = "expr";
   } else if (column >= 0 && DEMO.cols[column]) {
     source = { kind: "data", index: column, column: DEMO.cols[column] };
     state = "data";
@@ -104,7 +119,7 @@ export function describeInput(sl: Slot, operand: Operand): InputBinding {
     frame: frameName(sl.key, operand),
     source,
     state,
-    driven: Boolean(route),
+    driven: Boolean(route) || expression !== "",
   };
 }
 
@@ -116,14 +131,14 @@ export function listInputs(): InputBinding[] {
   return out;
 }
 
-/** Is the focused frame an input that a route drives? (editing is locked) */
+/** Is the focused frame an input that a route or expression drives? (editing is locked) */
 export function isFocusDriven(sl: Slot = curSlot()): boolean {
   const key = focusKey(sl);
-  return key !== "z" && Boolean(routeFor(sl, key));
+  return key !== "z" && (Boolean(routeFor(sl, key)) || hasExpression(sl, key));
 }
 
 export function isInputDriven(sl: Slot, operand: Operand): boolean {
-  return Boolean(routeFor(sl, operand));
+  return Boolean(routeFor(sl, operand)) || hasExpression(sl, operand);
 }
 
 export function inputLabel(binding: InputBinding): string {
@@ -132,7 +147,9 @@ export function inputLabel(binding: InputBinding): string {
       ? ` · ${binding.source.column}`
       : binding.source.kind === "frame"
         ? ` · ${binding.source.name}`
-        : "";
+        : binding.source.kind === "expr"
+          ? " · expr"
+          : "";
   return `${binding.frame}${suffix}`;
 }
 
@@ -171,11 +188,13 @@ function dropRoute(sl: Slot, operand: Operand): void {
 /** Bind an input to an imported column, restoring any parked base first. */
 export function bindData(sl: Slot, operand: Operand, column: number): void {
   dropRoute(sl, operand);
+  sl.expressions[operand] = "";
   setColumn(sl, operand, column >= 0 && DEMO.cols[column] ? column : -1);
 }
 
 /** Bind an input to a frame output; its data column mapping is cleared. */
 export function bindFrame(sl: Slot, operand: Operand, from: SourcePort): void {
+  sl.expressions[operand] = "";
   setColumn(sl, operand, -1);
   addRoute(routing, coreLanes(), from, destinationOf(sl, operand));
 }
@@ -183,7 +202,18 @@ export function bindFrame(sl: Slot, operand: Operand, from: SourcePort): void {
 /** Unbind an input (no source); a parked base is restored. */
 export function bindNone(sl: Slot, operand: Operand): void {
   dropRoute(sl, operand);
+  sl.expressions[operand] = "";
   setColumn(sl, operand, -1);
+}
+
+/**
+ * Bind an input to an expression source. The expression is evaluated on every
+ * clocked evaluation (see `state/routing.ts`); an empty string clears it.
+ */
+export function bindExpression(sl: Slot, operand: Operand, text: string): void {
+  dropRoute(sl, operand);
+  setColumn(sl, operand, -1);
+  sl.expressions[operand] = String(text ?? "").trim();
 }
 
 /** Clear every route and column binding (used by a fresh CSV import). */
@@ -192,6 +222,7 @@ export function resetBindings(): void {
   for (const key of SLOT_KEYS) {
     S.slots[key].colA = -1;
     S.slots[key].colB = -1;
+    S.slots[key].expressions = { a: "", b: "" };
   }
 }
 
