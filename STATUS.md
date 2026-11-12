@@ -182,8 +182,18 @@ operand wing is far vs near per lane:
 - [`docs/DYNAMIC-LANES.md`](docs/DYNAMIC-LANES.md) records the lane-count analysis:
   **13-lane naming ceiling** (`A`–`Z` operands), **8-lane recommended v1 cap**, the 2 KB
   share-link gate, `+`/duplicate/delete semantics, schema/agent impact and the staged plan.
-- The step/level readout jitter fix is still queued (fixed-width `#trend` slot); it was not
-  bundled with the hinge.
+- The step/level readout jitter is **fixed**: `#trend` now owns a fixed 86 px slot, so
+  `level`/`step-up`/`step-down` no longer reflow the meta row in 2-D or 3-D (asserted by
+  the browser harness).
+
+## Readout stability (2026-11-12) — done
+
+`#trend` was a content-sized badge in a wrapping flex row, so each word length pushed the
+hex readouts sideways. It now has a fixed `inline-size: 86px` with centered text; the
+browser check measures `#hex`/`#hexA`/`#hexZ` positions across all three words in 2-D and
+3-D and asserts the badge text does not overflow. This is a CSS/layout-only fix; state,
+schema, agent API and the canvas are untouched. The five `docs/agent/*.png` screenshots
+were recaptured from the rebuilt artifact so the documentation shows the fixed slot.
 
 ## Verified this session
 
@@ -191,15 +201,15 @@ operand wing is far vs near per lane:
   project, expression routing, the agent registry/state/transports, and the 7 app-bridge
   tests in a separate process because they replace the live singletons);
   `npm run typecheck` → **clean**.
-- `npm run build` → **`bitwave-v2.html`, 276.9 KB / 283,530 bytes, single file**, no
+- `npm run build` → **`bitwave-v2.html`, 277.1 KB / 283,752 bytes, single file**, no
   external references (`tools/build-artifact.mjs` gate). The default control row now
   intentionally includes Record; pixel parity resumes from this slice's artifact, not the
   pre-agent one.
-- `npm run check:browser` → **53/53 checks pass** on the built `bitwave-v2.html` (54 with
+- `npm run check:browser` → **54/54 checks pass** on the built `bitwave-v2.html` (55 with
   `--shots`/`--compare`), including the F5 persistence groups (now schema 3), the F4
   reflow/keyboard/semantics/axe groups, the §11 geometry assertion and the source-table/
   record controls; the hidden agent node and bridge do not alter the rendered stage.
-- `npm run build:pwa` → **`dist/hosted/`** (index 284.0 KB, sw.js 1.6 KB, manifest 0.9 KB,
+- `npm run build:pwa` → **`dist/hosted/`** (index 284.3 KB, sw.js 1.6 KB, manifest 0.9 KB,
   4 icons) with a hash cache version; the committed `bitwave-v2.html` was
   **byte-unchanged** (sha256 checked in the build itself); the build also serves `agent/`,
   `AGENTS.md`, `llms.txt` and the agent docs.
@@ -225,9 +235,9 @@ operand wing is far vs near per lane:
   (1440×900, 146–247 KB) visually inspected; `record.png` shows an armed take with an `expr`
   source open. The shared link now preserves expressions (D1 regression fixed).
 - `npm run verify` → **exit 0** on the final tree: 126 + 7 tests, typecheck, deterministic
-  single-file build (`bitwave-v2.html` 276.9 KB), generated artifacts current, CLI/MCP
+  single-file build (`bitwave-v2.html` 277.1 KB), generated artifacts current, CLI/MCP
   selftest 23/23, independent `agent/verify-browser.mjs` 31/31, existing browser harness
-  53/53, hosted build + PWA 8/8. Pre-slice `--compare` is retired as the baseline because
+  54/54, hosted build + PWA 8/8. Pre-slice `--compare` is retired as the baseline because
   the Record control is an intentional default-view change; compare against this slice's
   artifact if needed.
 - **F4 slice 1 — reflow/zoom (D27):** parity was 6/6 pixel-identical against the pre-F4
@@ -353,7 +363,7 @@ operand wing is far vs near per lane:
 | [`examples/demo.bitwave.json`](examples/demo.bitwave.json) | Versioned project document (lanes 1/2/3; routes + parked bases; dataset) |
 | [`spike/routing-matrix.html`](spike/routing-matrix.html) | The reference housing prototype that F3 implements (360 lines) |
 | [`spike/f4-ia.html`](spike/f4-ia.html) | The author-approved F4 IA layout mockup (annotated, 1440/720/360 screenshots) |
-| [`tools/browser-check.mjs`](tools/browser-check.mjs) | Zero-dependency CDP harness: 53 checks (54 with `--shots` or `--compare`), incl. reflow/zoom, keyboard editing, IA, axe, F5 persistence and the 3-D hinge |
+| [`tools/browser-check.mjs`](tools/browser-check.mjs) | Zero-dependency CDP harness: 54 checks (55 with `--shots` or `--compare`), incl. reflow/zoom, keyboard editing, IA, axe, F5 persistence, the 3-D hinge and readout stability |
 | [`tools/build-pwa.mjs`](tools/build-pwa.mjs) | Hosted/PWA build: `dist/hosted/` from the untouched artifact + served agent files; injects manifest/SW registration, writes the hash-versioned worker |
 | [`tools/check-pwa.mjs`](tools/check-pwa.mjs) | Zero-dependency PWA gate: local static server + CDP; manifest/icons, worker control, hash cache, served agent files, server-down offline reload, artifact cleanliness (8 checks) |
 | [`tools/make-pwa-icons.py`](tools/make-pwa-icons.py) | Reproducible icon set (`assets/pwa/`): 192/512/maskable/32 from the palette, Pillow only |
@@ -416,9 +426,6 @@ operand wing is far vs near per lane:
 14. **The 3-D hinge is session-only.** `fold` is not persisted in `.bitwave` or exposed in
     agent state yet; reloading resets each lane to `a-far`. Persisting it belongs to the
     dynamic-lanes schema bump (see [`docs/DYNAMIC-LANES.md`](docs/DYNAMIC-LANES.md)).
-15. **Step/level readout jitter is diagnosed but not fixed.** `#trend` changes width
-    between `level`/`step-up`/`step-down`, so the wrapping `.meta` row can reflow its
-    neighbours; a fixed-width centered badge is the queued fix.
 
 ## Errata found
 
@@ -459,4 +466,5 @@ infrastructure):
    recommends an 8-lane first cap (13 is the single-letter naming ceiling) and records the
    share-link budget, `+`/duplicate/delete semantics, schema/agent impact and sequencing.
    The 3-D hinge is shipped as session-only presentation; persist `fold` with the
-   dynamic-lanes schema bump (gap 14). The fixed-width trend badge fix is queued (gap 15).
+   dynamic-lanes schema bump (gap 14). The readout jitter fix is shipped (`#trend` fixed
+   slot, browser check).

@@ -828,6 +828,45 @@ try {
   });
 
   /* 4. 3-D field -------------------------------------------------------- */
+  await runCheck('meta · trend badge slot keeps the readout width stable', async () => {
+    await loadApp();
+    const measure = async () =>
+      JSON.parse(await evaluate(`JSON.stringify({
+        badge: document.getElementById('trend').getBoundingClientRect().width,
+        badgeScroll: document.getElementById('trend').scrollWidth,
+        hexLeft: document.getElementById('hex').getBoundingClientRect().left,
+        hexWidth: document.getElementById('hex').getBoundingClientRect().width
+      })`));
+    const words = ['level', 'step-up', 'step-down'];
+    const seen = [];
+    for (const word of words) {
+      await evaluate(`document.getElementById('trend').textContent = ${JSON.stringify(word)}`);
+      seen.push(await measure());
+    }
+    assert(seen.every((s) => s.badge === seen[0].badge), `badge widths: ${seen.map((s) => s.badge).join(', ')}`);
+    assert(seen.every((s) => s.badgeScroll <= s.badge), `badge text overflows: ${seen.map((s) => `${s.badgeScroll}/${s.badge}`).join(', ')}`);
+    assert(seen.every((s) => s.hexLeft === seen[0].hexLeft && s.hexWidth === seen[0].hexWidth), '2-D hex readout moved');
+
+    await click('#depthBtn');
+    const measure3d = async () =>
+      JSON.parse(await evaluate(`JSON.stringify({
+        badge: document.getElementById('trend').getBoundingClientRect().width,
+        aLeft: document.getElementById('hexA').getBoundingClientRect().left,
+        aWidth: document.getElementById('hexA').getBoundingClientRect().width,
+        zLeft: document.getElementById('hexZ').getBoundingClientRect().left
+      })`));
+    const seen3d = [];
+    for (const word of words) {
+      await evaluate(`document.getElementById('trend').textContent = ${JSON.stringify(word)}`);
+      seen3d.push(await measure3d());
+    }
+    assert(seen3d.every((s) => s.badge === seen3d[0].badge), '3-D badge width changed');
+    assert(seen3d.every((s) => s.aLeft === seen3d[0].aLeft && s.aWidth === seen3d[0].aWidth && s.zLeft === seen3d[0].zLeft), '3-D readout moved');
+    await evaluate(`document.getElementById('trend').textContent = 'level'`);
+    await click('#depthBtn');
+    return `badge ${seen[0].badge}px · 2-D and 3-D readouts fixed`;
+  });
+
   await runCheck('3d · depth field shows A/B/Z with Z = A xor B', async () => {
     await loadApp();
     await click('#depthBtn');

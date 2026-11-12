@@ -8403,6 +8403,13 @@ var getPad = () => PAD;
 
   .badge.flat { color: var(--dim); }
 
+  /* "level" / "step-up" / "step-down" must not resize the wrapping meta row;
+     reserve the longest label's slot and center the current word in it. */
+  #trend {
+    inline-size: 86px;
+    justify-content: center;
+  }
+
   .kv { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
 
   .kv > span {

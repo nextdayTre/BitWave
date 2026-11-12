@@ -711,6 +711,9 @@ something that looked fine until it was measured.
     Default `a-far` preserves the current view; the field stays read-only (§10.12) and the
     middle plane is never highlighted (§10.15). Fold is session state until the dynamic-lane
     schema ships.
+52. **The trend badge owns a fixed slot.** `level`, `step-up` and `step-down` must not
+    resize the wrapping meta readout; `#trend` uses a fixed inline size with centered text,
+    so changing the word can never move the hex/decimal/ABZ values beside it.
 
 ---
 
@@ -737,6 +740,9 @@ The visual contract is measurable, so measure it rather than eyeballing:
 - 3-D hinge: in 3-D `#foldBtn` reads `A far`; pressing it reads `B far`, moves the dashed B
   plate from near to far (and A solid to near), and leaves A/B/Z values and the Z label
   unchanged; the control is hidden in 2-D and follows the active split pane.
+- Readout stability: with the trend badge forced through `level`, `step-up` and `step-down`
+  in 2-D and 3-D, the badge width and the `#hex`/`#hexA`/`#hexZ` positions must not move;
+  the badge word must not overflow its slot.
 - Frame names: lane 1 reads A/Z1/B, lane 2 C/Z2/D, lane 3 E/Z3/F in the navigator, strip
   label, stage bar, truth header and A/B/Z readouts; hiding A in lane 1 leaves C visible.
 - Source table: six rows; a data-bound row reads `A · <column>` and its STATE is `data`;
