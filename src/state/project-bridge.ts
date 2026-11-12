@@ -146,6 +146,7 @@ export function applyProject(raw: unknown): ApplyResult {
     sl.colB = src.colB;
     sl.focus = (extras.focus[laneKey] ?? "a") as FrameKey;
     sl.frameVis = { ...extras.frameVis[laneKey] };
+    sl.fold = "a-far"; // session-only hinge orientation resets on load
     sl.expressions = {
       a: extras.expressions[laneKey]?.a ?? "",
       b: extras.expressions[laneKey]?.b ?? "",

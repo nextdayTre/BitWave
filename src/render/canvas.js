@@ -269,9 +269,24 @@ import { nibsEl, renderStrip, stripEl } from "./strip.js";
     const fa = frameName(sl.key, "a");
     const fb = frameName(sl.key, "b");
     const fz = frameName(sl.key, "z");
-    plate(sl.A, 1, { label: `1 \u00B7 ${fa}${colAName}` });
+    /* Hinge: Z is the fixed middle plate. The fold swaps which operand occupies
+       frame 1 (far) and frame 256 (near); the math and the Z label do not move.
+       Line style follows the operand (A solid, B dashed), not the position. */
+    const farFrame = sl.fold === "b-far" ? "b" : "a";
+    const nearFrame = farFrame === "a" ? "b" : "a";
+    const farReg = farFrame === "a" ? sl.A : sl.B;
+    const nearReg = farFrame === "a" ? sl.B : sl.A;
+    const farCol = farFrame === "a" ? colAName : colBName;
+    const nearCol = nearFrame === "a" ? colAName : colBName;
+    plate(farReg, 1, {
+      label: `1 \u00B7 ${frameName(sl.key, farFrame)}${farCol}`,
+      dash: farFrame === "b" ? [6, 4] : null,
+    });
     plate(sl.Z, 0, { label: `128 \u00B7 ${fz} \u00B7 ${fa} ${sym} ${fb}` });
-    plate(sl.B, -1, { label: `256 \u00B7 ${fb}${colBName}`, dash: [6, 4] });
+    plate(nearReg, -1, {
+      label: `256 \u00B7 ${frameName(sl.key, nearFrame)}${nearCol}`,
+      dash: nearFrame === "b" ? [6, 4] : null,
+    });
   }
 
   /* Ruler, zero-crossing level and the ∞ axis. Drawn after the depth stack

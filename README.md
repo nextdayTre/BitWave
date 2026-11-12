@@ -15,9 +15,11 @@ no network, no dependencies — **open it directly in a browser.**
 - **`bitwave-v2.html`** — the current build, generated from `src/`. Lanes 1/2/3,
   the always-visible stage bar (lane, frames, split), the Pro-Q4-style frame navigator,
   per-frame visibility eyes, the frame focus lens (A/B/Z1, C/D/Z2, E/F/Z3), the six-input
-  **source table** (CSV columns or frame outputs, with driven inputs locked), wheel-to-adjust
-  hex, an explicit copy-to-lane menu, a whole-word hex entry, CSV stepper, observation CSV
-  export, LFO, split 3-D, and a keyboard-editable strip (every nibble is a spinbutton).
+  **source table** (CSV columns, frame outputs or deterministic expressions, with driven
+  inputs locked), wheel-to-adjust hex, an explicit copy-to-lane menu, a whole-word hex
+  entry, CSV stepper, observation CSV export, DAW-style Record/log, LFO, split 3-D with a
+  per-lane **hinge** that swaps which operand is far vs near, and a keyboard-editable strip
+  (every nibble is a spinbutton).
   Work is **persisted**: `.bitwave` save/open, autosave across reloads, and the state is
   shareable through the URL fragment. A `demo` button loads an embedded 8-row dataset.
 - **`index.html`** — untouched original reference build.

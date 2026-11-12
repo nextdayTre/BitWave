@@ -26,6 +26,8 @@ import type { BinOp } from "../core/types.ts";
 
 export type FrameKey = "a" | "b" | "z";
 export type EditKey = "a" | "b";
+/** 3-D presentation only: which operand plate is far (frame 1) vs near (frame 256). */
+export type Fold = "a-far" | "b-far";
 
 export const SLOT_KEYS = ["A", "B", "C"] as const;
 export type SlotKey = (typeof SLOT_KEYS)[number];
@@ -74,6 +76,8 @@ export interface Slot {
   frameVis: Record<FrameKey, boolean>;
   seededB: boolean;
   lfoB: string;
+  /** 3-D hinge orientation; presentation only, not stored in the project yet. */
+  fold: Fold;
   /** Expression sources per operand ("" = not an expression source). */
   expressions: { a: string; b: string };
   colA: number;
@@ -145,6 +149,7 @@ export const makeSlot = (key: SlotKey, N: number, binop: BinOp = "xor"): Slot =>
   frameVis: { a: true, b: true, z: true },
   seededB: false,
   lfoB: "0",
+  fold: "a-far",
   expressions: { a: "", b: "" },
   colA: -1,
   colB: -1,

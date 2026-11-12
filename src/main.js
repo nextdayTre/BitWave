@@ -537,6 +537,7 @@ import { toHexOf, updateReadouts } from "./render/readouts.js";
      ══════════════════════════════════════════════════════════ */
 
   const depthBtn = document.getElementById("depthBtn");
+  const foldBtn = document.getElementById("foldBtn");
   const copySlotBtn = document.getElementById("copySlotBtn");
   const frameNav = createFrameNavigator({
     store,
@@ -736,6 +737,20 @@ import { toHexOf, updateReadouts } from "./render/readouts.js";
     depthBtn.title = S.view3d
       ? "Return to the 2D register view"
       : "Show the depth field: operands at frame 1 and 256, the result at 128";
+    /* Hinge is a 3-D presentation lens: Z stays the middle plate; this swaps
+       which operand is far vs near. It is intentionally session state only. */
+    const fold = curSlot().fold;
+    foldBtn.hidden = !S.view3d;
+    foldBtn.textContent = fold === "a-far" ? "A far" : "B far";
+    foldBtn.setAttribute(
+      "aria-label",
+      S.view3d
+        ? `3-D hinge: ${fold === "a-far" ? "A far, B near" : "B far, A near"}; press to swap`
+        : "3-D hinge",
+    );
+    foldBtn.title = S.view3d
+      ? `Hinge: ${fold === "a-far" ? "A far, B near" : "B far, A near"} — press to swap the wings`
+      : "Show the 3-D field to change the hinge";
     const isSplit = S.view3d && S.split3d;
     canvas.classList.toggle("readonly", S.view3d && !S.split3d);
     canvas.classList.toggle("split-view", isSplit);
@@ -750,6 +765,15 @@ import { toHexOf, updateReadouts } from "./render/readouts.js";
       if (!S.view3d) S.split3d = false;
       if (S.view3d) enableBOnSlot(curSlot());
       refreshActiveSlotUi();
+    });
+  });
+
+  foldBtn.addEventListener("click", () => {
+    if (!S.view3d) return;
+    const sl = curSlot();
+    store.patch(() => {
+      sl.fold = sl.fold === "a-far" ? "b-far" : "a-far";
+      syncViewUi();
     });
   });
 

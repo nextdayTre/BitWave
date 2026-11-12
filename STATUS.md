@@ -167,21 +167,39 @@ status line, §10.39–41 persistence invariants, §11 persistence checks, §12 
   exact values happens once at the expression/import boundary with a declared rounding
   contract. Exact internals are a reproducibility rule, not an anti-float stance.
 
+## 3-D hinge (2026-11-12) — done
+
+**Presentation-only, session state (D40 follow-up).** The 3-D field can now fold which
+operand wing is far vs near per lane:
+
+- `S.slots[*].fold` (`"a-far"` default / `"b-far"`), toggled by `#foldBtn` (3-D only;
+  follows the active split pane). Z stays the fixed middle plate and the Z label keeps the
+  true operand order (`A ⊕ B`); line style follows the operand (A solid, B dashed), not the
+  position. Registers, bindings, operator and Z are unchanged (asserted in the browser
+  harness).
+- Session-only by design: not in `.bitwave`, not in the agent state. The dynamic-lanes
+  design note reserves `lanes.<n>.fold` for the next schema bump.
+- [`docs/DYNAMIC-LANES.md`](docs/DYNAMIC-LANES.md) records the lane-count analysis:
+  **13-lane naming ceiling** (`A`–`Z` operands), **8-lane recommended v1 cap**, the 2 KB
+  share-link gate, `+`/duplicate/delete semantics, schema/agent impact and the staged plan.
+- The step/level readout jitter fix is still queued (fixed-width `#trend` slot); it was not
+  bundled with the hinge.
+
 ## Verified this session
 
 - `npm test` → **126 + 7 tests, all pass, 0 fail** (core/state/actions/bindings/share/
   project, expression routing, the agent registry/state/transports, and the 7 app-bridge
   tests in a separate process because they replace the live singletons);
   `npm run typecheck` → **clean**.
-- `npm run build` → **`bitwave-v2.html`, 275.6 KB / 282,194 bytes, single file**, no
+- `npm run build` → **`bitwave-v2.html`, 276.9 KB / 283,530 bytes, single file**, no
   external references (`tools/build-artifact.mjs` gate). The default control row now
   intentionally includes Record; pixel parity resumes from this slice's artifact, not the
   pre-agent one.
-- `npm run check:browser` → **52/52 checks pass** on the built `bitwave-v2.html` (53 with
+- `npm run check:browser` → **53/53 checks pass** on the built `bitwave-v2.html` (54 with
   `--shots`/`--compare`), including the F5 persistence groups (now schema 3), the F4
   reflow/keyboard/semantics/axe groups, the §11 geometry assertion and the source-table/
   record controls; the hidden agent node and bridge do not alter the rendered stage.
-- `npm run build:pwa` → **`dist/hosted/`** (index 282.7 KB, sw.js 1.6 KB, manifest 0.9 KB,
+- `npm run build:pwa` → **`dist/hosted/`** (index 284.0 KB, sw.js 1.6 KB, manifest 0.9 KB,
   4 icons) with a hash cache version; the committed `bitwave-v2.html` was
   **byte-unchanged** (sha256 checked in the build itself); the build also serves `agent/`,
   `AGENTS.md`, `llms.txt` and the agent docs.
@@ -207,9 +225,9 @@ status line, §10.39–41 persistence invariants, §11 persistence checks, §12 
   (1440×900, 146–247 KB) visually inspected; `record.png` shows an armed take with an `expr`
   source open. The shared link now preserves expressions (D1 regression fixed).
 - `npm run verify` → **exit 0** on the final tree: 126 + 7 tests, typecheck, deterministic
-  single-file build (`bitwave-v2.html` 275.6 KB), generated artifacts current, CLI/MCP
+  single-file build (`bitwave-v2.html` 276.9 KB), generated artifacts current, CLI/MCP
   selftest 23/23, independent `agent/verify-browser.mjs` 31/31, existing browser harness
-  52/52, hosted build + PWA 8/8. Pre-slice `--compare` is retired as the baseline because
+  53/53, hosted build + PWA 8/8. Pre-slice `--compare` is retired as the baseline because
   the Record control is an intentional default-view change; compare against this slice's
   artifact if needed.
 - **F4 slice 1 — reflow/zoom (D27):** parity was 6/6 pixel-identical against the pre-F4
@@ -335,7 +353,7 @@ status line, §10.39–41 persistence invariants, §11 persistence checks, §12 
 | [`examples/demo.bitwave.json`](examples/demo.bitwave.json) | Versioned project document (lanes 1/2/3; routes + parked bases; dataset) |
 | [`spike/routing-matrix.html`](spike/routing-matrix.html) | The reference housing prototype that F3 implements (360 lines) |
 | [`spike/f4-ia.html`](spike/f4-ia.html) | The author-approved F4 IA layout mockup (annotated, 1440/720/360 screenshots) |
-| [`tools/browser-check.mjs`](tools/browser-check.mjs) | Zero-dependency CDP harness: 52 checks (53 with `--shots` or `--compare`), incl. reflow/zoom, keyboard editing, IA, axe and F5 persistence |
+| [`tools/browser-check.mjs`](tools/browser-check.mjs) | Zero-dependency CDP harness: 53 checks (54 with `--shots` or `--compare`), incl. reflow/zoom, keyboard editing, IA, axe, F5 persistence and the 3-D hinge |
 | [`tools/build-pwa.mjs`](tools/build-pwa.mjs) | Hosted/PWA build: `dist/hosted/` from the untouched artifact + served agent files; injects manifest/SW registration, writes the hash-versioned worker |
 | [`tools/check-pwa.mjs`](tools/check-pwa.mjs) | Zero-dependency PWA gate: local static server + CDP; manifest/icons, worker control, hash cache, served agent files, server-down offline reload, artifact cleanliness (8 checks) |
 | [`tools/make-pwa-icons.py`](tools/make-pwa-icons.py) | Reproducible icon set (`assets/pwa/`): 192/512/maskable/32 from the palette, Pillow only |
@@ -395,6 +413,12 @@ status line, §10.39–41 persistence invariants, §11 persistence checks, §12 
 13. **Float input is a boundary format, not a float-valued expression mode.** Float
     coefficients are converted once to exact rationals/declared precision; a full
     float-valued expression mode with its own rounding/precision contract is not shipped.
+14. **The 3-D hinge is session-only.** `fold` is not persisted in `.bitwave` or exposed in
+    agent state yet; reloading resets each lane to `a-far`. Persisting it belongs to the
+    dynamic-lanes schema bump (see [`docs/DYNAMIC-LANES.md`](docs/DYNAMIC-LANES.md)).
+15. **Step/level readout jitter is diagnosed but not fixed.** `#trend` changes width
+    between `level`/`step-up`/`step-down`, so the wrapping `.meta` row can reflow its
+    neighbours; a fixed-width centered badge is the queued fix.
 
 ## Errata found
 
@@ -431,3 +455,8 @@ infrastructure):
    `tests/external-routing.test.ts`. Follow-ups: expression dependency ordering (gap 12),
    a float-valued mode only if requested (gap 13), and optional log export through the
    observation CSV path.
+6. **Dynamic lanes (design only):** [`docs/DYNAMIC-LANES.md`](docs/DYNAMIC-LANES.md)
+   recommends an 8-lane first cap (13 is the single-letter naming ceiling) and records the
+   share-link budget, `+`/duplicate/delete semantics, schema/agent impact and sequencing.
+   The 3-D hinge is shipped as session-only presentation; persist `fold` with the
+   dynamic-lanes schema bump (gap 14). The fixed-width trend badge fix is queued (gap 15).

@@ -285,6 +285,7 @@ var makeSlot = (key, N, binop = "xor") => ({
 	},
 	seededB: false,
 	lfoB: "0",
+	fold: "a-far",
 	expressions: {
 		a: "",
 		b: ""
@@ -550,6 +551,7 @@ function copyLane(src, dst) {
 	dst.focus = src.focus;
 	dst.frameVis = { ...src.frameVis };
 	dst.lfoB = src.lfoB;
+	dst.fold = src.fold;
 	dst.expressions = { ...src.expressions };
 	dst.colA = src.colA;
 	dst.colB = src.colB;
@@ -5432,6 +5434,7 @@ function applyProject(raw) {
 		sl.colB = src.colB;
 		sl.focus = extras.focus[laneKey] ?? "a";
 		sl.frameVis = { ...extras.frameVis[laneKey] };
+		sl.fold = "a-far";
 		sl.expressions = {
 			a: extras.expressions[laneKey]?.a ?? "",
 			b: extras.expressions[laneKey]?.b ?? ""
@@ -6440,11 +6443,20 @@ function drawField3d(n, sl = curSlot(), rect = G) {
 	const fa = frameName$1(sl.key, "a");
 	const fb = frameName$1(sl.key, "b");
 	const fz = frameName$1(sl.key, "z");
-	plate(sl.A, 1, { label: `1 \u00B7 ${fa}${colAName}` });
+	const farFrame = sl.fold === "b-far" ? "b" : "a";
+	const nearFrame = farFrame === "a" ? "b" : "a";
+	const farReg = farFrame === "a" ? sl.A : sl.B;
+	const nearReg = farFrame === "a" ? sl.B : sl.A;
+	const farCol = farFrame === "a" ? colAName : colBName;
+	const nearCol = nearFrame === "a" ? colAName : colBName;
+	plate(farReg, 1, {
+		label: `1 \u00B7 ${frameName$1(sl.key, farFrame)}${farCol}`,
+		dash: farFrame === "b" ? [6, 4] : null
+	});
 	plate(sl.Z, 0, { label: `128 \u00B7 ${fz} \u00B7 ${fa} ${sym} ${fb}` });
-	plate(sl.B, -1, {
-		label: `256 \u00B7 ${fb}${colBName}`,
-		dash: [6, 4]
+	plate(nearReg, -1, {
+		label: `256 \u00B7 ${frameName$1(sl.key, nearFrame)}${nearCol}`,
+		dash: nearFrame === "b" ? [6, 4] : null
 	});
 }
 function drawGuides(x0, x1, y0, y1, cx, cy, yOf) {
@@ -7012,6 +7024,7 @@ var getPad = () => PAD;
 		chooseBinop(keys[next]);
 	});
 	const depthBtn = document.getElementById("depthBtn");
+	const foldBtn = document.getElementById("foldBtn");
 	const copySlotBtn = document.getElementById("copySlotBtn");
 	const frameNav = createFrameNavigator({
 		store,
@@ -7182,6 +7195,11 @@ var getPad = () => PAD;
 		depthBtn.setAttribute("aria-pressed", String(S.view3d));
 		depthBtn.classList.toggle("on", S.view3d);
 		depthBtn.title = S.view3d ? "Return to the 2D register view" : "Show the depth field: operands at frame 1 and 256, the result at 128";
+		const fold = curSlot().fold;
+		foldBtn.hidden = !S.view3d;
+		foldBtn.textContent = fold === "a-far" ? "A far" : "B far";
+		foldBtn.setAttribute("aria-label", S.view3d ? `3-D hinge: ${fold === "a-far" ? "A far, B near" : "B far, A near"}; press to swap` : "3-D hinge");
+		foldBtn.title = S.view3d ? `Hinge: ${fold === "a-far" ? "A far, B near" : "B far, A near"} — press to swap the wings` : "Show the 3-D field to change the hinge";
 		const isSplit = S.view3d && S.split3d;
 		canvas.classList.toggle("readonly", S.view3d && !S.split3d);
 		canvas.classList.toggle("split-view", isSplit);
@@ -7195,6 +7213,14 @@ var getPad = () => PAD;
 			if (!S.view3d) S.split3d = false;
 			if (S.view3d) enableBOnSlot(curSlot());
 			refreshActiveSlotUi();
+		});
+	});
+	foldBtn.addEventListener("click", () => {
+		if (!S.view3d) return;
+		const sl = curSlot();
+		store.patch(() => {
+			sl.fold = sl.fold === "a-far" ? "b-far" : "a-far";
+			syncViewUi();
 		});
 	});
 	function setViewMode(mode) {
@@ -9026,6 +9052,7 @@ var getPad = () => PAD;
   <div class="group" role="group" aria-label="view">
     <label>view</label>
     <button class="op" id="depthBtn" aria-pressed="false" title="Show the depth field: A at frame 1, Z at 128, B at 256">3D</button>
+    <button class="op" id="foldBtn" type="button" hidden title="Swap which operand is far vs near in the 3-D field (presentation only)">A far</button>
     <button class="op" id="copySlotBtn" aria-haspopup="menu" aria-expanded="false" title="Copy the focused lane into another lane">copy to…</button>
   </div>
 

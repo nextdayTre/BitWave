@@ -850,6 +850,21 @@ try {
     return 'counts 23/11/9/21 · popcount(Z) = 20';
   });
 
+  await runCheck('3d · hinge swaps far/near operands without changing the maths', async () => {
+    const before = await readInstrument();
+    const offLabel = await evaluate(`document.getElementById('foldBtn').textContent`);
+    const offHidden = await evaluate(`document.getElementById('foldBtn').hidden`);
+    await click('#foldBtn');
+    const onLabel = await evaluate(`document.getElementById('foldBtn').textContent`);
+    const after = await readInstrument();
+    assert(!offHidden, 'fold control should be visible in 3-D');
+    assert(offLabel === 'A far' && onLabel === 'B far', `fold labels: ${offLabel} → ${onLabel}`);
+    assert(before.hexA === after.hexA && before.hexB === after.hexB, 'hinge changed operand values');
+    assert(before.hexZ === after.hexZ, 'hinge changed Z');
+    await click('#foldBtn');
+    return 'A far ⇄ B far · A/B/Z unchanged';
+  });
+
   /* 5. CSV import + §11 op vectors ------------------------------------- */
   const csvPayload = 'FEDCBA9876543210';
   const importCsvText = async (text) => {

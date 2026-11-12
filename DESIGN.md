@@ -455,6 +455,15 @@ The easing constant is deliberately high (`0.24`) — fast enough to feel like t
   lane 2) plus any routed CSV column names. The depth axis shows the
   *relationship between the inputs and the result*; it deliberately does **not** imply 256
   morphing frames.
+- **3-D hinge** (`#foldBtn`, visible only in 3-D) — a per-lane presentation control that
+  swaps which operand is at frame 1 (far) and frame 256 (near). Z stays the fixed middle
+  plate, so the metaphor is a hinge with two foldable wings; the default `A far / B near`
+  preserves the existing view. The swap never changes registers, bindings, the operator or
+  the Z label (`128 · Z1 · A ⊕ B` remains the truth); line style follows the operand
+  (A solid, B dashed), not the position. The control follows the active pane in split 3-D.
+  This is **session-only presentation state** for now — it is not in `.bitwave` or the agent
+  state; persisting `lanes.<n>.fold` belongs to the dynamic-lanes schema pass
+  ([`docs/DYNAMIC-LANES.md`](docs/DYNAMIC-LANES.md)).
 - **Stage bar** (`.stage-bar`) — **always visible**, and the single canonical home of the
   lane set, the `frames` opener, `split` and the routing-aware lane expression
   (`LANE 1 · A ⊕ B → Z1`). Three lanes (`1`, `2`, `3`; internal keys `A`/`B`/`C`) share
@@ -696,6 +705,12 @@ something that looked fine until it was measured.
     precision/rounding contract; the internal exact-rational arithmetic is a reproducibility
     rule for the register bits, not a ban on float workflows (D40, `docs/EXTERNAL-ROUTING.md`
     §4.1).
+51. **The hinge is presentation only.** A per-lane `fold` swaps which operand plate is far
+    vs near in 3-D; it never swaps registers, counts, bindings or the operator, and the Z
+    label keeps the real operand order. Line style follows the operand, not the position.
+    Default `a-far` preserves the current view; the field stays read-only (§10.12) and the
+    middle plane is never highlighted (§10.15). Fold is session state until the dynamic-lane
+    schema ships.
 
 ---
 
@@ -719,6 +734,9 @@ The visual contract is measurable, so measure it rather than eyeballing:
 - Frame focus: from the navigator, clicking A/B/Z1 in a 3-D view must leave the view and
   the panel in place, retarget the strip label, and keep Z1's strip read-only (a bit click
   must not change any operand).
+- 3-D hinge: in 3-D `#foldBtn` reads `A far`; pressing it reads `B far`, moves the dashed B
+  plate from near to far (and A solid to near), and leaves A/B/Z values and the Z label
+  unchanged; the control is hidden in 2-D and follows the active split pane.
 - Frame names: lane 1 reads A/Z1/B, lane 2 C/Z2/D, lane 3 E/Z3/F in the navigator, strip
   label, stage bar, truth header and A/B/Z readouts; hiding A in lane 1 leaves C visible.
 - Source table: six rows; a data-bound row reads `A · <column>` and its STATE is `data`;
