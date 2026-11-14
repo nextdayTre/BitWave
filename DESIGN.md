@@ -186,7 +186,7 @@ Three lanes, each a three-frame device. Frame names are **global**, not per-lane
 
 The six operand frames A–F are the only routing destinations; the nine frame
 outputs A–F + Z1–Z3 are routing sources. Every surface that names a frame — strip
-label, legend, frame navigator, stage bar, truth header, 3-D plate label — uses the
+label, legend, frames view, stage bar, truth header, 3-D plate label — uses the
 focused lane's global name, never a per-lane `A`/`B`/`Z`.
 
 ### Registers
@@ -335,6 +335,14 @@ The easing constant is deliberately high (`0.24`) — fast enough to feel like t
   `level`; `.flat` drops to `--dim` for `level`.
 - **KV readout** (`--kv`) — sans micro-label + mono value. `.wide` takes remaining row
   width for the decimal.
+- **Frame lens buttons** (`.kv > .lens-btn`) — the `A` / `B` / `Z1` labels in the A·B
+  readout row are buttons, not text. Each focuses that frame through the existing lens
+  (§10.24): an operand also becomes the edit target; `Z1` is a read-only focus. The strip,
+  hint, edit target and whole-word hex entry follow, so manual entry never needs a waveform
+  preset; the view mode, panels and values never change. `aria-pressed` follows the focused
+  frame; names are `focus A` / `focus B` / `focus Z1 (read-only)`; keyboard path is Tab to
+  the label and `Enter` or `Space` to choose it (no new shortcut); each target is at least
+  24×24 px. Pressed state uses the accent only — no new hue.
 - **Nib group** (`.nib`) — `flex: 1 1 0`, `min-width: 0`. Contains the bit cell (if mode
   allows) and the hex cell.
 - **Bit cell** (`.bit`) — 1/4 of a capped-width grid. `--dimmer` off, `--accent` on.
@@ -349,8 +357,9 @@ The easing constant is deliberately high (`0.24`) — fast enough to feel like t
   compact mode the hex cell remains the control; the bits are hidden visually only.
 - **Hex entry** (`.hex-entry`) — mono, right-aligned text input beside `width`. Accepts a
   whole word (`1…nibbleCount` digits), `Enter` commits, `Esc` reverts, `aria-describedby`
-  names the target frame. Disabled with a visible reason when the focused frame is derived
-  or driven.
+  names the target frame. It edits the frame chosen by the readout lens buttons (or the
+  frame chosen by the readout lens or the frames view), so manual entry never needs a waveform preset. Disabled with a visible
+  reason when the focused frame is derived or driven.
 - **Canvas accessibility** — the canvas is `role="img"` with a live text alternative
   (`aria-label` or `aria-describedby`) updated on commit: edit target, frame values and the
   Z popcount. It exposes **no** keyboard editing path — the strip is the editor (§10.32).
@@ -465,7 +474,8 @@ The easing constant is deliberately high (`0.24`) — fast enough to feel like t
   state; persisting `lanes.<n>.fold` belongs to the dynamic-lanes schema pass
   ([`docs/DYNAMIC-LANES.md`](docs/DYNAMIC-LANES.md)).
 - **Stage bar** (`.stage-bar`) — **always visible**, and the single canonical home of the
-  lane set, the `frames` opener, `split` and the routing-aware lane expression
+  lane set, the `frames` view toggle (and `Lanes` while the frames view is open), `split`
+  and the routing-aware lane expression
   (`LANE 1 · A ⊕ B → Z1`). Three lanes (`1`, `2`, `3`; internal keys `A`/`B`/`C`) share
   register width `S.N`; each holds its own operand pair and derived frame (`A/B/Z1`,
   `C/D/Z2`, `E/F/Z3`), binary/arithmetic operator, B-phase and the six source bindings.
@@ -474,6 +484,21 @@ The easing constant is deliberately high (`0.24`) — fast enough to feel like t
   truth table and controls stay bound to the focused lane (`S.slot`). Per-pane focus dots
   and the second pane head only exist in split 3-D. Drawn exclusively from `--panel-hi`,
   `--line`, `--text`, `--dim`, `--dimmer` and `--accent`.
+- **Frames view** (`.frames-view`) — the `frames` button swaps the **stage** to a card
+  browser (`Lanes` in the stage bar returns; Esc also returns). The grid is one column per
+  lane, one **equal card per frame** (operand A, operand B, derived Z), each card a bordered
+  box holding a mini spline of the settled register with the frame's global name at its
+  left; a dim lane head carries the lane name and, for the focused lane in 2-D with B live,
+  `unpair B`; each card carries a 24 px visibility eye (2-D visibility only; disabled in
+  3-D). Choosing a card focuses that frame **and returns to the lanes view** — the one
+  deliberate exception to §10.24, because the view replaces the stage rather than floating
+  over it. The canvas and hint are hidden (`visibility`) while the view is open; the strip,
+  meta and controls stay live. The footer carries the legend and a horizontal scroll
+  affordance (arrow buttons + track/thumb) for many lanes; the scroll region is one Tab
+  stop and scrolls with `←/→`. A perpetual `+` tile closes the grid at every width; at this
+  build's 3-lane cap it is `aria-disabled` and names the cap instead of inventing lanes
+  (dynamic lanes are [`docs/DYNAMIC-LANES.md`](docs/DYNAMIC-LANES.md)). Cards are buttons
+  (Tab, `Enter`/`Space`); the view adds no hue and no motion beyond the scroll.
 - **Copy menu** (`.copy-menu`) — `copy to…` opens an explicit `role="menu"` with one
   `role="menuitem"` per lane (`lane 1/2/3`); focus moves into the menu, `↑/↓`/`Home`/`End`
   move between items, `Enter` copies, `Escape` or an outside click closes and returns focus,
@@ -599,10 +624,11 @@ something that looked fine until it was measured.
     3-D stops easing `B` and `Z` while the 3-D volume continues rendering them.
 23. **Split 3-D subdivides only the canvas plot, never `G.x0..G.x1` or `--pad`.** The bit
     strip must remain full-width and 0px column-aligned across view toggles.
-24. **A frame click is a lens, never a view switch.** Focusing a frame in the navigator
-    must not leave the current view (2-D or 3-D), must not close the navigator, and must
-    not change the depth field; it retargets the strip, readouts, truth header, stage bar
-    and navigator active row only.
+24. **A frame focus is a lens, never a view switch — except in the frames view.** The
+    readout lens and any in-view focus retarget the strip, readouts, truth header, stage
+    bar and active card only; they never change the depth field or the surface you are on.
+    The frames view is the one deliberate exception: choosing a card there focuses the
+    frame **and returns to the lanes view** (D42), because that view replaces the stage.
 25. **A focused derived frame is read-only.** Focusing Z1/Z2/Z3 shows its 64/128/256 bits
     in the strip with no handles, no bit click, no wheel and no canvas drag; operands stay
     the only edit targets. A write path that ignores focus is a bug.
@@ -714,6 +740,16 @@ something that looked fine until it was measured.
 52. **The trend badge owns a fixed slot.** `level`, `step-up` and `step-down` must not
     resize the wrapping meta readout; `#trend` uses a fixed inline size with centered text,
     so changing the word can never move the hex/decimal/ABZ values beside it.
+53. **The readout labels are a focus lens, never an editor.** The `A`/`B`/`Z1` buttons call
+    the same `setFocus` lens as the frames view (D16): they never write a register, never
+    switch the view and never open or close a surface; `Z1` stays a read-only focus.
+    `aria-pressed` follows the focused frame, and the strip, hint, edit target and
+    whole-word hex entry follow the selection (D41).
+54. **The frames view is a stage mode, not a panel.** While it is open the canvas and hint
+    are hidden and the stage bar shrinks to `Lanes`; every frame gets an equal card; the `+`
+    tile never invents lanes beyond this build's cap (it names the cap); closing returns to
+    the exact 2-D/3-D view and focus untouched. The default instrument (view closed) is
+    pixel-identical to before D42.
 
 ---
 
@@ -737,6 +773,15 @@ The visual contract is measurable, so measure it rather than eyeballing:
 - Frame focus: from the navigator, clicking A/B/Z1 in a 3-D view must leave the view and
   the panel in place, retarget the strip label, and keep Z1's strip read-only (a bit click
   must not change any operand).
+- Readout lens: in A·B/3-D the `A`/`B`/`Z1` readout labels are buttons; pressing `B`
+  retargets the strip, edit target and whole-word hex entry to B, pressing `Z1` makes the
+  strip read-only and disables the hex entry, and the view mode and opened panels do not
+  change; `aria-pressed` follows the focused frame and every target is ≥24×24 px (D41).
+- Frames view: `frames` hides the canvas, shows nine equal cards (3 lanes × 3 frames) plus
+  the `+` tile and `Lanes`; choosing a card returns to the same 2-D/3-D view with that frame
+  focused (a Z card lands on a read-only strip); eyes toggle per-lane visibility without
+  leaving; the scroll arrows are disabled when the grid fits and scroll one column when it
+  does not; Esc returns; every card is a button and axe stays clean in the open view (D42).
 - 3-D hinge: in 3-D `#foldBtn` reads `A far`; pressing it reads `B far`, moves the dashed B
   plate from near to far (and A solid to near), and leaves A/B/Z values and the Z label
   unchanged; the control is hidden in 2-D and follows the active split pane.

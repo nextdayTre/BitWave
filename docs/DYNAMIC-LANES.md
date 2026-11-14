@@ -96,7 +96,12 @@ compact encoding is designed; do not ship 13 lanes with a link that silently tru
 
 ## 5. UI shape
 
-### FRAMES panel
+### FRAMES view
+
+**Update 2026-11-14 (D42):** the pop-out FRAMES panel is now the stage-level **frames view** —
+a card grid (one column per lane, one equal card per frame, mini-splines, scroll arrows and
+a perpetual `+` tile). The `+` tile is present at the current 3-lane cap and `aria-disabled`,
+naming the cap; it becomes the add control in the pass described below.
 
 - Add `+` to the panel header. It opens a small menu, not an immediate action:
   - **New blank lane** — empty operands, XOR, current width, no routes/expressions;

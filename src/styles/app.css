@@ -266,20 +266,231 @@
 
   .pane-head.focused .stage-expr { color: var(--text); }
 
-  /* ── frame navigator — Pro-Q4-style lane/frame selection ── */
-  .frames-panel {
+  /* ── frames view — the stage as a lane/frame browser (D42) ───────────── */
+  .stage.is-frames canvas,
+  .stage.is-frames .hint { visibility: hidden; }
+
+  .frames-view {
     position: absolute;
-    z-index: 3;
-    top: 8px;
-    bottom: 8px;
-    left: var(--pad);
-    width: min(340px, calc(100% - 2 * var(--pad)));
+    z-index: 1;
+    inset: 0;
     display: flex;
     flex-direction: column;
+    gap: 8px;
+    padding: 36px var(--pad) 8px;
+    background: var(--bg);
     overflow: hidden;
-    background: var(--panel);
+  }
+
+  .frames-view[hidden] { display: none; }
+
+  /* The bars sit above the overlay; the stage bar's only visible control in
+     this view is `Lanes`, so it must opt back into pointer events. */
+  #lanesBtn { pointer-events: auto; }
+
+  .frames-scroll {
+    flex: 1;
+    min-height: 0;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
+  }
+  .frames-scroll::-webkit-scrollbar { display: none; }
+  .frames-scroll:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  .frames-grid {
+    display: flex;
+    align-items: flex-start;
+    gap: 24px;
+    min-height: 100%;
+  }
+
+  .lane-col {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    flex: 0 0 auto;
+    width: clamp(190px, 19vw, 272px);
+  }
+
+  .lane-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    min-height: 20px;
+  }
+
+  .lane-btn {
+    padding: 2px 4px;
+    border: 0;
+    border-radius: 3px;
+    background: transparent;
+    color: var(--dim);
+    font-family: var(--mono);
+    font-size: 9.5px;
+    letter-spacing: 0.09em;
+    cursor: pointer;
+  }
+  .lane-btn:hover { color: var(--text); background: var(--panel-hover); }
+  .lane-btn[aria-pressed="true"] { color: var(--accent); }
+
+  .unpair-btn {
+    padding: 2px 5px;
+    border: 0;
+    border-radius: 3px;
+    background: transparent;
+    color: var(--dimmer);
+    font-family: var(--sans);
+    font-size: 9px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    cursor: pointer;
+  }
+  .unpair-btn:hover { color: var(--text); background: var(--panel-hover); }
+
+  .frame-card-wrap { position: relative; }
+
+  .frame-card {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    text-align: left;
+    cursor: pointer;
+  }
+
+  .frame-card .frame-glyph { width: 22px; flex: 0 0 auto; text-align: center; }
+
+  .frame-box {
+    flex: 1 1 auto;
+    display: block;
+    height: clamp(54px, 8.5vh, 84px);
     border: 1px solid var(--line);
-    border-radius: 5px;
+    border-radius: 3px;
+    background: var(--stage-glow);
+    overflow: hidden;
+  }
+  .frame-box .frame-preview { height: 100%; }
+
+  .frame-card:hover .frame-box { border-color: var(--line-hi); }
+  .frame-card[aria-pressed="true"] .frame-box {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 1px rgba(52, 211, 153, 0.22);
+  }
+  .frame-card[aria-pressed="true"] .frame-glyph { color: var(--accent); }
+  .frame-card-wrap.is-hidden .frame-preview { opacity: 0.4; }
+  .frame-card-wrap.is-hidden .frame-glyph { color: var(--dimmer); }
+
+  .frame-card-wrap .eye-btn {
+    position: absolute;
+    top: 2px;
+    right: 2px;
+    width: 24px;
+    height: 24px;
+    margin: 0;
+  }
+
+  .frame-add {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    height: clamp(54px, 8.5vh, 84px);
+    border: 1px solid var(--line);
+    border-radius: 3px;
+    background: transparent;
+    color: var(--accent-low);
+    font: 400 18px/1 var(--mono);
+    cursor: pointer;
+  }
+  .frame-add:hover { border-color: var(--accent); color: var(--accent); }
+  .frame-add[aria-disabled="true"] { color: var(--dim); }
+  .frame-add-hint {
+    padding-left: 2px;
+    font-family: var(--sans);
+    font-size: 9px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--dimmer);
+  }
+
+  .frames-foot {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    min-height: 24px;
+    color: var(--dim);
+    font-size: 10px;
+  }
+
+  .frames-legend {
+    font-family: var(--mono);
+    font-size: 9.5px;
+    color: var(--dimmer);
+    white-space: nowrap;
+  }
+  .frames-note {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--dim);
+  }
+
+  .frames-scrollbar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex: 1 1 320px;
+    min-width: 160px;
+  }
+
+  .frames-arrow {
+    width: 26px;
+    height: 26px;
+    padding: 0;
+    border: 0;
+    border-radius: 3px;
+    background: transparent;
+    color: var(--accent);
+    font-size: 13px;
+    line-height: 1;
+    cursor: pointer;
+  }
+  .frames-arrow:hover { background: var(--panel-hover); }
+  .frames-arrow:disabled {
+    color: var(--dimmer);
+    background: transparent;
+    cursor: default;
+  }
+
+  .frames-track {
+    position: relative;
+    flex: 1 1 auto;
+    height: 2px;
+    border-radius: 1px;
+    background: var(--line);
+  }
+  .frames-thumb {
+    position: absolute;
+    top: -1px;
+    left: 0;
+    height: 4px;
+    border-radius: 2px;
+    background: var(--accent-low);
+    opacity: 0.75;
+  }
+
+  @media (max-width: 720px) {
+    .frames-view { padding: 30px 16px 6px; }
+    .lane-col { width: 200px; }
+    .frames-legend { display: none; }
+    .frames-scrollbar { flex-basis: 180px; }
   }
 
   .fp-head {
@@ -299,100 +510,7 @@
     color: var(--dim);
   }
 
-  .fp-body { overflow-y: auto; padding: 4px 0 6px; }
-
-  .lane-btn {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    min-width: 0;
-    width: 100%;
-    padding: 8px 10px;
-    border: 0;
-    border-left: 2px solid transparent;
-    background: transparent;
-    color: var(--text);
-    font-family: var(--sans);
-    font-size: 11.5px;
-    font-weight: 600;
-    text-align: left;
-    cursor: pointer;
-  }
-
-  .lane-btn:hover { background: var(--panel-hover); }
-  .lane-btn[aria-expanded="true"] {
-    border-left-color: var(--accent);
-    background: rgba(52, 211, 153, 0.06);
-  }
-
-  .lane-num {
-    flex: 0 0 auto;
-    font-family: var(--mono);
-    font-size: 10px;
-    color: var(--dimmer);
-    letter-spacing: 0.05em;
-  }
-
-  .lane-meta {
-    min-width: 0;
-    margin-left: auto;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    font-family: var(--mono);
-    font-size: 9.5px;
-    color: var(--dim);
-  }
-
-  .frame-row {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) 32px;
-    align-items: center;
-    padding-left: 18px;
-    border-left: 2px solid transparent;
-  }
-  .frame-row:hover { background: var(--panel-hover); }
-  .frame-row.is-active {
-    border-left-color: var(--accent);
-    background: rgba(52, 211, 153, 0.07);
-  }
-  .frame-row.is-hidden .frame-btn { opacity: 0.55; }
-  .frame-row.is-hidden .frame-preview { opacity: 0.4; }
-
-  .frame-btn {
-    display: grid;
-    grid-template-columns: 76px minmax(0, 1fr) 88px;
-    align-items: center;
-    gap: 8px;
-    width: 100%;
-    padding: 5px 0;
-    border: 0;
-    background: transparent;
-    color: var(--dim);
-    text-align: left;
-    cursor: pointer;
-  }
-  .frame-row.is-active .frame-btn { color: var(--text); }
-
-  .frame-label { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
-
-  .frame-swatch { width: 12px; height: 2px; flex: 0 0 auto; background: var(--accent); opacity: 0.75; }
-  .frame-row[data-frame="b"] .frame-swatch {
-    background: repeating-linear-gradient(90deg, var(--accent) 0 4px, transparent 4px 7px);
-  }
-  .frame-row[data-frame="z"] .frame-swatch { height: 3px; opacity: 1; }
-
   .frame-glyph { font-family: var(--mono); font-size: 11.5px; color: var(--text); }
-  .frame-sub {
-    font-family: var(--sans);
-    font-size: 9px;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-    color: var(--dimmer);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
 
   .frame-preview { display: block; width: 100%; height: 24px; }
   .frame-preview polyline {
@@ -404,17 +522,6 @@
   }
   .frame-preview.z polyline { stroke-width: 1.7; stroke-opacity: 1; }
   .frame-preview.b polyline { stroke-dasharray: 4 3; }
-
-  .frame-hex {
-    font-family: var(--mono);
-    font-size: 9px;
-    color: var(--dim);
-    text-align: right;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-  .frame-row.is-active .frame-hex { color: var(--text); }
 
   .eye-btn {
     display: inline-flex;
@@ -458,7 +565,9 @@
   }
 
   .lane-btn:focus-visible,
-  .frame-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+  .unpair-btn:focus-visible,
+  .frame-card:focus-visible,
+  .frame-add:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 
   /* ── input source table — six fixed rows ───────────────── */
   .sources-panel {
@@ -725,6 +834,39 @@
     letter-spacing: 0.09em;
     text-transform: uppercase;
     color: var(--dimmer);
+  }
+
+  /* D41: the A/B/Z1 readout labels are the frame lens — label-sized buttons
+     with a 24×24 minimum target; pressed state is carried by the accent only. */
+  .kv > .lens-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-inline-size: 24px;
+    min-block-size: 24px;
+    padding: 0 3px;
+    border: 0;
+    border-radius: 3px;
+    background: transparent;
+    font-family: var(--sans);
+    font-size: 10px;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--dimmer);
+    cursor: pointer;
+    transition: color 90ms linear, background 90ms linear;
+  }
+
+  .kv > .lens-btn:hover { color: var(--text); background: var(--panel-hover); }
+
+  .kv > .lens-btn[aria-pressed="true"] {
+    color: var(--accent);
+    background: rgba(52, 211, 153, 0.1);
+  }
+
+  .kv > .lens-btn:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
   }
 
   .kv code {
@@ -1190,7 +1332,11 @@
     .focus-dot,
     .eye-btn,
     .lane-btn,
-    .frame-btn,
+    .frame-card,
+    .frame-add,
+    .unpair-btn,
+    .frames-arrow,
+    .lens-btn,
     .nib {
       transition: none;
     }

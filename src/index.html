@@ -8,11 +8,11 @@
   Engine, visual system and feature set are unchanged. Interface changes:
     · lanes are numbered 1 / 2 / 3 (letters now mean frames/operands only)
     · frame names are global: lane 1 A/B/Z1, lane 2 C/D/Z2, lane 3 E/F/Z3
-    · a Pro-Q4-style frame navigator browses lanes and their frames with static
-      mini-curves; clicking a frame focuses it in place (2-D or 3-D), and an eye
-      toggle shows/hides that lane's frame in the 2D view
-    · focus is a lens, not navigation: derived frames focus read-only, the view
-      never switches and the navigator never closes on a frame click
+    · the frames button swaps the stage to a card view of every lane/frame with
+      static mini-curves; choosing a card focuses that frame and returns to the
+      lanes view, and a per-card eye shows/hides that frame in the 2D view (D42)
+    · focus is a lens; a derived frame focuses read-only; the frames view's
+      `Lanes` button (or Esc) returns without choosing
     · the six-input source table (data columns or frame outputs) is the routing
       housing: labels carry the assignment and driven inputs are locked
     · F4 IA (author-approved 2026-11-06): stable module order
@@ -57,19 +57,8 @@
   <canvas id="wave" role="img" aria-label="2-D waveform plot of the register"></canvas>
   <div class="hint" id="hint">drag a nibble · click a bit · Tab to edit</div>
   <div class="stage-bar" id="stageBar" role="group" aria-label="stage">
-    <button class="op" id="framesBtn" type="button" aria-expanded="false" aria-controls="framesPanel" title="Browse frames A, Z, B across lanes">frames</button>
+    <button class="op" id="framesBtn" type="button" aria-pressed="false" title="Browse every frame as a card">frames</button>
   </div>
-  <aside class="frames-panel" id="framesPanel" hidden aria-label="Frame navigator">
-    <div class="fp-head">
-      <h2 class="fp-title">frames</h2>
-      <button class="op" id="framesClose" type="button" aria-label="× close frame navigator" title="Close (Esc)">×</button>
-    </div>
-    <div class="fp-body" id="framesBody"></div>
-    <div class="fp-foot">
-      <span id="framesLegend">A solid · Z1 glow · B dashed</span>
-      <button class="op" id="unpairB" type="button" hidden title="Remove operand B from this lane">unpair B</button>
-    </div>
-  </aside>
 
   <aside class="sources-panel" id="sourcesPanel" hidden aria-label="Input source table">
     <div class="fp-head">
@@ -88,6 +77,27 @@
       <span id="sourcesStatus" role="status" aria-live="polite">six inputs · one source each</span>
     </div>
   </aside>
+
+  <!-- D42: the frames view replaces the pop-out navigator. The stage swaps to a
+       card grid (one column per lane, one equal card per frame); `Lanes` in the
+       stage bar returns. Cards are buttons; eyes keep 2-D visibility. -->
+  <div class="frames-view" id="framesView" hidden role="region" aria-label="Frames — every lane and frame">
+    <div class="frames-scroll" id="framesScroll" tabindex="0" role="group"
+         aria-label="Frame cards — arrow keys scroll">
+      <div class="frames-grid" id="framesGrid"></div>
+    </div>
+    <div class="frames-foot">
+      <span class="frames-legend" id="framesLegend">A solid · Z glow · B dashed</span>
+      <span class="frames-note" id="framesNote" role="status" aria-live="polite"></span>
+      <div class="frames-scrollbar" role="group" aria-label="Horizontal frame scroll">
+        <button class="frames-arrow" id="framesLeft" type="button"
+                aria-label="Scroll frames left" title="Scroll frames left" disabled>◀</button>
+        <span class="frames-track" aria-hidden="true"><span class="frames-thumb" id="framesThumb"></span></span>
+        <button class="frames-arrow" id="framesRight" type="button"
+                aria-label="Scroll frames right" title="Scroll frames right">▶</button>
+      </div>
+    </div>
+  </div>
 </section>
 
 <section class="strip" id="strip" data-edit="A">
@@ -102,9 +112,9 @@
   <div class="aOnly kv wide"><span>dec</span><code id="dec">—</code></div>
 
   <div class="abOnly truth" id="truth"></div>
-  <div class="abOnly kv"><span>A</span><code id="hexA">—</code></div>
-  <div class="abOnly kv"><span>B</span><code id="hexB">—</code></div>
-  <div class="abOnly kv"><span>Z</span><code id="hexZ">—</code></div>
+  <div class="abOnly kv"><button class="lens-btn" type="button" id="lblA" data-frame="a" aria-pressed="false" aria-label="focus A" title="Focus A to edit it">A</button><code id="hexA">—</code></div>
+  <div class="abOnly kv"><button class="lens-btn" type="button" id="lblB" data-frame="b" aria-pressed="false" aria-label="focus B" title="Focus B to edit it">B</button><code id="hexB">—</code></div>
+  <div class="abOnly kv"><button class="lens-btn" type="button" id="lblZ" data-frame="z" aria-pressed="false" aria-label="focus Z1 (read-only)" title="Z1 is derived — focus to inspect (read-only)">Z</button><code id="hexZ">—</code></div>
   <div class="abOnly kv"><span>pop Z1</span><code id="pop">—</code></div>
 </section>
 

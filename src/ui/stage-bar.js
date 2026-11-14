@@ -1,16 +1,17 @@
 /**
- * Stage bar — the single canonical home of lane selection, the frame navigator
- * opener, split and the lane expression (F4 IA, DESIGN §8).
+ * Stage bar — the single canonical home of lane selection, the frames view toggle
+ * and `split` (F4 IA, DESIGN §8).
  *
  * Always visible: in 2-D it shows the lane set, `frames`, a disabled `split`
  * and `LANE 1 · A ⊕ B → Z1`; in 3-D it adds the per-pane focus dots and, in
- * split mode, a second pane head. Reads the state tree; writes only this DOM.
+ * split mode, a second pane head. While the frames view is open it shrinks to
+ * `Lanes` (D42). Reads the state tree; writes only this DOM.
  */
 
 import { S, SLOT_KEYS, curSlot, laneLabel } from "../state/instrument.ts";
 
 export function createStageBar(deps) {
-  const { element, framesBtn, selectSlot, selectSlotInPane, setSplitMode, focusSplitPane, slotExprText } = deps;
+  const { element, framesBtn, selectSlot, selectSlotInPane, setSplitMode, focusSplitPane, slotExprText, closeFrames } = deps;
   let stageDom = null;
 
   function buildStageBar() {
@@ -102,6 +103,21 @@ export function createStageBar(deps) {
 
     element.textContent = "";
     stageDom = { p0: makePane(0), p1: makePane(1) };
+
+    /* D42: the frames view is a stage mode, so its way back (`Lanes`) lives
+       beside the pane heads, centred, and only when the view is open. */
+    const lanesBtn = document.createElement("button");
+    lanesBtn.type = "button";
+    lanesBtn.className = "op";
+    lanesBtn.id = "lanesBtn";
+    lanesBtn.textContent = "Lanes";
+    lanesBtn.hidden = true;
+    lanesBtn.title = "Back to the lanes view (Esc)";
+    lanesBtn.setAttribute("aria-label", "Lanes — back to the lanes view");
+    lanesBtn.addEventListener("click", () => closeFrames());
+    element.appendChild(lanesBtn);
+    stageDom.lanesBtn = lanesBtn;
+
     /* makePane(0) re-appended the captured frames opener; drop unused extras. */
     for (const node of keep) {
       if (node !== framesBtn && node.parentNode !== element) node.remove();
@@ -130,6 +146,16 @@ export function createStageBar(deps) {
     const { p0, p1 } = stageDom;
     element.classList.toggle("is-split", S.split3d);
     element.dataset.view = S.view3d ? (S.split3d ? "split" : "3d") : "2d";
+
+    /* Frames view: the stage is the card grid; the bar shrinks to `Lanes`. */
+    const framesOn = S.framesView === true;
+    element.classList.toggle("is-frames", framesOn);
+    stageDom.lanesBtn.hidden = !framesOn;
+    if (framesOn) {
+      p0.wrap.hidden = true;
+      p1.wrap.hidden = true;
+      return;
+    }
 
     if (!S.view3d) {
       /* 2-D: one pane head, the lane set and a reserved-space disabled split. */

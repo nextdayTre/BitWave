@@ -1,6 +1,6 @@
 # BitWave — implementation status
 
-**Updated:** 2026-11-08 · **Phase:** F0 **done**, F1 **done**, F2 spine + render + UI modules done (pointer/lane controllers still in `main.js`), F3 source table + frame routing **done**, F4 accessibility + IA **done**, F5 persistence & reach **done**, **F6 distribution done**, the **agent interface done** (2026-11-08), and the **external-routing slice done** (2026-11-08, D40) — expression sources, a DAW-style Record/log, `.bitwave` schema 3, and bridge `setExpression`/`record`/`getLog` (toolset 1.1.0). The plan's funded path is complete; Tauri remains deferred (D37).
+**Updated:** 2026-11-14 · **Phase:** F0 **done**, F1 **done**, F2 spine + render + UI modules done (pointer/lane controllers still in `main.js`), F3 source table + frame routing **done**, F4 accessibility + IA **done**, F5 persistence & reach **done**, **F6 distribution done**, the **agent interface done** (2026-11-08), the **external-routing slice done** (2026-11-08, D40) — expression sources, a DAW-style Record/log, `.bitwave` schema 3, and bridge `setExpression`/`record`/`getLog` (toolset 1.1.0) — and the **frame-navigation pair done** (2026-11-14): the A/B/Z1 readout labels are focus buttons (D41) and the pop-out navigator became the stage-level **frames view** with the `+` tile at the 3-lane cap (D42). The plan's funded path is complete; Tauri remains deferred (D37).
 **Source of truth:** [`PLAN.md`](PLAN.md) for the plan, [`DECISIONS.md`](DECISIONS.md) for choices taken, [`DESIGN.md`](DESIGN.md) for the visual contract. `index.html` is still untouched and remains the shipping instrument.
 
 ## Author decisions (2026-11-06)
@@ -39,6 +39,7 @@ cell enough? Confirm before the matrix lands in the app.
 | **F5 Persistence & reach** | **Done** | `.bitwave` schema 2 (additive focus/frameVis, LFO mode/rate, dataset cursor) with a DOM-free app bridge; explicit `project…` menu (save/open/reset); debounced autosave + boot restore; `#bw=` URL-fragment share that wins over autosave; embedded 8-row demo dataset; visible dataset/status line that refuses empty/non-token CSVs; `?fresh` ephemeral sessions; stale `index.html.bak` deleted. Palette untouched (D10). |
 | **Agent interface** | **Done** | Additive agent layer (2026-11-08): `src/core/agent-*.ts` one registry/state/deeplink source; `window.bitwave` bridge (state/setters/call/subscribe/events) beside the untouched `window.BitWave`; hidden `#bitwave-state` + `body[data-agent-ready]`; `keys | agent` help-panel tab; `agent/cli.mjs` + `agent/mcp-server.mjs` (zero deps); generated `agent/manifest.json` + examples (`--check`); AGENTS/contract/llms/screenshot/ecosystem docs; hosted build serves the agent files. Default rendering pixel-identical (D39). |
 | **External routing** | **Done** | `.bitwave` schema 3 (expressions additive; schema 1/2 load); six source rows gain a validated `expr` editor; DAW-style Record toggle + bounded transient frame log + `export log`; expression-aware clocked pass (routes → expression sources → Z) with the previous row as `log.<frame>`; bridge `setExpression`/`record`/`getLog`, state `recording` + per-lane `expressions`; toolset 1.1.0. Float is a boundary authoring format (converted once to exact values). D40. |
+| **Frame navigation** | **Done (2026-11-14)** | A/B/Z1 readout labels are focus buttons bound to the whole-word hex entry (D41); the pop-out frame navigator is replaced by the stage-level **frames view** — equal cards per frame, lane columns, mini-splines, per-card eyes, `unpair B`, horizontal scroll arrows/track, `Lanes`/Esc return, and a perpetual `+` tile that names the 3-lane cap until dynamic lanes (D42). Canvas hidden while open; strip/meta/controls stay live; default pixels unchanged when closed. |
 | **F6 Distribution** | **Done** | Hosted/installable PWA build (`dist/hosted/`): manifest + maskable icons, hash-versioned app-shell service worker, relative URLs, offline reload. The committed single-file `bitwave-v2.html` is untouched and still has zero external references (asserted). `npm run check:pwa` proves install/offline against the real built output; deploy/install/privacy guidance in [`docs/hosting.md`](docs/hosting.md). Tauri 2 deferred (D37). |
 
 ## F4 progress (2026-11-06) — complete
@@ -59,18 +60,18 @@ targets/IA/axe checks, §12 roadmap, §13 new-control rule.
   focus survives re-renders; bit clicks return focus; arrows never also step the CSV;
   derived/driven strips are read-only with no tab stop.
 - **Semantics (D31).** One `<main>` + named groups, canvas `role="img"` with a commit-updated
-  text alternative, lane sets are radiogroups with arrow selection, glyph/preset/navigator
+  text alternative, lane sets are radiogroups with arrow selection, glyph/preset/card
   names satisfy SC 2.5.3, 24 px targets for the stage-bar controls and the width slider.
 - **Live status (D29).** One polite atomic region, transaction-driven, 150 ms debounce, quiet
   during drag and LFO ticks, immediate on pointer-up.
 - **Reduced motion (D28).** Transitions removed, commits instant, LFO rate capped 4/s; 1:1
   drag unchanged.
 - **Automated gate (D30).** `axe-core` 4.14 as a dev dependency, injected over CDP: zero
-  critical/serious in 2-D, A·B 3-D, source-table and frame-navigator states
+  critical/serious in 2-D, A·B 3-D, source-table and frames-view states
   (`color-contrast` disabled per D10/Q8; Label-in-Name enabled).
 - **IA pass (D32, author-approved mockup `spike/f4-ia.html`).** The stage bar is always
-  visible and is the single home of lane + frames + split (frames navigator stays
-  left-docked per the author; source table right). Controls render six named modules in the
+  visible and is the single home of lane + frames + split (the frames view replaced the
+  left-docked navigator under D42; source table right). Controls render six named modules in the
   approved order with `width` replacing `register`, a read-only `edit · A` target and a
   whole-word hex entry (right-aligned, invalid refused, Esc reverts). `copy to…` is an
   explicit focus-in menu that Escape closes and the live region confirms in words. Binops
@@ -294,7 +295,7 @@ were recaptured from the rebuilt artifact so the documentation shows the fixed s
   zero console errors; no overflow or clipped controls at 360/420/720/1440;
   `canvas.width` = viewport; `--pad` 40/16 and compact mode per DESIGN §5/§9;
   strip gap/nibble width follow the §5 formula (1440: gap 12.00, nibble 73.75);
-  frame navigator + per-lane eye toggles; 3-D `Z = A xor B`, truth counts `23/11/9/21`,
+  frames view + per-lane eye toggles; 3-D `Z = A xor B`, truth counts `23/11/9/21`,
   `popcount(Z) = 20`; CSV import, the four-column sample, the source table,
   frame driving/unplug and the §11 ROL/NOT/BSWAP vectors all hold; the agent
   surface is frozen/versioned; default state renders byte-identically.
@@ -338,7 +339,7 @@ were recaptured from the rebuilt artifact so the documentation shows the fixed s
 | [`src/render/`](src/render/canvas.js) | Canvas + 3-D field, strip, readouts; the only DOM/canvas renderers |
 | [`src/ui/source-table.js`](src/ui/source-table.js) | The six-row matrix panel: data/frame/expr/none source, validated expression editor, B-style labels, state chips |
 | [`src/ui/record.js`](src/ui/record.js) | Record toggle/count/export-log UI + store subscription |
-| [`src/ui/`](src/ui/frame-navigator.js) | Frame navigator, stage bar (lane/frames/split), copy menu, project menu, keyboard map + map panel, CSV stepper, controls + LFO, committed-change live status |
+| [`src/ui/`](src/ui/frame-navigator.js) | Frames view (stage card grid + focus lens), stage bar (lane/frames/split/`Lanes`), copy menu, project menu, keyboard map + map panel, CSV stepper, controls + LFO, committed-change live status |
 | [`src/ui/copy-menu.js`](src/ui/copy-menu.js) | Explicit `copy to…` menu: focus-in, arrow nav, Esc, spoken copy confirmation |
 | [`src/ui/project-menu.js`](src/ui/project-menu.js) | `project…` menu: save/open/reset with the same focus contract |
 | [`src/ui/help.js`](src/ui/help.js) | `?` keyboard-map panel — the one declared shortcut surface |

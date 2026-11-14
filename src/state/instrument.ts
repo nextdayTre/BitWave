@@ -116,6 +116,8 @@ export interface Instrument {
   copyArmed: boolean;
   compact: boolean;
   view3d: boolean;
+  /** Frames view: the stage is showing the lane/frame card browser (D42). */
+  framesView: boolean;
   lfo: LfoState;
   lfoAcc: number;
   record: RecordState;
@@ -169,6 +171,7 @@ export const S: Instrument = {
   copyArmed: false,
   compact: false,
   view3d: false,
+  framesView: false,
   lfo: { on: false, mode: "rotcw", rate: 4, t: 0, base: null },
   lfoAcc: 0,
   record: { on: false, rows: [], nextStep: 1 },

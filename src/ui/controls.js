@@ -209,7 +209,7 @@ export function createControls(deps) {
 
   /* ══════════════════════════════════════════════════════════
      OPERAND B / BINARY LOGIC
-     B is enabled from the frame navigator (or a CSV B column / 3D).
+     B is enabled from the frames view (or a CSV B column / 3D).
      ══════════════════════════════════════════════════════════ */
 
   const logicGroup = document.getElementById("logicGroup");

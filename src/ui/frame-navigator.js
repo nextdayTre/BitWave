@@ -1,8 +1,17 @@
 /**
- * Frame navigator — the Pro-Q4-style lane/frame panel and the focus lens.
+ * Frames view — the stage-level lane/frame browser and the focus lens.
  *
- * Moved out of main.js in F2. Reads the state tree; DOM only inside the panel.
- * Callbacks injected by the composition root handle selection/focus orchestration.
+ * Replaces the original pop-out frame navigator (D42). The `frames` button
+ * swaps the stage into a card grid: one column per lane, one equal card per
+ * frame (operand A, operand B, derived Z), with the lane/frame names beside
+ * each box and a mini spline of the settled register. Choosing a card focuses
+ * that frame and returns to the Lanes view; the eyes keep per-frame 2-D
+ * visibility, the lane heads keep lane focus and `unpair B`, and the footer
+ * carries the horizontal scroll affordance for many lanes.
+ *
+ * The `+` tile is present at this build's 3-lane maximum: dynamic lanes are a
+ * separate pass (docs/DYNAMIC-LANES.md), so the tile reports the cap instead of
+ * silently doing nothing.
  */
 
 import { buildSpline, evalSpline } from "../core/spline.ts";
@@ -20,30 +29,39 @@ export function createFrameNavigator(deps) {
     renderStrip,
     updateReadouts,
     unpairB,
-    slotExprText,
   } = deps;
 
   const framesBtn = document.getElementById("framesBtn");
-  const framesPanel = document.getElementById("framesPanel");
-  const framesBody = document.getElementById("framesBody");
+  const stageEl = document.querySelector(".stage");
+  const framesView = document.getElementById("framesView");
+  const framesScroll = document.getElementById("framesScroll");
+  const framesGrid = document.getElementById("framesGrid");
   const framesLegend = document.getElementById("framesLegend");
-  const framesClose = document.getElementById("framesClose");
-  const unpairBBtn = document.getElementById("unpairB");
+  const framesNote = document.getElementById("framesNote");
+  const framesLeft = document.getElementById("framesLeft");
+  const framesRight = document.getElementById("framesRight");
+  const framesThumb = document.getElementById("framesThumb");
   const SVG_NS = "http://www.w3.org/2000/svg";
-  const FRAME_ORDER = ["a", "z", "b"];
+  const FRAME_ORDER = ["a", "b", "z"];
+  const ADD_CAP_NOTE = "3 lanes is this build's maximum — dynamic lanes are a separate pass";
+
+  const prefersReducedMotion = () =>
+    window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  /* ── previews ─────────────────────────────────────────────────────────── */
 
   function previewPoints(reg) {
     const vals = reg.target;
     if (!vals || vals.length === 0) return "";
-    const w = 96;
-    const h = 24;
+    const w = 160;
+    const h = 28;
     const pad = 2;
     const xs = vals.map((_, j) => (vals.length === 1 ? w / 2 : (j / (vals.length - 1)) * w));
     const ys = vals.map((v) => h - pad - (v / 15) * (h - pad * 2));
     const sp = buildSpline(xs, ys);
     const pts = [];
-    for (let i = 0; i <= 48; i++) {
-      const x = (i / 48) * w;
+    for (let i = 0; i <= 56; i++) {
+      const x = (i / 56) * w;
       pts.push(`${x.toFixed(1)},${evalSpline(sp, x).toFixed(1)}`);
     }
     return pts.join(" ");
@@ -52,7 +70,7 @@ export function createFrameNavigator(deps) {
   function makePreview(reg, frame) {
     const svg = document.createElementNS(SVG_NS, "svg");
     svg.setAttribute("class", `frame-preview ${frame}`);
-    svg.setAttribute("viewBox", "0 0 96 24");
+    svg.setAttribute("viewBox", "0 0 160 28");
     svg.setAttribute("preserveAspectRatio", "none");
     svg.setAttribute("aria-hidden", "true");
     const line = document.createElementNS(SVG_NS, "polyline");
@@ -63,6 +81,8 @@ export function createFrameNavigator(deps) {
 
   const frameReg = (sl, frame) => (frame === "a" ? sl.A : frame === "b" ? sl.B : sl.Z);
   const frameSub = (frame) => (frame === "z" ? "derived" : "operand");
+
+  /* ── visibility eyes ──────────────────────────────────────────────────── */
 
   function frameVisLabel(laneKey, frame) {
     const visible = S.slots[laneKey].frameVis[frame];
@@ -100,142 +120,231 @@ export function createFrameNavigator(deps) {
 
     btn.addEventListener("click", (ev) => {
       ev.stopPropagation();
-      setFrameVis(laneKey, frame, !S.slots[laneKey].frameVis[frame]);
+      const next = !S.slots[laneKey].frameVis[frame];
+      store.patch(() => toggleFrameVisibility(S.slots[laneKey], frame));
+      btn.setAttribute("aria-pressed", String(next));
+      btn.classList.toggle("is-hidden", !next);
+      btn.setAttribute("aria-label", frameVisLabel(laneKey, frame));
+      btn.title = frameVisLabel(laneKey, frame);
+      renderGrid();
     });
     return btn;
   }
 
-  function setFrameVis(laneKey, frame, visible) {
-    const sl = S.slots[laneKey];
-    if (sl.frameVis[frame] !== visible) {
-      store.patch(() => toggleFrameVisibility(sl, frame));
-    }
-    if (framesPanel.hidden) return;
-    const row = framesBody.querySelector(`.frame-row[data-frame="${frame}"]`);
-    if (!row) return;
-    row.classList.toggle("is-hidden", !visible);
-    const eye = row.querySelector(".eye-btn");
-    if (eye) {
-      eye.classList.toggle("is-hidden", !visible);
-      eye.setAttribute("aria-pressed", String(visible));
-      eye.setAttribute("aria-label", frameVisLabel(laneKey, frame));
-      eye.title = frameVisLabel(laneKey, frame);
-    }
-  }
+  /* ── cards ────────────────────────────────────────────────────────────── */
 
-  function buildFrameRow(laneKey, frame) {
+  function buildCard(laneKey, frame) {
     const sl = S.slots[laneKey];
     const reg = frameReg(sl, frame);
     const name = frameName(laneKey, frame);
     const active = laneKey === S.slot && focusKey(sl) === frame;
+    const visible = sl.frameVis[frame];
+    const hex = toHexOf(reg);
 
-    const row = document.createElement("div");
-    row.className = "frame-row" + (active ? " is-active" : "") + (sl.frameVis[frame] ? "" : " is-hidden");
-    row.dataset.frame = frame;
+    const wrap = document.createElement("div");
+    wrap.className = "frame-card-wrap" + (active ? " is-active" : "") + (visible ? "" : " is-hidden");
+    wrap.dataset.lane = laneKey;
+    wrap.dataset.frame = frame;
 
     const btn = document.createElement("button");
     btn.type = "button";
-    btn.className = "frame-btn";
-    /* Name comes from the visible content (frame glyph, kind, hex) so
-       voice-control can match what the user reads (SC 2.5.3). */
-    btn.title = `Lane ${laneLabel(laneKey)} · ${name} (${frameSub(frame)})${active ? " — focused" : ""}`;
+    btn.className = "frame-card";
+    btn.setAttribute("aria-pressed", String(active));
+    btn.setAttribute("aria-label", `Lane ${laneLabel(laneKey)} · ${name} ${frameSub(frame)} · ${hex}`);
+    btn.title = `Lane ${laneLabel(laneKey)} · ${name} (${frameSub(frame)}) · ${hex}`;
 
-    const label = document.createElement("span");
-    label.className = "frame-label";
-    const swatch = document.createElement("span");
-    swatch.className = "frame-swatch";
     const glyph = document.createElement("span");
     glyph.className = "frame-glyph";
     glyph.textContent = name;
-    const sub = document.createElement("span");
-    sub.className = "frame-sub";
-    sub.textContent = frameSub(frame);
-    label.append(swatch, glyph, sub);
-    btn.appendChild(label);
+    const box = document.createElement("span");
+    box.className = "frame-box";
+    box.appendChild(makePreview(reg, frame));
+    btn.append(glyph, box);
+    btn.addEventListener("click", () => chooseCard(laneKey, frame));
 
-    btn.appendChild(makePreview(reg, frame));
-
-    const hex = document.createElement("span");
-    hex.className = "frame-hex";
-    hex.textContent = toHexOf(reg);
-    hex.title = toHexOf(reg);
-    btn.appendChild(hex);
-
-    btn.addEventListener("click", () => selectFrame(laneKey, frame));
-    row.append(btn, makeEyeButton(laneKey, frame));
-    return row;
+    const eye = makeEyeButton(laneKey, frame);
+    wrap.append(btn, eye);
+    return wrap;
   }
 
-  function buildLaneButton(laneKey) {
-    const sl = S.slots[laneKey];
-    const expanded = laneKey === S.slot;
+  function buildLaneHead(laneKey) {
+    const head = document.createElement("div");
+    head.className = "lane-head";
+
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className = "lane-btn";
     btn.dataset.lane = laneKey;
-    btn.setAttribute("aria-expanded", String(expanded));
-    btn.title = `Lane ${laneLabel(laneKey)}${expanded ? " · expanded" : ""}`;
-    const num = document.createElement("span");
-    num.className = "lane-num";
-    num.textContent = `LANE ${laneLabel(laneKey)}`;
-    const meta = document.createElement("span");
-    meta.className = "lane-meta";
-    meta.textContent = slotExprText(sl, false);
-    btn.append(num, meta);
+    const active = laneKey === S.slot;
+    btn.setAttribute("aria-pressed", String(active));
+    btn.textContent = `LANE ${laneLabel(laneKey)}`;
+    btn.title = `Focus lane ${laneLabel(laneKey)}`;
     btn.addEventListener("click", () => {
       S.copyArmed = false;
-      if (S.slot !== laneKey) selectSlot(laneKey);
-      renderFramesPanel(laneKey);
+      store.patch(() => {
+        if (S.slot !== laneKey) selectSlot(laneKey);
+        syncViewUi();
+        syncEditUi();
+        renderStrip();
+        updateReadouts();
+      });
+      renderGrid();
     });
-    return btn;
+    head.appendChild(btn);
+
+    const sl = S.slots[laneKey];
+    if (active && sl.showB && !S.view3d) {
+      const unpairBtn = document.createElement("button");
+      unpairBtn.type = "button";
+      unpairBtn.className = "unpair-btn";
+      unpairBtn.textContent = `unpair ${frameName(laneKey, "b")}`;
+      unpairBtn.title = `Remove operand ${frameName(laneKey, "b")} from this lane`;
+      unpairBtn.addEventListener("click", () => unpairB());
+      head.appendChild(unpairBtn);
+    }
+    return head;
   }
 
-  function renderFramesPanel(focusLane) {
-    framesBody.textContent = "";
-    for (const laneKey of SLOT_KEYS) {
-      framesBody.appendChild(buildLaneButton(laneKey));
-      if (laneKey !== S.slot) continue;
-      for (const frame of FRAME_ORDER) framesBody.appendChild(buildFrameRow(laneKey, frame));
-    }
-    const sl = curSlot();
-    const fa = frameName(sl.key, "a");
-    const fb = frameName(sl.key, "b");
-    const fz = frameName(sl.key, "z");
-    if (framesLegend) framesLegend.textContent = `${fa} solid · ${fz} glow · ${fb} dashed`;
-    unpairBBtn.textContent = `unpair ${fb}`;
-    unpairBBtn.title = `Remove operand ${fb} from this lane`;
-    unpairBBtn.hidden = !sl.showB || S.view3d;
-    if (focusLane) {
-      const head = framesBody.querySelector(`.lane-btn[data-lane="${focusLane}"]`);
-      if (head) head.focus();
+  function buildLaneColumn(laneKey) {
+    const col = document.createElement("div");
+    col.className = "lane-col";
+    col.dataset.lane = laneKey;
+    col.setAttribute("role", "group");
+    col.setAttribute("aria-label", `Lane ${laneLabel(laneKey)}`);
+    col.appendChild(buildLaneHead(laneKey));
+    for (const frame of FRAME_ORDER) col.appendChild(buildCard(laneKey, frame));
+    return col;
+  }
+
+  /* The next-lane tile is present at every width (the mockup's perpetual `+`);
+     at this build's 3-lane cap it reports the cap instead of inventing lanes. */
+  function buildAddColumn() {
+    const col = document.createElement("div");
+    col.className = "lane-col is-add";
+
+    const head = document.createElement("div");
+    head.className = "lane-head";
+    head.setAttribute("aria-hidden", "true");
+    col.appendChild(head);
+
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "frame-add";
+    btn.setAttribute("aria-disabled", "true");
+    btn.textContent = "+";
+    btn.setAttribute("aria-label", "Add lane — 3 lanes is this build's maximum");
+    btn.title = ADD_CAP_NOTE;
+    btn.addEventListener("click", () => {
+      framesNote.textContent = ADD_CAP_NOTE;
+    });
+    const hint = document.createElement("span");
+    hint.className = "frame-add-hint";
+    hint.textContent = "next lane";
+    col.append(btn, hint);
+    return col;
+  }
+
+  /* ── render ───────────────────────────────────────────────────────────── */
+
+  function renderGrid() {
+    if (!S.framesView) return;
+    const active = document.activeElement;
+    const host = active && active.closest ? active.closest("[data-lane][data-frame]") : null;
+    const keep = host
+      ? { lane: host.dataset.lane, frame: host.dataset.frame, eye: active.classList.contains("eye-btn") }
+      : null;
+
+    framesGrid.textContent = "";
+    for (const laneKey of SLOT_KEYS) framesGrid.appendChild(buildLaneColumn(laneKey));
+    framesGrid.appendChild(buildAddColumn());
+
+    const fa = frameName(curSlot().key, "a");
+    const fb = frameName(curSlot().key, "b");
+    const fz = frameName(curSlot().key, "z");
+    framesLegend.textContent = `${fa} solid · ${fz} glow · ${fb} dashed`;
+
+    updateScrollbar();
+
+    if (keep) {
+      const selector = `[data-lane="${keep.lane}"][data-frame="${keep.frame}"]`;
+      const target = keep.eye
+        ? framesGrid.querySelector(`${selector} .eye-btn`)
+        : framesGrid.querySelector(`${selector} .frame-card`);
+      if (target) target.focus({ preventScroll: true });
     }
   }
 
-  function openFrames() {
+  function updateScrollbar() {
+    if (!framesView || framesView.hidden) return;
+    const max = framesScroll.scrollWidth - framesScroll.clientWidth;
+    const overflow = max > 1;
+    framesLeft.disabled = !overflow || framesScroll.scrollLeft <= 1;
+    framesRight.disabled = !overflow || framesScroll.scrollLeft >= max - 1;
+    const track = framesThumb.parentElement;
+    const trackWidth = track ? track.clientWidth : 0;
+    if (!trackWidth) return;
+    const ratio = framesScroll.clientWidth / Math.max(1, framesScroll.scrollWidth);
+    const width = Math.max(20, Math.round(trackWidth * ratio));
+    framesThumb.style.width = `${width}px`;
+    const left = overflow ? (framesScroll.scrollLeft / max) * (trackWidth - width) : 0;
+    framesThumb.style.transform = `translateX(${left}px)`;
+  }
+
+  function stepScroll(direction) {
+    const col = framesGrid.querySelector(".lane-col");
+    const gap = parseFloat(getComputedStyle(framesGrid).columnGap) || 24;
+    const step = (col ? col.getBoundingClientRect().width : 240) + gap;
+    framesScroll.scrollBy({
+      left: direction * step,
+      behavior: prefersReducedMotion() ? "auto" : "smooth",
+    });
+  }
+
+  function focusActiveCard() {
+    const selector = `[data-lane="${S.slot}"] .frame-card`;
+    const active = framesGrid.querySelector(
+      `[data-lane="${S.slot}"][data-frame="${focusKey(curSlot())}"] .frame-card`
+    );
+    const target = active || framesGrid.querySelector(selector);
+    if (target) target.focus({ preventScroll: true });
+  }
+
+  /* ── view state ───────────────────────────────────────────────────────── */
+
+  function applyViewDom(open) {
+    framesView.hidden = !open;
+    stageEl.classList.toggle("is-frames", open);
+    framesBtn.setAttribute("aria-pressed", String(open));
+    framesBtn.title = open ? "Close the frames view" : "Browse every frame as a card";
+    if (open) {
+      framesNote.textContent = "";
+      renderGrid();
+      framesScroll.scrollLeft = 0;
+      updateScrollbar();
+      focusActiveCard();
+    }
+  }
+
+  function setOpen(open, { returnFocus = true } = {}) {
+    if (S.framesView === open) return;
+    S.copyArmed = false;
     store.patch(() => {
-      S.copyArmed = false;
+      S.framesView = open;
       syncViewUi();
-      renderFramesPanel();
     });
-    framesPanel.hidden = false;
-    framesBtn.setAttribute("aria-expanded", "true");
-    const first =
-      framesPanel.querySelector(".frame-row.is-active .frame-btn") ||
-      framesPanel.querySelector(".frame-btn") ||
-      framesClose;
-    first.focus();
+    applyViewDom(open);
+    if (!open) {
+      framesNote.textContent = "";
+      if (returnFocus) framesBtn.focus();
+    }
   }
 
-  function closeFrames(returnFocus) {
-    if (framesPanel.hidden) return;
-    framesPanel.hidden = true;
-    framesBtn.setAttribute("aria-expanded", "false");
-    if (returnFocus) framesBtn.focus();
+  function isOpen() {
+    return S.framesView === true;
   }
 
-  /* Focus, not navigation: clicking a frame shows it in the strip and
-     readouts without leaving the current view (2-D or 3-D). Operands stay
-     editable; Z is a read-only lens (DESIGN §10.8). */
+  /* Focus, not navigation: used by the readout lens and the agent bridge.
+     The frames view, if open, stays open and re-marks the focused card. */
   function selectFrame(laneKey, frame) {
     S.copyArmed = false;
     store.patch(() => {
@@ -251,37 +360,68 @@ export function createFrameNavigator(deps) {
       renderStrip();
       updateReadouts();
     });
-    if (!framesPanel.hidden) {
-      renderFramesPanel();
-      const focusedBtn = framesBody.querySelector(`.frame-row[data-frame="${frame}"] .frame-btn`);
-      if (focusedBtn) focusedBtn.focus();
-    }
+    renderGrid();
   }
 
-  framesBtn.addEventListener("click", () => {
-    if (framesPanel.hidden) openFrames();
-    else closeFrames(true);
-  });
-  framesClose.addEventListener("click", () => closeFrames(true));
-  unpairBBtn.addEventListener("click", unpairB);
+  /* Choosing a card is navigation: focus the frame, then return to the lanes
+     view so the wave is visible (the view replaces the stage, not a panel). */
+  function chooseCard(laneKey, frame) {
+    S.copyArmed = false;
+    store.patch(() => {
+      S.framesView = false;
+      if (!S.slots[laneKey].frameVis[frame]) toggleFrameVisibility(S.slots[laneKey], frame);
+      if (S.slot !== laneKey) selectSlot(laneKey);
+      const sl = curSlot();
+      if (frame !== "a" && !sl.showB) enableBOnSlot(sl);
+      setFocus(sl, frame);
+      S.hoverReg = null;
+      S.hoverJ = -1;
+      syncEditUi();
+      syncViewUi();
+      renderStrip();
+      updateReadouts();
+    });
+    applyViewDom(false);
+    framesBtn.focus();
+  }
 
-  document.addEventListener("pointerdown", (e) => {
-    if (framesPanel.hidden) return;
-    if (framesPanel.contains(e.target) || e.target === framesBtn) return;
-    closeFrames(false);
+  function close(returnFocus = true) {
+    setOpen(false, { returnFocus });
+  }
+
+  /* ── wiring ───────────────────────────────────────────────────────────── */
+
+  framesBtn.addEventListener("click", () => setOpen(!S.framesView));
+
+  framesLeft.addEventListener("click", () => stepScroll(-1));
+  framesRight.addEventListener("click", () => stepScroll(1));
+  framesScroll.addEventListener("scroll", updateScrollbar, { passive: true });
+  window.addEventListener("resize", () => updateScrollbar());
+
+  framesScroll.addEventListener("keydown", (e) => {
+    if (e.target !== framesScroll) return;
+    if (e.key === "ArrowLeft") {
+      stepScroll(-1);
+      e.preventDefault();
+    } else if (e.key === "ArrowRight") {
+      stepScroll(1);
+      e.preventDefault();
+    }
   });
 
-  /* ══════════════════════════════════════════════════════════
-     REGISTER SIZE
-     ══════════════════════════════════════════════════════════ */
+  /* Live cards: every settled transaction (LFO tick, CSV step, agent write)
+     refreshes the mini splines while the view is open; focus is preserved. */
+  store.subscribe(() => {
+    if (S.framesView) renderGrid();
+  });
 
   return {
     framesBtn,
-    isOpen: () => !framesPanel.hidden,
-    close: closeFrames,
-    render: renderFramesPanel,
+    isOpen,
+    close,
+    render: () => renderGrid(),
     selectFrame,
-    setFrameVis,
-    focusButton: () => framesBtn.focus(),
+    chooseCard,
+    focusButton: () => (S.framesView ? document.getElementById("lanesBtn")?.focus() : framesBtn.focus()),
   };
 }

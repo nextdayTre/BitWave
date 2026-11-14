@@ -13,13 +13,15 @@ with 2-D and 3-D views, an LFO, CSV/TSV import and observation export.
 no network, no dependencies — **open it directly in a browser.**
 
 - **`bitwave-v2.html`** — the current build, generated from `src/`. Lanes 1/2/3,
-  the always-visible stage bar (lane, frames, split), the Pro-Q4-style frame navigator,
+  the always-visible stage bar (lane, frames, split), the **frames view** (every frame
+  as an equal card, with lane scrolling and a `+` tile at the 3-lane cap),
   per-frame visibility eyes, the frame focus lens (A/B/Z1, C/D/Z2, E/F/Z3), the six-input
   **source table** (CSV columns, frame outputs or deterministic expressions, with driven
-  inputs locked), wheel-to-adjust hex, an explicit copy-to-lane menu, a whole-word hex
-  entry, CSV stepper, observation CSV export, DAW-style Record/log, LFO, split 3-D with a
-  per-lane **hinge** that swaps which operand is far vs near, and a keyboard-editable strip
-  (every nibble is a spinbutton).
+  inputs locked), wheel-to-adjust hex, an explicit copy-to-lane menu, the **A/B/Z1 readout
+  labels as focus buttons** (choose the frame the strip and word entry edit), a whole-word
+  hex entry, CSV stepper, observation CSV export, DAW-style Record/log, LFO, split 3-D with
+  a per-lane **hinge** that swaps which operand is far vs near, and a keyboard-editable
+  strip (every nibble is a spinbutton).
   Work is **persisted**: `.bitwave` save/open, autosave across reloads, and the state is
   shareable through the URL fragment. A `demo` button loads an embedded 8-row dataset.
 - **`index.html`** — untouched original reference build.
@@ -88,7 +90,7 @@ the repo; edit `src/`, then `npm run build`.
 `check:browser` auto-detects Chromium (Playwright's browser cache, a Chrome/Edge
 install, or `BITWAVE_CHROME=…`). It opens the artifact over `file://` — the way a
 user opens it — and asserts console cleanliness, layout at 360/420/720/1440, the
-DESIGN §5 strip geometry, the 2-D/3-D states, the frame navigator and focus lens,
+DESIGN §5 strip geometry, the 2-D/3-D states, the frames view and focus lens,
 the 3-D truth table, CSV import, the source table, the §11 operation vectors, the
 agent surface, the F4 reflow (200 %/400 %), keyboard editing, roles/live status,
 reduced motion, targets, the IA pass (stage bar, module order, copy menu, hex entry,
@@ -96,8 +98,10 @@ keyboard map), the F5 persistence paths (project open/reset, autosave reload, sh
 link round-trip and budget, `?fresh`) and an axe-core audit (dev-only; zero
 critical/serious).
 **Keyboard editing:** Tab into the strip, then ↑/↓ adjust a nibble, ←/→ move
-between nibbles, Home/End jump, 0–F set the digit; `?` opens the keyboard map and
-Esc closes a menu or panel.
+between nibbles, Home/End jump, 0–F set the digit; Tab to the A/B/Z1 readout labels and
+press Enter or Space to choose the frame you edit; `frames` opens the card view (Tab to a
+card, Enter/Space focuses that frame and returns; `Lanes` or Esc returns without choosing);
+`?` opens the keyboard map and Esc closes a menu or panel.
 
 `--compare` is the rebuild gate: it loads a reference artifact and the new one in
 the same Chromium and asserts identical screenshots across six states. The harness

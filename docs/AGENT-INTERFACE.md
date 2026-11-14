@@ -328,8 +328,8 @@ Automation hooks (additive attributes only):
 - `window` events `bitwave:ready` and `bitwave:change` (`detail` = state, exactly one
   change on install);
 - help panel tabs carry `data-agent-tab="keys|agent"`; their panels carry
-  `data-agent-panel="keys|agent"`; lane buttons carry `data-agent-lane="1|2|3"`; frame
-  navigator rows carry `data-agent-frame="A|B|Z1"`;
+  `data-agent-panel="keys|agent"`; lane buttons carry `data-agent-lane="1|2|3"`; frames-view
+  cards carry `data-agent-frame="A|B|Z1"` (one per global frame, 9 total);
 - agent panel status text: `[data-agent-status="bridge-active"]`.
 
 ## 8. Manifest (`getManifest()` / `agent/manifest.json`)

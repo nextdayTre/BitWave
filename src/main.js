@@ -551,6 +551,20 @@ import { toHexOf, updateReadouts } from "./render/readouts.js";
     slotExprText,
   });
 
+  /* D41: the A/B/Z1 readout labels are buttons, not text. Same focus lens as
+     the navigator — operands also become the edit target, Z1 stays read-only,
+     and the view mode, panels and values never change. */
+  for (const id of ["lblA", "lblB", "lblZ"]) {
+    const btn = document.getElementById(id);
+    if (!btn) continue;
+    btn.addEventListener("click", () => {
+      const frame = btn.dataset.frame;
+      if (frame === "a" || frame === "b" || frame === "z") {
+        frameNav.selectFrame(S.slot, frame);
+      }
+    });
+  }
+
   const stageBar = createStageBar({
     element: document.getElementById("stageBar"),
     framesBtn: document.getElementById("framesBtn"),
@@ -559,6 +573,7 @@ import { toHexOf, updateReadouts } from "./render/readouts.js";
     setSplitMode,
     focusSplitPane,
     slotExprText,
+    closeFrames: () => frameNav.close(true),
   });
 
   /* Explicit copy menu — focus moves in, Esc/outside closes, and the live
@@ -754,12 +769,14 @@ import { toHexOf, updateReadouts } from "./render/readouts.js";
     const isSplit = S.view3d && S.split3d;
     canvas.classList.toggle("readonly", S.view3d && !S.split3d);
     canvas.classList.toggle("split-view", isSplit);
-    hintEl.hidden = S.view3d;
+    hintEl.hidden = S.view3d || S.framesView;
     stageBar.sync();
   }
 
   depthBtn.addEventListener("click", () => {
     if (S.copyArmed) copyMenu.close(false);
+    /* Switching the wave view leaves the frames view (the stage cannot show both). */
+    if (S.framesView) frameNav.close(false);
     store.patch(() => {
       S.view3d = !S.view3d;
       if (!S.view3d) S.split3d = false;
@@ -780,6 +797,8 @@ import { toHexOf, updateReadouts } from "./render/readouts.js";
   /* Bridge view setter — the same commands the depth button and split control
      run, so the API and the UI cannot disagree. Idempotent by construction. */
   function setViewMode(mode) {
+    /* The frames view is a stage mode: a view change returns to the wave. */
+    if (S.framesView) frameNav.close(false);
     if (mode === "2d") {
       if (!S.view3d) return;
       if (S.copyArmed) copyMenu.close(false);
@@ -849,6 +868,10 @@ import { toHexOf, updateReadouts } from "./render/readouts.js";
     renderStrip,
     updateReadouts,
   });
+
+  /* The frames view is a stage mode; a transient source panel must not float
+     over the card grid (D42). */
+  document.getElementById("framesBtn").addEventListener("click", () => sources.close(false));
 
   /* DAW-style record (EXTERNAL-ROUTING §3): one row per settled transaction,
      in memory only. Subscribed before the agent bridge installs, so
@@ -1075,11 +1098,11 @@ import { toHexOf, updateReadouts } from "./render/readouts.js";
           }
         }
       }
-      const rowsEl = document.getElementById("framesBody");
-      if (rowsEl) {
-        for (const row of rowsEl.querySelectorAll(".frame-row[data-frame]")) {
-          const value = frameName(S.slot, row.dataset.frame);
-          if (row.getAttribute("data-agent-frame") !== value) row.setAttribute("data-agent-frame", value);
+      const gridEl = document.getElementById("framesGrid");
+      if (gridEl) {
+        for (const card of gridEl.querySelectorAll("[data-lane][data-frame]")) {
+          const value = frameName(card.dataset.lane, card.dataset.frame);
+          if (card.getAttribute("data-agent-frame") !== value) card.setAttribute("data-agent-frame", value);
         }
       }
     };
@@ -1088,7 +1111,7 @@ import { toHexOf, updateReadouts } from "./render/readouts.js";
       new MutationObserver(annotate).observe(el, { childList: true, subtree: true, attributes: true });
     };
     observe(document.getElementById("stageBar"));
-    observe(document.getElementById("framesBody"));
+    observe(document.getElementById("framesGrid"));
     annotate();
   })();
 

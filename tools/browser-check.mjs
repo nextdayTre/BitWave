@@ -334,6 +334,20 @@ async function click(selector) {
   })()`);
 }
 
+/* D42: the frames view replaced the pop-out navigator panel. */
+async function openFramesView() {
+  if (await evaluate(`document.getElementById('framesView').hidden`)) {
+    await click('#framesBtn');
+  }
+  await waitFor(`!document.getElementById('framesView').hidden`, 'frames view');
+  await sleep(120);
+}
+
+async function pickFrameCard(lane, frame) {
+  await click(`#framesGrid [data-lane="${lane}"][data-frame="${frame}"] .frame-card`);
+  await sleep(180);
+}
+
 /* Synthetic keydown on the focused element — exercises the strip's own
    key handler without browser traversal (which Tab needs, see pressNative). */
 async function keydown(key) {
@@ -354,6 +368,15 @@ async function pressNative(key, code, keyCode) {
   const base = { key, code, windowsVirtualKeyCode: keyCode, nativeVirtualKeyCode: keyCode };
   await cdp.send('Input.dispatchKeyEvent', { type: 'rawKeyDown', ...base });
   await cdp.send('Input.dispatchKeyEvent', { type: 'keyUp', ...base });
+  await sleep(80);
+}
+
+/* Native Enter on a focused button: activation needs keyDown with text, not
+   rawKeyDown (used by the D41 readout-lens keyboard path). */
+async function pressActivate() {
+  const key = { key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13 };
+  await cdp.send('Input.dispatchKeyEvent', { type: 'keyDown', ...key, text: '\r', unmodifiedText: '\r' });
+  await cdp.send('Input.dispatchKeyEvent', { type: 'keyUp', ...key });
   await sleep(80);
 }
 
@@ -612,41 +635,93 @@ try {
     });
   }
 
-  /* 3. frame navigator -------------------------------------------------- */
-  await runCheck('frames · navigator lists lane 1 A/Z/B and all lanes', async () => {
+  /* 3. frames view (D42) ------------------------------------------------- */
+  await runCheck('frames · the frames view shows every frame as an equal card', async () => {
     await loadApp();
     await click('#framesBtn');
-    await waitFor(`!document.getElementById('framesPanel').hidden`, 'frame navigator');
+    await waitFor(`!document.getElementById('framesView').hidden`, 'frames view');
     const summary = JSON.parse(await evaluate(`JSON.stringify({
-      rows: [...document.querySelectorAll('.frame-row')].map((row) => row.dataset.frame),
-      lanes: document.querySelectorAll('.lane-btn').length,
-      eyes: document.querySelectorAll('#framesBody .eye-btn').length
+      columns: [...document.querySelectorAll('#framesGrid .lane-col:not(.is-add)')].map(
+        (col) => [...col.querySelectorAll('.frame-glyph')].map((glyph) => glyph.textContent.trim())
+      ),
+      lanes: document.querySelectorAll('#framesGrid .lane-btn').length,
+      eyes: document.querySelectorAll('#framesGrid .eye-btn').length,
+      add: document.querySelectorAll('#framesGrid .lane-col.is-add').length,
+      lanesBtn: !document.getElementById('lanesBtn').hidden,
+      panesHidden: [...document.querySelectorAll('.pane-head')].every((pane) => pane.hidden),
+      canvasHidden: getComputedStyle(document.getElementById('wave')).visibility === 'hidden',
+      active: document.querySelectorAll('#framesGrid .frame-card[aria-pressed="true"]').length
     })`));
     assert(
-      JSON.stringify(summary.rows) === JSON.stringify(['a', 'z', 'b']),
-      `frame rows: ${JSON.stringify(summary.rows)}`
+      JSON.stringify(summary.columns) === JSON.stringify([['A', 'B', 'Z1'], ['C', 'D', 'Z2'], ['E', 'F', 'Z3']]),
+      `frame columns: ${JSON.stringify(summary.columns)}`
     );
-    assert(summary.lanes === 3, `lane buttons: ${summary.lanes}`);
-    assert(summary.eyes === 3, `eye buttons: ${summary.eyes}`);
-    return '3 frames · 3 lanes · 3 visibility toggles';
+    assert(summary.lanes === 3, `lane heads: ${summary.lanes}`);
+    assert(summary.eyes === 9, `eye buttons: ${summary.eyes}`);
+    assert(summary.add === 1, `add tiles: ${summary.add}`);
+    assert(summary.lanesBtn === true, 'the Lanes button is not shown');
+    assert(summary.panesHidden === true, 'stage-bar panes are still visible');
+    assert(summary.canvasHidden === true, 'the canvas is not hidden behind the frames view');
+    assert(summary.active === 1, `active cards: ${summary.active}`);
+
+    /* `Lanes` and Esc both leave the view without choosing a frame. */
+    await click('#lanesBtn');
+    await sleep(150);
+    assert(
+      (await evaluate(`document.getElementById('framesView').hidden`)) === true,
+      'Lanes did not return to the lanes view'
+    );
+    await openFramesView();
+    await evaluate(
+      `document.activeElement.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))`
+    );
+    await sleep(150);
+    assert(
+      (await evaluate(`document.getElementById('framesView').hidden`)) === true,
+      'Esc did not return to the lanes view'
+    );
+
+    /* The + tile names the cap instead of inventing lanes. */
+    await openFramesView();
+    await click('#framesGrid .frame-add');
+    const capNote = await evaluate(`document.getElementById('framesNote').textContent`);
+    assert(/maximum/.test(capNote), `add tile note: ${JSON.stringify(capNote)}`);
+
+    /* Narrow viewport: the grid scrolls inside the frames view, the page does not. */
+    await loadPage(artifactUrl, { width: 360, height: 780 });
+    await openFramesView();
+    const narrow = JSON.parse(await evaluate(`JSON.stringify({
+      bodyOverflow: document.body.scrollWidth - document.body.clientWidth,
+      gridOverflow: document.getElementById('framesScroll').scrollWidth - document.getElementById('framesScroll').clientWidth,
+      rightDisabled: document.getElementById('framesRight').disabled
+    })`));
+    assert(narrow.bodyOverflow === 0, `frames view overflows the page at 360: ${narrow.bodyOverflow}`);
+    assert(narrow.gridOverflow > 0, 'the card grid should scroll horizontally at 360');
+    assert(narrow.rightDisabled === false, 'the right scroll arrow is disabled while the grid overflows');
+    await click('#framesRight');
+    await sleep(450);
+    const scrolled = await evaluate(`document.getElementById('framesScroll').scrollLeft`);
+    assert(scrolled > 0, `the scroll arrow did not move the grid: ${scrolled}`);
+
+    return '9 equal cards · + cap note · Lanes/Esc return · 360 scrolls inside the view';
   });
 
-  await runCheck('frames · eye toggle flips aria-pressed and hides the frame', async () => {
-    await click('#framesBody .frame-row[data-frame="a"] .eye-btn');
+  await runCheck('frames · eye toggle flips aria-pressed and dims the card', async () => {
+    await loadApp();
+    await openFramesView();
+    await click('#framesGrid [data-lane="A"][data-frame="a"] .eye-btn');
+    await sleep(150);
     const hidden = JSON.parse(await evaluate(`JSON.stringify({
-      pressed: document.querySelector('#framesBody .frame-row[data-frame="a"] .eye-btn').getAttribute('aria-pressed'),
-      hidden: document.querySelector('#framesBody .frame-row[data-frame="a"]').classList.contains('is-hidden'),
-      label: document.querySelector('#framesBody .frame-row[data-frame="a"] .eye-btn').getAttribute('aria-label')
+      pressed: document.querySelector('#framesGrid [data-lane="A"][data-frame="a"] .eye-btn').getAttribute('aria-pressed'),
+      hidden: document.querySelector('#framesGrid [data-lane="A"][data-frame="a"]').classList.contains('is-hidden'),
+      label: document.querySelector('#framesGrid [data-lane="A"][data-frame="a"] .eye-btn').getAttribute('aria-label')
     })`));
     assert(hidden.pressed === 'false', `aria-pressed: ${hidden.pressed}`);
-    assert(hidden.hidden === true, 'row did not gain .is-hidden');
+    assert(hidden.hidden === true, 'card did not gain .is-hidden');
     assert(/^Show frame A\b/.test(hidden.label), `eye label did not change: ${hidden.label}`);
-    return 'A hidden · aria-pressed=false · label now "Show frame A"'
+    return 'A hidden · aria-pressed=false · label now "Show frame A"';
   });
 
-  const frameGlyphs = async () => JSON.parse(await evaluate(`JSON.stringify(
-    [...document.querySelectorAll('#framesBody .frame-row .frame-glyph')].map((el) => el.textContent.trim())
-  )`));
   const clickSlot = async (key) => {
     await click(`#stageBar .pane-head:not([hidden]) [data-slot="${key}"]`);
     await sleep(120);
@@ -667,49 +742,37 @@ try {
     );
 
     await clickSlot('A');
-    await click('#framesBtn');
-    await waitFor(`!document.getElementById('framesPanel').hidden`, 'frame navigator');
-    const lane1 = await frameGlyphs();
-    await click('#framesBody .lane-btn[data-lane="B"]');
-    await sleep(120);
-    const lane2 = await frameGlyphs();
-    await click('#framesBody .lane-btn[data-lane="C"]');
-    await sleep(120);
-    const lane3 = await frameGlyphs();
+    await openFramesView();
+    const columns = JSON.parse(await evaluate(`JSON.stringify(
+      [...document.querySelectorAll('#framesGrid .lane-col:not(.is-add)')].map(
+        (col) => [...col.querySelectorAll('.frame-glyph')].map((glyph) => glyph.textContent.trim())
+      )
+    )`));
     assert(
-      JSON.stringify(lane1) === JSON.stringify(['A', 'Z1', 'B']),
-      `lane 1 frames: ${JSON.stringify(lane1)}`
+      JSON.stringify(columns) === JSON.stringify([['A', 'B', 'Z1'], ['C', 'D', 'Z2'], ['E', 'F', 'Z3']]),
+      `frame columns: ${JSON.stringify(columns)}`
     );
-    assert(
-      JSON.stringify(lane2) === JSON.stringify(['C', 'Z2', 'D']),
-      `lane 2 frames: ${JSON.stringify(lane2)}`
-    );
-    assert(
-      JSON.stringify(lane3) === JSON.stringify(['E', 'Z3', 'F']),
-      `lane 3 frames: ${JSON.stringify(lane3)}`
-    );
-    return 'lane 1 A/Z1/B · lane 2 C/Z2/D · lane 3 E/Z3/F';
+    return 'lane 1 A/B/Z1 · lane 2 C/D/Z2 · lane 3 E/F/Z3 in strip and frame columns';
   });
 
   await runCheck('visibility · eye toggles are per lane', async () => {
-    await click('#framesBody .lane-btn[data-lane="A"]');
-    await sleep(120);
-    await click('#framesBody .frame-row[data-frame="a"] .eye-btn');
+    await loadApp();
+    await openFramesView();
+    await click('#framesGrid [data-lane="A"][data-frame="a"] .eye-btn');
+    await sleep(150);
     const lane1Hidden = await evaluate(
-      `document.querySelector('#framesBody .frame-row[data-frame="a"] .eye-btn').getAttribute('aria-pressed')`
+      `document.querySelector('#framesGrid [data-lane="A"][data-frame="a"] .eye-btn').getAttribute('aria-pressed')`
     );
-    await click('#framesBody .lane-btn[data-lane="B"]');
-    await sleep(120);
     const lane2Visible = await evaluate(
-      `document.querySelector('#framesBody .frame-row[data-frame="a"] .eye-btn').getAttribute('aria-pressed')`
+      `document.querySelector('#framesGrid [data-lane="B"][data-frame="a"] .eye-btn').getAttribute('aria-pressed')`
     );
     assert(lane1Hidden === 'false', `lane 1 A after hide: ${lane1Hidden}`);
     assert(lane2Visible === 'true', `lane 2 C should be unaffected: ${lane2Visible}`);
     return 'hiding A leaves C visible (per-lane visibility)';
   });
 
-  /* 3c. focus: a frame click is a lens, not a view switch ---------------- */
-  await runCheck('focus · a frame click in 3-D stays in 3-D and retargets the strip', async () => {
+  /* 3c. focus: a card is navigation, the lens on the readouts stays a lens */
+  await runCheck('focus · a card focuses the frame and returns to the lanes view', async () => {
     await loadApp();
     await click('#depthBtn');
     assert(
@@ -722,21 +785,19 @@ try {
     })`));
     assert(entered.strip === 'A', `3-D stole focus on entry: strip shows ${entered.strip}`);
     assert(entered.readonly === false, '3-D should leave A editable');
-    await click('#framesBtn');
-    await waitFor(`!document.getElementById('framesPanel').hidden`, 'frame navigator');
 
-    await click('#framesBody .frame-row[data-frame="a"] .frame-btn');
-    await sleep(150);
+    await openFramesView();
+    await pickFrameCard('A', 'a');
     let state = JSON.parse(await evaluate(`JSON.stringify({
       view3d: document.getElementById('depthBtn').getAttribute('aria-pressed'),
-      panelOpen: !document.getElementById('framesPanel').hidden,
+      viewHidden: document.getElementById('framesView').hidden,
       strip: document.getElementById('strip').dataset.edit,
       readonly: document.getElementById('strip').classList.contains('is-readonly'),
       stage: document.getElementById('stageBar').textContent
     })`));
-    assert(state.view3d === 'true', 'focusing A left the 3-D view');
-    assert(state.panelOpen === true, 'the frame navigator closed on focus');
-    assert(state.strip === 'A', `strip after focusing A: ${state.strip}`);
+    assert(state.view3d === 'true', 'choosing a card left the 3-D view');
+    assert(state.viewHidden === true, 'choosing a card did not return to the lanes view');
+    assert(state.strip === 'A', `strip after choosing A: ${state.strip}`);
     assert(state.readonly === false, 'A should be editable');
     assert(/→ Z1/.test(state.stage), `stage bar: ${JSON.stringify(state.stage)}`);
 
@@ -744,18 +805,20 @@ try {
       a: document.getElementById('hexA').textContent,
       z: document.getElementById('hexZ').textContent
     })`));
-    await click('#framesBody .frame-row[data-frame="z"] .frame-btn');
-    await sleep(150);
+    await openFramesView();
+    await pickFrameCard('A', 'z');
     state = JSON.parse(await evaluate(`JSON.stringify({
       view3d: document.getElementById('depthBtn').getAttribute('aria-pressed'),
+      viewHidden: document.getElementById('framesView').hidden,
       strip: document.getElementById('strip').dataset.edit,
       readonly: document.getElementById('strip').classList.contains('is-readonly'),
       nibReadonly: [...document.querySelectorAll('#nibs .nib')].every((n) => n.getAttribute('aria-readonly') === 'true'),
       bits: document.querySelectorAll('#nibs .bit').length,
       hint: document.getElementById('hint').textContent
     })`));
-    assert(state.view3d === 'true', 'focusing Z1 left the 3-D view');
-    assert(state.strip === 'Z1', `strip after focusing Z1: ${state.strip}`);
+    assert(state.view3d === 'true', 'choosing Z1 left the 3-D view');
+    assert(state.viewHidden === true, 'choosing Z1 did not return to the lanes view');
+    assert(state.strip === 'Z1', `strip after choosing Z1: ${state.strip}`);
     assert(state.readonly === true && state.nibReadonly === true, 'Z strip is not read-only');
     assert(state.bits === 64, `strip should show all 64 bits of Z1, found ${state.bits}`);
     assert(/read-only/.test(state.hint), `hint did not explain read-only: ${JSON.stringify(state.hint)}`);
@@ -770,19 +833,25 @@ try {
       `a bit click edited through a derived frame: ${JSON.stringify(before)} → ${JSON.stringify(after)}`
     );
 
-    await click('#framesBody .frame-row[data-frame="b"] .frame-btn');
-    await sleep(150);
+    await openFramesView();
+    await pickFrameCard('A', 'b');
     const b = JSON.parse(await evaluate(`JSON.stringify({
+      viewHidden: document.getElementById('framesView').hidden,
       strip: document.getElementById('strip').dataset.edit,
       readonly: document.getElementById('strip').classList.contains('is-readonly')
     })`));
-    assert(b.strip === 'B' && b.readonly === false, `focusing B: ${JSON.stringify(b)}`);
-    return 'A → B editable · Z1 read-only · 3-D stayed on · panel stayed open';
+    assert(b.viewHidden === true, 'choosing B did not return to the lanes view');
+    assert(b.strip === 'B' && b.readonly === false, `choosing B: ${JSON.stringify(b)}`);
+    return 'card A → lanes · card Z1 → read-only strip · card B editable · 3-D kept';
   });
 
   await runCheck('focus · names follow the lane in the stage bar and readouts', async () => {
-    await click('#framesBody .lane-btn[data-lane="B"]');
-    await sleep(150);
+    await loadApp();
+    /* 3-D brings the second operand live, so the A/B/Z readout row exists. */
+    await click('#depthBtn');
+    await sleep(200);
+    await clickSlot('B');
+    await sleep(120);
     const lane2 = JSON.parse(await evaluate(`JSON.stringify({
       strip: document.getElementById('strip').dataset.edit,
       stage: document.getElementById('stageBar').textContent,
@@ -803,7 +872,93 @@ try {
     })`));
     assert(lane3.strip === 'E', `lane 3 strip: ${lane3.strip}`);
     assert(/LANE 3 · E.*F.*→ Z3/.test(lane3.stage), `lane 3 stage: ${JSON.stringify(lane3.stage)}`);
-    return 'lane 2 C/D/Z2 · lane 3 E/F/Z3 in strip, stage bar, readouts and truth';
+
+    /* D41: the A/B/Z1 readout labels are the frame lens (focus only). */
+    await loadApp();
+    await click('#depthBtn');
+    await waitFor(
+      `document.getElementById('depthBtn').getAttribute('aria-pressed') === 'true'`,
+      '3-D for the readout lens'
+    );
+    const beforeLens = JSON.parse(await evaluate(`JSON.stringify({
+      a: document.getElementById('hexA').textContent.trim(),
+      b: document.getElementById('hexB').textContent.trim(),
+      z: document.getElementById('hexZ').textContent.trim(),
+      view3d: document.getElementById('depthBtn').getAttribute('aria-pressed')
+    })`));
+    const buttons = JSON.parse(await evaluate(`JSON.stringify({
+      labels: ['lblA', 'lblB', 'lblZ'].map((id) => document.getElementById(id).textContent.trim()),
+      pressed: ['lblA', 'lblB', 'lblZ'].map((id) => document.getElementById(id).getAttribute('aria-pressed')),
+      names: ['lblA', 'lblB', 'lblZ'].map((id) => document.getElementById(id).getAttribute('aria-label')),
+      sizes: ['lblA', 'lblB', 'lblZ'].map((id) => {
+        const r = document.getElementById(id).getBoundingClientRect();
+        return [Math.round(r.width), Math.round(r.height)];
+      })
+    })`));
+    assert(buttons.labels.join(',') === 'A,B,Z1', `readout labels: ${JSON.stringify(buttons.labels)}`);
+    assert(buttons.pressed.join(',') === 'true,false,false', `boot pressed state: ${buttons.pressed}`);
+    assert(
+      buttons.names[0] === 'focus A' && buttons.names[2] === 'focus Z1 (read-only)',
+      `readout names: ${JSON.stringify(buttons.names)}`
+    );
+    assert(
+      buttons.sizes.every(([w, h]) => w >= 24 && h >= 24),
+      `readout targets under 24px: ${JSON.stringify(buttons.sizes)}`
+    );
+
+    await click('#lblB');
+    await sleep(150);
+    let lens = JSON.parse(await evaluate(`JSON.stringify({
+      strip: document.getElementById('strip').dataset.edit,
+      pressed: ['lblA', 'lblB', 'lblZ'].map((id) => document.getElementById(id).getAttribute('aria-pressed')),
+      editTarget: document.getElementById('editTarget').textContent.trim(),
+      entryDisabled: document.getElementById('hexEntry').disabled,
+      entryValue: document.getElementById('hexEntry').value.toUpperCase(),
+      hexB: document.getElementById('hexB').textContent.trim(),
+      view3d: document.getElementById('depthBtn').getAttribute('aria-pressed')
+    })`));
+    assert(lens.strip === 'B', `B lens strip: ${lens.strip}`);
+    assert(lens.pressed.join(',') === 'false,true,false', `B lens pressed: ${lens.pressed}`);
+    assert(lens.editTarget === 'edit · B', `B lens edit target: ${lens.editTarget}`);
+    assert(lens.entryDisabled === false, 'the word entry is disabled for B');
+    assert(lens.entryValue === lens.hexB, `word entry is not B's value: ${lens.entryValue} vs ${lens.hexB}`);
+    assert(lens.view3d === 'true', 'the readout lens left the 3-D view');
+
+    await click('#lblZ');
+    await sleep(150);
+    lens = JSON.parse(await evaluate(`JSON.stringify({
+      strip: document.getElementById('strip').dataset.edit,
+      readonly: document.getElementById('strip').classList.contains('is-readonly'),
+      pressed: ['lblA', 'lblB', 'lblZ'].map((id) => document.getElementById(id).getAttribute('aria-pressed')),
+      editTarget: document.getElementById('editTarget').textContent.trim(),
+      entryDisabled: document.getElementById('hexEntry').disabled
+    })`));
+    assert(lens.strip === 'Z1' && lens.readonly === true, `Z1 lens: ${JSON.stringify(lens)}`);
+    assert(lens.pressed.join(',') === 'false,false,true', `Z1 lens pressed: ${lens.pressed}`);
+    assert(lens.editTarget === 'Z1 · read-only', `Z1 lens edit target: ${lens.editTarget}`);
+    assert(lens.entryDisabled === true, 'the word entry is enabled on a derived frame');
+
+    /* Keyboard path: focus a label, Enter chooses that frame (no new shortcut). */
+    await evaluate(`document.getElementById('lblA').focus()`);
+    await pressActivate();
+    await sleep(150);
+    const keyboard = JSON.parse(await evaluate(`JSON.stringify({
+      strip: document.getElementById('strip').dataset.edit,
+      pressed: document.getElementById('lblA').getAttribute('aria-pressed')
+    })`));
+    assert(keyboard.strip === 'A' && keyboard.pressed === 'true', `keyboard lens: ${JSON.stringify(keyboard)}`);
+
+    const afterLens = JSON.parse(await evaluate(`JSON.stringify({
+      a: document.getElementById('hexA').textContent.trim(),
+      b: document.getElementById('hexB').textContent.trim(),
+      z: document.getElementById('hexZ').textContent.trim(),
+      view3d: document.getElementById('depthBtn').getAttribute('aria-pressed')
+    })`));
+    assert(
+      JSON.stringify(beforeLens) === JSON.stringify(afterLens),
+      `the readout lens changed values or the view: ${JSON.stringify(beforeLens)} → ${JSON.stringify(afterLens)}`
+    );
+    return 'lane 2 C/D/Z2 · lane 3 E/F/Z3 in strip, stage bar, readouts and truth · A/B/Z1 readout lens retargets strip + word entry, Z1 read-only, 24px targets, keyboard path';
   });
 
   await runCheck('edit · bit click and wheel update the register through actions', async () => {
@@ -1065,10 +1220,8 @@ try {
     const focused = await evaluate(`document.activeElement?.closest?.('.nib')?.dataset?.j ?? null`);
     assert(focused === '2', `bit click left focus on ${focused}`);
 
-    await click('#framesBtn');
-    await waitFor(`!document.getElementById('framesPanel').hidden`, 'frame navigator');
-    await click('#framesBody .frame-row[data-frame="z"] .frame-btn');
-    await sleep(150);
+    await openFramesView();
+    await pickFrameCard('A', 'z');
     const z = JSON.parse(await evaluate(`JSON.stringify({
       readonly: [...document.querySelectorAll('#nibs .nib')].every((n) => n.getAttribute('aria-readonly') === 'true'),
       tabStops: document.querySelectorAll('#nibs .nib[tabindex]').length,
@@ -1252,12 +1405,12 @@ try {
     await sleep(250);
     const split = JSON.parse(await evaluate(`JSON.stringify({
       panes: [...document.querySelectorAll('#stageBar .pane-head')].filter((p) => !p.hidden).length,
-      expr: document.querySelector('#stageBar .pane-head:not([hidden]):last-child .stage-expr').textContent
+      expr: document.querySelector('#stageBar .pane-head[data-pane="1"] .stage-expr').textContent
     })`));
     assert(split.panes === 2, `split panes: ${split.panes}`);
     assert(/C ⊕ D → Z2/.test(split.expr), `split second-pane expression: ${JSON.stringify(split.expr)}`);
 
-    await click('#stageBar .pane-head:not([hidden]):last-child .op.mini');
+    await click('#stageBar .pane-head[data-pane="1"] .op.mini');
     await sleep(250);
     const unsplit = await evaluate(`[...document.querySelectorAll('#stageBar .pane-head')].filter((p) => !p.hidden).length`);
     assert(unsplit === 1, `returning from split left ${unsplit} panes visible`);
@@ -1401,10 +1554,8 @@ try {
     const reverted = await evaluate(`document.getElementById('hexEntry').value`);
     assert(reverted === '00000000DEADBEEF', `Esc did not revert the hex entry: ${reverted}`);
 
-    await click('#framesBtn');
-    await waitFor(`!document.getElementById('framesPanel').hidden`, 'frame navigator');
-    await click('#framesBody .frame-row[data-frame="z"] .frame-btn');
-    await sleep(200);
+    await openFramesView();
+    await pickFrameCard('A', 'z');
     const derived = JSON.parse(await evaluate(`JSON.stringify({
       disabled: document.getElementById('hexEntry').disabled,
       value: document.getElementById('hexEntry').value,
@@ -1688,11 +1839,11 @@ try {
         },
       },
       {
-        name: 'frame navigator',
+        name: 'frames view',
         prepare: async () => {
           await loadApp();
           await click('#framesBtn');
-          await waitFor(`!document.getElementById('framesPanel').hidden`, 'frame navigator');
+          await waitFor(`!document.getElementById('framesView').hidden`, 'frames view');
         },
       },
     ];
@@ -1897,9 +2048,8 @@ try {
 
   await runCheck('agent · state() follows focus, view and dataset', async () => {
     await click('#depthBtn');
-    await click('#framesBtn');
-    await click('#framesBody .frame-row[data-frame="z"] .frame-btn');
-    await sleep(150);
+    await openFramesView();
+    await pickFrameCard('A', 'z');
     let snapshot = JSON.parse(await evaluate(`JSON.stringify(window.BitWave.state())`));
     assert(snapshot.view.mode === '3d', `view: ${snapshot.view.mode}`);
     assert(snapshot.frame === 'Z1', `focused frame: ${snapshot.frame}`);
@@ -1942,8 +2092,8 @@ try {
             height: 900,
             prepare: async () => {
               await click('#depthBtn');
-              await click('#framesBtn');
-              await click('#framesBody .frame-row[data-frame="z"] .frame-btn');
+              await openFramesView();
+              await pickFrameCard('A', 'z');
             },
           },
           {
@@ -2029,7 +2179,7 @@ try {
         settle: 350,
       });
       await shoot('03-3d-1440.png', {
-        prepare: async () => { await click('#framesClose'); await click('#depthBtn'); },
+        prepare: async () => { await click('#lanesBtn'); await click('#depthBtn'); },
         settle: 700,
       });
       await shoot('04-csv-1440.png', {
@@ -2048,16 +2198,16 @@ try {
         prepare: async () => {
           await loadApp();
           await click('#depthBtn');
-          await click('#framesBtn');
-          await click('#framesBody .frame-row[data-frame="z"] .frame-btn');
+          await openFramesView();
+          await pickFrameCard('A', 'z');
         },
         settle: 800,
       });
       await shoot('08-2d-focus-z1.png', {
         prepare: async () => {
           await loadApp();
-          await click('#framesBtn');
-          await click('#framesBody .frame-row[data-frame="z"] .frame-btn');
+          await openFramesView();
+          await pickFrameCard('A', 'z');
         },
         settle: 600,
       });

@@ -7,6 +7,7 @@
 import {
   OPSYM,
   S,
+  focusKey,
   focusReg,
   frameLabel,
   frameName,
@@ -29,6 +30,9 @@ import { stripEl } from "./strip.js";
   const popEl = document.getElementById("pop");
   const trendEl = document.getElementById("trend");
   const canvasEl = document.getElementById("wave");
+  const lblAEl = document.getElementById("lblA");
+  const lblBEl = document.getElementById("lblB");
+  const lblZEl = document.getElementById("lblZ");
 
   function toHexOf(r) {
     const n = nibCount();
@@ -101,6 +105,26 @@ import { stripEl } from "./strip.js";
     truthEl.innerHTML = html;
   }
 
+  /* D41: the A/B/Z1 readout labels are the frame lens. Names follow the lane,
+     aria-pressed follows the focused frame; Z1 is a read-only focus. */
+  function renderFrameLens() {
+    const frames = [["a", lblAEl], ["b", lblBEl], ["z", lblZEl]];
+    const focused = focusKey();
+    for (const [frame, el] of frames) {
+      if (!el) continue;
+      const name = frameName(S.slot, frame);
+      el.textContent = name;
+      el.setAttribute("aria-pressed", String(frame === focused));
+      if (frame === "z") {
+        el.setAttribute("aria-label", `focus ${name} (read-only)`);
+        el.title = `${name} is derived — focus to inspect (read-only)`;
+      } else {
+        el.setAttribute("aria-label", `focus ${name}`);
+        el.title = `Focus ${name} to edit it`;
+      }
+    }
+  }
+
   function updateReadouts(withDecimal = true) {
     /* The truth table is exactly the right companion to the 3-D field. */
     metaEl.classList.toggle("ab", S.showB);
@@ -112,9 +136,7 @@ import { stripEl } from "./strip.js";
     }
 
     if (S.showB) {
-      hexAEl.previousElementSibling.textContent = frameName(S.slot, "a");
-      hexBEl.previousElementSibling.textContent = frameName(S.slot, "b");
-      hexZEl.previousElementSibling.textContent = frameName(S.slot, "z");
+      renderFrameLens();
       popEl.previousElementSibling.textContent = `pop ${frameName(S.slot, "z")}`;
       hexAEl.textContent = toHexOf(S.A);
       hexBEl.textContent = toHexOf(S.B);
