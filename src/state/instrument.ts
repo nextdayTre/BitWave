@@ -164,6 +164,11 @@ export interface Instrument {
   view3d: boolean;
   /** Frames view: the stage is showing the lane/frame card browser (D42). */
   framesView: boolean;
+  /**
+   * D47: the truth disclosure's expanded state. Transient session preference
+   * only — never persisted in `.bitwave`, the share link or the agent state.
+   */
+  truthOpen: boolean;
   lfo: LfoState;
   lfoAcc: number;
   record: RecordState;
@@ -222,6 +227,7 @@ export const S: Instrument = {
   compact: false,
   view3d: false,
   framesView: false,
+  truthOpen: true,
   lfo: { on: false, mode: "rotcw", rate: 4, t: 0, base: null },
   lfoAcc: 0,
   record: { on: false, rows: [], nextStep: 1 },

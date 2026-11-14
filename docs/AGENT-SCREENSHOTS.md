@@ -11,8 +11,14 @@ The images in `docs/agent/` are reproducibility fixtures, not the source of trut
 Since the external-routing slice (toolset `1.1.0`, `.bitwave` schema 3; schema 4 since toolset `1.2.0`, D44; compact `#bw=` links since toolset `1.3.0`, D45) the default view
 also contains the **Record** control and the source table can carry **`expr`** rows. Since
 the dynamic-lanes slice (toolset `1.4.0`, D43–D46) the stage bar's lane control is a native
-**lane dropdown** (`Lane 1`…`Lane 8`) and the frames view manages the live 1–8 lane set;
-all images here were recaptured from the current artifact so they show those controls. The
+**lane dropdown** (`Lane 1`…`Lane 8`) and the frames view manages the live 1–8 lane set.
+Since the **GUI rearrangement** (D47) the top bar carries the **`VIEW` + 2D/3D toggle**
+immediately left of `?`, each pane head carries its own 3-D hinge (`A far`/`B far`) and
+`copy to…` menu, the bottom VIEW row is gone, and the readout row carries an
+**always-present, collapsible truth disclosure** (`A ⊕ B → Z1`, open by default). The
+disclosure is the **first readout after the badges**, so it sits in the same place in
+A-only and A·B views (the wide `dec` readout cannot push it aside). All images
+here were recaptured from the current artifact so they show those controls. The
 Record take is transient session state, so its screenshot is driven over CDP rather than
 through a deeplink; everything else is still a link.
 
@@ -20,7 +26,7 @@ This page records the recipes behind six states:
 
 | state | file | what it shows |
 |---|---|---|
-| default | `docs/agent/default.png` | boot instrument, 64-bit lane 1, defaults (Record idle, lane dropdown) |
+| default | `docs/agent/default.png` | boot instrument, 64-bit lane 1, defaults (Record idle, top-bar VIEW 3D, truth disclosure open, lane dropdown) |
 | A·B pair | `docs/agent/ab-xor.png` | lane 1 `8ADEFEDA85210125 ⊕ FFFFFFFF00000000`, both operands visible |
 | width change | `docs/agent/width-16.png` | the same instrument at 16 bits (4 nibbles) |
 | agent tab | `docs/agent/agent-tab.png` | `?` help panel with the `agent` tab selected |
@@ -95,10 +101,17 @@ link-restored states below use the CDP helper.
 Expected (`#bitwave-state`): `width: 64`, `lane: 1`, `view.mode: "2d"`,
 lane 1 `A = 8ADEFEDA85210125`, `B = FFFFFFFF00000000`, `Z1 = 7521012585210125`,
 `binop: "xor"`, `lfo.on: false`, `recording: { on: false, rows: 0 }`, and every
-`lanes[*].expressions` entry `null`. The header reads **64 bits · 16 nibbles**; the stage
+`lanes[*].expressions` entry `null`. The header reads **64 bits · 16 nibbles**; the top bar
+shows the `VIEW` label + `3D` toggle (`#depthBtn`, `aria-pressed="false"`) immediately left
+of the `?` help button; the readout row's truth disclosure (`#truthBlock`) is the **first
+readout after the badges** and is present in A-only with its `A ⊕ B → Z1` header button
+(`aria-expanded="true"`) and the live counts `23 11 9 21` (the `hex`/`dec` readouts follow
+it, and A·B mode puts the `A`/`B`/`Z1` readouts in the same slot after it); the stage
 bar's lane dropdown reads **Lane 1** (valued `"1"`; the active select carries
-`[data-agent-lane="1"]`); the source group shows the Record toggle off with **0 rows**
-(export disabled). `getState().lanes` has exactly the three boot keys.
+`[data-agent-lane="1"]`) and its pane head shows `frames`, a disabled `split` and the
+`copy to…` opener (the 3-D hinge is hidden in 2-D); the source group shows the Record
+toggle off with **0 rows** (export disabled). `getState().lanes` has exactly the three boot
+keys.
 
 ## Scripted states — CDP driver (link-restored states, agent tab, Record)
 
@@ -227,7 +240,10 @@ node $cdp $abUrl (Join-Path $root "docs\agent\ab-xor.png") "true"
 
 Expected: lane 1 shows `A = 8ADEFEDA85210125`, `B = FFFFFFFF00000000` (both frames
 visible), `Z1 = 7521012585210125`; `derived.Z1` is
-`{ "hex": "7521012585210125", "popcount": 20, "truthCounts": [23, 11, 9, 21] }`.
+`{ "hex": "7521012585210125", "popcount": 20, "truthCounts": [23, 11, 9, 21] }`. The
+readout row shows the truth disclosure open for the focused lane (`A ⊕ B → Z1`, counts
+`23 11 9 21`) in the **same position as A-only** (first readout after the badges), with the
+A/B/Z1 readouts following it.
 
 ## State 3 — width change (16-bit)
 
@@ -327,6 +343,7 @@ Expected: `width: 64`, `lane: 8`, `frame: "O"`, `view.mode: "2d"`,
 `A/B/Z1` (and the DESIGN §11 vector `Z1 = 7521012585210125`), lane 4 `G/H/Z4`, lane 8
 `O/P/Z8` with `O = DEADBEEFCAFEBABE`, `P = 0123456789ABCDEF`. `bridge.version` is
 `"1.4.0"`. The stage-bar lane dropdown reads **Lane 8** and offers all eight options; the
+readout-row truth disclosure follows the lane (`O ⊕ P → Z8`); the
 compact payload is **568 characters** (well within the 2000 budget, no drops). Opening the
 frames view on the same link renders **24 cards** (`A`–`P` plus `Z1`–`Z8`) across eight
 lane columns.
@@ -376,12 +393,12 @@ Chrome path.
 
 | file | state | produced by | sanity check |
 |---|---|---|---|
-| `docs/agent/default.png` | default 64-bit, lane 1, Record idle | State 1 | 1440×900, header "64 bits · 16 nibbles", "0 rows" |
-| `docs/agent/ab-xor.png` | A·B pair, `Z1` focused | State 2 | state `Z1 = 7521012585210125`, truth counts `23 11 9 21` |
+| `docs/agent/default.png` | default 64-bit, lane 1, Record idle | State 1 | 1440×900, header "64 bits · 16 nibbles", top-bar VIEW/3D, truth disclosure first after the badges (open), "0 rows" |
+| `docs/agent/ab-xor.png` | A·B pair, `Z1` focused | State 2 | state `Z1 = 7521012585210125`, truth counts `23 11 9 21` shown in the disclosure |
 | `docs/agent/width-16.png` | 16-bit resize | State 3 | state `width = 16`, `Z1 = 7521` |
 | `docs/agent/agent-tab.png` | help panel, agent tab | State 4 | `[data-agent-status="bridge-active"]` |
 | `docs/agent/record.png` | armed take, three rows, `expr` source | State 5 | state `recording = {on:true, rows:3}`, `expressions.D = "C + 1"` |
-| `docs/agent/eight-lanes.png` | eight-lane document, lane 8 focused | State 6 | state `lane = 8`, `lanes` keys `"1"…"8"`, lane 8 `O/P/Z8`, compact link 568 chars |
+| `docs/agent/eight-lanes.png` | eight-lane document, lane 8 focused | State 6 | state `lane = 8`, `lanes` keys `"1"…"8"`, lane 8 `O/P/Z8`, truth header `O ⊕ P → Z8`, compact link 568 chars |
 
 Each file should be well over 50 KB (a blank/near-empty capture is a failed run) and
 exactly 1440×900 at device scale factor 1. Inspect the PNGs with an image viewer (or the

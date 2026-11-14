@@ -214,7 +214,9 @@ Rules:
    unless a reviewed UI slice explicitly changes it (the external-routing slice added the
    Record control and expression editors by design; the dynamic-lanes slice replaced the
    stage-bar lane buttons with a lane dropdown and added the frames-view lane-management
-   controls by design).
+   controls by design; the GUI-rearrangement slice (D47) re-homed the view toggle into the
+   top bar, the hinge and copy menu into each pane head, and the truth table into an
+   always-present readout disclosure — a layout change with unchanged behaviour).
 
 Acceptance checks:
 

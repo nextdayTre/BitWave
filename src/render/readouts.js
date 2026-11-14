@@ -21,6 +21,10 @@ import { stripEl } from "./strip.js";
   const metaEl = document.getElementById("meta");
   const slotBadgeEl = document.getElementById("slotBadge");
   const truthEl = document.getElementById("truth");
+  const truthToggleEl = document.getElementById("truthToggle");
+  const truthTitleEl = truthToggleEl ? truthToggleEl.querySelector(".truth-title") : null;
+  const truthChevEl = truthToggleEl ? truthToggleEl.querySelector(".truth-chev") : null;
+  const truthBodyEl = document.getElementById("truthBody");
   const hexEl = document.getElementById("hex");
   const decEl = document.getElementById("dec");
   const hexAEl = document.getElementById("hexA");
@@ -51,13 +55,30 @@ import { stripEl } from "./strip.js";
   const binFn = (a, b) =>
     S.binop === "and" ? (a & b) : S.binop === "or" ? (a | b) : (a ^ b);
 
-  /* The truth table is live data: the `n` column counts how many bit
-     positions in A and B actually hold each input pair, so the four
-     counts always sum to the register width. */
+  /* D47: the truth table is a collapsible disclosure in the readout/meta row and
+     is rendered for the focused lane in every view (A-only included). The header
+     button carries the live algebra (`A ⊕ B → Z1`), aria-expanded and the
+     accessible name; the body keeps the same role="table" grid and live counts,
+     including the arithmetic carry/borrow variant. Open/closed is the transient
+     session preference `S.truthOpen` (not persisted). */
   function renderTruth() {
     const fa = frameName(S.laneKey, "a");
     const fb = frameName(S.laneKey, "b");
     const fz = frameName(S.laneKey, "z");
+    const sym = OPSYM[S.binop] || "\u2295";
+    const subject = `${fa} ${sym} ${fb} \u2192 ${fz}`;
+    const open = S.truthOpen !== false;
+    if (truthTitleEl) truthTitleEl.textContent = subject;
+    if (truthToggleEl) {
+      truthToggleEl.setAttribute("aria-expanded", String(open));
+      truthToggleEl.setAttribute("aria-label", `truth table for lane ${S.laneKey} ${subject}`);
+      truthToggleEl.title = open ? "Collapse the truth table" : "Expand the truth table";
+    }
+    if (truthChevEl) truthChevEl.textContent = open ? "\u25BE" : "\u25B8";
+    if (truthBodyEl) truthBodyEl.hidden = !open;
+
+    const tableLabel = `truth table for lane ${S.laneKey}: ${subject}`;
+
     /* Arithmetic has no four-row truth table: the result depends on the
        whole word through the carry/borrow, not on the bit pair. */
     if (isArith()) {
@@ -68,8 +89,7 @@ import { stripEl } from "./strip.js";
         : a < b;
       const label = S.binop === "add" ? "carry out" : "borrow out";
       truthEl.innerHTML =
-        `<div class="truth-h">${fa} ${OPSYM[S.binop]} ${fb} → ${fz}</div>` +
-        `<div class="truth-grid ar" role="table" aria-label="${label}">` +
+        `<div class="truth-grid ar" role="table" aria-label="${tableLabel}">` +
         `<div role="row">` +
         `<span class="th" role="columnheader">${label}</span>` +
         `<span class="ct${over ? " yes" : ""}" role="cell">${over ? "yes" : "no"}</span>` +
@@ -83,8 +103,7 @@ import { stripEl } from "./strip.js";
       counts[(S.A.bits[i] << 1) | S.B.bits[i]]++;
     }
 
-    let html = `<div class="truth-h">${fa} ${OPSYM[S.binop]} ${fb} → ${fz}</div>`;
-    html += `<div class="truth-grid" role="table" aria-label="truth table">`;
+    let html = `<div class="truth-grid" role="table" aria-label="${tableLabel}">`;
     html += `<div role="row">` +
       `<span class="th" role="columnheader">a</span>` +
       `<span class="th" role="columnheader">b</span>` +
@@ -143,7 +162,6 @@ import { stripEl } from "./strip.js";
       let pop = 0;
       for (let i = 0; i < S.N; i++) pop += S.Z.bits[i];
       popEl.textContent = String(pop);
-      renderTruth();
     } else {
       hexEl.textContent = toHexOf(S.A);
       if (withDecimal) {
@@ -152,6 +170,9 @@ import { stripEl } from "./strip.js";
         decEl.title = d;
       }
     }
+
+    /* D47: the truth disclosure is present in every view, not just A·B/3-D. */
+    renderTruth();
 
     /* Endpoint trend of the frame being shown. */
     const r = focusReg();

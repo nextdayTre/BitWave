@@ -1,13 +1,14 @@
 /**
- * Stage bar — the single canonical home of lane selection, the frames view toggle
- * and `split` (F4 IA, DESIGN §8).
+ * Stage bar — the single canonical home of lane selection, the frames view toggle,
+ * `split`, the 3-D hinge and `copy to…` (F4 IA, DESIGN §8; D47).
  *
- * Always visible: in 2-D it shows the live lane set, `frames`, a disabled `split`
- * and `LANE 1 · A ⊕ B → Z1`; in 3-D it adds the per-pane focus dots and, in
- * split mode, a second pane head. While the frames view is open it shrinks to
- * `Lanes` (D42).
+ * Always visible: in 2-D it shows the live lane set, `frames`, a disabled `split`,
+ * `LANE 1 · A ⊕ B → Z1` and `copy to…`; in 3-D it adds the per-pane focus dots and
+ * the per-pane hinge (`A far` / `B far`, independent per pane); in split mode there
+ * is a second pane head with its own hinge and its own copy menu. While the frames
+ * view is open it shrinks to `Lanes` (D42).
  *
- * D46: with a dynamic lane set the old `1 | 2 | 3` radiogroup is now one native
+ * D46: with a dynamic lane set the old `1 | 2 | 3` radiogroup is one native
  * `<select class="op lane-select">` per pane — options are the live lanes,
  * labelled `Lane 1`…`Lane 8` and valued by the stable lane key. A native select
  * brings its own declared keyboard path (arrows/Home/End/type-ahead) and cannot
@@ -16,12 +17,31 @@
  * instrument's own lane commands. The visible select also carries the agent
  * selector hook `[data-agent-lane="<active lane key>"]` (contract §7), kept in
  * step synchronously with the value and cleared on hidden panes.
+ *
+ * D47: each pane head also carries the 3-D hinge and the `copy to…` menu opener.
+ * Both act on **that pane's lane**, not on the globally focused lane: in split the
+ * two hinges are independent, and the copy menu lists live lanes except the pane's
+ * own source lane. The hinge is hidden in 2-D (it only means something in the
+ * depth field); the copy opener stays in place and becomes `aria-disabled` with an
+ * explanation when there is no destination lane. Neither control changes the
+ * focused lane.
  */
 
 import { S, curLane, liveLaneKeys } from "../state/instrument.ts";
 
 export function createStageBar(deps) {
-  const { element, framesBtn, selectLane, selectLaneInPane, setSplitMode, focusSplitPane, laneExprText, closeFrames } = deps;
+  const {
+    element,
+    framesBtn,
+    selectLane,
+    selectLaneInPane,
+    setSplitMode,
+    focusSplitPane,
+    laneExprText,
+    closeFrames,
+    toggleFold,
+    toggleCopy,
+  } = deps;
   let stageDom = null;
 
   function makeSelect(paneIdx) {
@@ -78,12 +98,40 @@ export function createStageBar(deps) {
       expr.className = "stage-expr";
       wrap.appendChild(expr);
 
+      /* D47: per-pane 3-D hinge — visible only in the depth field, acting on
+         this pane's lane so split panes fold independently. */
+      const fold = document.createElement("button");
+      fold.type = "button";
+      fold.className = "op pane-fold";
+      fold.hidden = true;
+      fold.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        if (!S.view3d) return;
+        toggleFold(paneIdx);
+      });
+      wrap.appendChild(fold);
+
+      /* D47: per-pane `copy to…` opener. The menu itself is a body overlay built
+         by copy-menu.js; this button is only its anchor and source-lane owner. */
+      const copy = document.createElement("button");
+      copy.type = "button";
+      copy.className = "op pane-copy";
+      copy.textContent = "copy to…";
+      copy.setAttribute("aria-haspopup", "menu");
+      copy.setAttribute("aria-expanded", "false");
+      copy.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        if (copy.getAttribute("aria-disabled") === "true") return;
+        toggleCopy(copy, copy.dataset.lane);
+      });
+      wrap.appendChild(copy);
+
       wrap.addEventListener("click", () => {
         if (S.split3d) focusSplitPane(paneIdx);
       });
 
       element.appendChild(wrap);
-      return { wrap, dot, select, expr, spBtn };
+      return { wrap, dot, select, expr, spBtn, fold, copy };
     };
 
     element.textContent = "";
@@ -143,11 +191,44 @@ export function createStageBar(deps) {
       : "Split is 3-D only — turn on 3D first (Alt+S)";
   }
 
+  /** D47: keep one pane's hinge in step with that lane's session fold state. */
+  function syncFold(pane, laneKey) {
+    const sl = S.lanes[laneKey];
+    const fold = sl ? sl.fold : "a-far";
+    const far = fold === "a-far" ? "A far, B near" : "B far, A near";
+    pane.fold.hidden = !S.view3d || !sl;
+    pane.fold.textContent = fold === "a-far" ? "A far" : "B far";
+    pane.fold.setAttribute(
+      "aria-label",
+      S.view3d && sl
+        ? `3-D hinge for lane ${laneKey}: ${far}; press to swap`
+        : "3-D hinge",
+    );
+    pane.fold.title = S.view3d && sl
+      ? `Hinge for lane ${laneKey}: ${far} — press to swap the wings`
+      : "Show the 3-D field to change the hinge";
+  }
+
+  /** D47: the copy opener names its own source lane and disables at one lane. */
+  function syncCopy(pane, laneKey, canCopy) {
+    pane.copy.dataset.lane = laneKey;
+    pane.copy.setAttribute("aria-disabled", String(!canCopy));
+    /* SC 2.5.3: the visible `copy to…` text must be part of the accessible name. */
+    pane.copy.setAttribute(
+      "aria-label",
+      canCopy ? `copy to… lane ${laneKey}` : `copy to… lane ${laneKey} — no other lane`,
+    );
+    pane.copy.title = canCopy
+      ? `Copy lane ${laneKey} into another live lane`
+      : "Copying needs a second live lane — add one in the frames view";
+  }
+
   function syncStageBar() {
     if (!stageDom) return;
 
     const { p0, p1 } = stageDom;
     const laneKeys = liveLaneKeys();
+    const canCopy = laneKeys.length > 1;
     /* Only the panes actually on screen advertise a lane; the hidden mirror and
        the frames-view stage must not carry a stale [data-agent-lane]. */
     clearAgentLane(p0.select);
@@ -166,7 +247,8 @@ export function createStageBar(deps) {
     }
 
     if (!S.view3d) {
-      /* 2-D: one pane head, the lane set and a reserved-space disabled split. */
+      /* 2-D: one pane head, the lane set, a reserved-space disabled split and
+         no hinge (it only means something in the depth field). */
       p0.dot.hidden = true;
       p0.wrap.classList.add("focused");
       p0.wrap.hidden = false;
@@ -176,6 +258,8 @@ export function createStageBar(deps) {
       setSplitEnabled(p0.spBtn, false);
       syncSelect(p0.select, S.laneKey, laneKeys);
       p0.expr.textContent = laneExprText(curLane(), true);
+      syncFold(p0, S.laneKey);
+      syncCopy(p0, S.laneKey, canCopy);
       p1.wrap.hidden = true;
       return;
     }
@@ -191,6 +275,8 @@ export function createStageBar(deps) {
       setSplitEnabled(p0.spBtn, true);
       syncSelect(p0.select, S.laneKey, laneKeys);
       p0.expr.textContent = laneExprText(sl, true);
+      syncFold(p0, S.laneKey);
+      syncCopy(p0, S.laneKey, canCopy);
       p1.wrap.hidden = true;
     } else {
       const k0 = S.splitPair[0], k1 = S.splitPair[1];
@@ -200,6 +286,8 @@ export function createStageBar(deps) {
       p0.wrap.classList.toggle("focused", S.activePane === 0);
       syncSelect(p0.select, k0, laneKeys);
       p0.expr.textContent = laneExprText(S.lanes[k0], false);
+      syncFold(p0, k0);
+      syncCopy(p0, k0, canCopy);
 
       p1.wrap.hidden = false;
       p1.dot.hidden = false;
@@ -210,6 +298,8 @@ export function createStageBar(deps) {
       p1.wrap.classList.toggle("focused", S.activePane === 1);
       syncSelect(p1.select, k1, laneKeys);
       p1.expr.textContent = laneExprText(S.lanes[k1], false);
+      syncFold(p1, k1);
+      syncCopy(p1, k1, canCopy);
     }
   }
 

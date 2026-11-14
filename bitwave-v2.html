@@ -21,11 +21,18 @@
       live operand, grouped by lane) is the routing housing: labels carry the
       assignment and driven inputs are locked
     · F4 IA (author-approved 2026-11-06): stable module order
-      source | width·edit | operate | derive | motion | view; an always-visible
+      source | width·edit | operate | derive | motion; an always-visible
       stage bar is the single home of lane (a native per-pane select), frames
-      and split; `copy to…` is an explicit menu; `width` replaces `register`; a
-      whole-word hex entry sits beside the edit target; inapplicable controls
-      stay in place (aria-disabled) instead of disappearing
+      and split; `copy to…` is an explicit per-pane menu; `width` replaces
+      `register`; a whole-word hex entry sits beside the edit target;
+      inapplicable controls stay in place (aria-disabled) instead of
+      disappearing
+    · D47 GUI rearrangement (author note 2026-11-14): the view control moves to
+      the top bar (`VIEW` + 2D/3D toggle, immediately left of `?`), so the
+      bottom VIEW group is gone; each pane head carries its own 3-D hinge
+      (`A far`/`B far`, independent per pane) and its own `copy to…` menu; the
+      truth table is a collapsible disclosure in the readout row, present in
+      every view with its header always visible
     · F4 accessibility: every operand nibble is a focusable spinbutton (keyboard
       editing), the canvas has a live text alternative, there is one polite live
       region for committed changes, reduced motion is honoured and targets are
@@ -420,6 +427,7 @@ var S = {
 	compact: false,
 	view3d: false,
 	framesView: false,
+	truthOpen: true,
 	lfo: {
 		on: false,
 		mode: "rotcw",
@@ -1965,6 +1973,10 @@ function syncHoverClasses() {
 var metaEl = document.getElementById("meta");
 var slotBadgeEl = document.getElementById("slotBadge");
 var truthEl = document.getElementById("truth");
+var truthToggleEl = document.getElementById("truthToggle");
+var truthTitleEl = truthToggleEl ? truthToggleEl.querySelector(".truth-title") : null;
+var truthChevEl = truthToggleEl ? truthToggleEl.querySelector(".truth-chev") : null;
+var truthBodyEl = document.getElementById("truthBody");
 var hexEl = document.getElementById("hex");
 var decEl = document.getElementById("dec");
 var hexAEl = document.getElementById("hexA");
@@ -1998,12 +2010,22 @@ function renderTruth() {
 	const fa = frameName$1(S.laneKey, "a");
 	const fb = frameName$1(S.laneKey, "b");
 	const fz = frameName$1(S.laneKey, "z");
+	const subject = `${fa} ${OPSYM[S.binop] || "⊕"} ${fb} \u2192 ${fz}`;
+	const open = S.truthOpen !== false;
+	if (truthTitleEl) truthTitleEl.textContent = subject;
+	if (truthToggleEl) {
+		truthToggleEl.setAttribute("aria-expanded", String(open));
+		truthToggleEl.setAttribute("aria-label", `truth table for lane ${S.laneKey} ${subject}`);
+		truthToggleEl.title = open ? "Collapse the truth table" : "Expand the truth table";
+	}
+	if (truthChevEl) truthChevEl.textContent = open ? "▾" : "▸";
+	if (truthBodyEl) truthBodyEl.hidden = !open;
+	const tableLabel = `truth table for lane ${S.laneKey}: ${subject}`;
 	if (isArith()) {
 		const a = regToBig(S.A);
 		const b = regToBig(S.B);
 		const over = S.binop === "add" ? a + b >= 1n << BigInt(S.N) : a < b;
-		const label = S.binop === "add" ? "carry out" : "borrow out";
-		truthEl.innerHTML = `<div class="truth-h">${fa} ${OPSYM[S.binop]} ${fb} → ${fz}</div><div class="truth-grid ar" role="table" aria-label="${label}"><div role="row"><span class="th" role="columnheader">${label}</span><span class="ct${over ? " yes" : ""}" role="cell">${over ? "yes" : "no"}</span></div></div>`;
+		truthEl.innerHTML = `<div class="truth-grid ar" role="table" aria-label="${tableLabel}"><div role="row"><span class="th" role="columnheader">${S.binop === "add" ? "carry out" : "borrow out"}</span><span class="ct${over ? " yes" : ""}" role="cell">${over ? "yes" : "no"}</span></div></div>`;
 		return;
 	}
 	const counts = [
@@ -2013,8 +2035,7 @@ function renderTruth() {
 		0
 	];
 	for (let i = 0; i < S.N; i++) counts[S.A.bits[i] << 1 | S.B.bits[i]]++;
-	let html = `<div class="truth-h">${fa} ${OPSYM[S.binop]} ${fb} → ${fz}</div>`;
-	html += `<div class="truth-grid" role="table" aria-label="truth table">`;
+	let html = `<div class="truth-grid" role="table" aria-label="${tableLabel}">`;
 	html += "<div role=\"row\"><span class=\"th\" role=\"columnheader\">a</span><span class=\"th\" role=\"columnheader\">b</span><span class=\"th\" role=\"columnheader\">→</span><span class=\"th\" role=\"columnheader\">n</span></div>";
 	for (const [a, b] of PAIRS) {
 		const z = binFn(a, b);
@@ -2060,7 +2081,6 @@ function updateReadouts(withDecimal = true) {
 		let pop = 0;
 		for (let i = 0; i < S.N; i++) pop += S.Z.bits[i];
 		popEl.textContent = String(pop);
-		renderTruth();
 	} else {
 		hexEl.textContent = toHexOf(S.A);
 		if (withDecimal) {
@@ -2069,6 +2089,7 @@ function updateReadouts(withDecimal = true) {
 			decEl.title = d;
 		}
 	}
+	renderTruth();
 	const r = focusReg();
 	const n = nibCount();
 	const diff = r.target[n - 1] - r.target[0];
@@ -2621,15 +2642,16 @@ function createFrameNavigator(deps) {
 }
 // src/ui/stage-bar.js
 /**
-* Stage bar — the single canonical home of lane selection, the frames view toggle
-* and `split` (F4 IA, DESIGN §8).
+* Stage bar — the single canonical home of lane selection, the frames view toggle,
+* `split`, the 3-D hinge and `copy to…` (F4 IA, DESIGN §8; D47).
 *
-* Always visible: in 2-D it shows the live lane set, `frames`, a disabled `split`
-* and `LANE 1 · A ⊕ B → Z1`; in 3-D it adds the per-pane focus dots and, in
-* split mode, a second pane head. While the frames view is open it shrinks to
-* `Lanes` (D42).
+* Always visible: in 2-D it shows the live lane set, `frames`, a disabled `split`,
+* `LANE 1 · A ⊕ B → Z1` and `copy to…`; in 3-D it adds the per-pane focus dots and
+* the per-pane hinge (`A far` / `B far`, independent per pane); in split mode there
+* is a second pane head with its own hinge and its own copy menu. While the frames
+* view is open it shrinks to `Lanes` (D42).
 *
-* D46: with a dynamic lane set the old `1 | 2 | 3` radiogroup is now one native
+* D46: with a dynamic lane set the old `1 | 2 | 3` radiogroup is one native
 * `<select class="op lane-select">` per pane — options are the live lanes,
 * labelled `Lane 1`…`Lane 8` and valued by the stable lane key. A native select
 * brings its own declared keyboard path (arrows/Home/End/type-ahead) and cannot
@@ -2638,9 +2660,17 @@ function createFrameNavigator(deps) {
 * instrument's own lane commands. The visible select also carries the agent
 * selector hook `[data-agent-lane="<active lane key>"]` (contract §7), kept in
 * step synchronously with the value and cleared on hidden panes.
+*
+* D47: each pane head also carries the 3-D hinge and the `copy to…` menu opener.
+* Both act on **that pane's lane**, not on the globally focused lane: in split the
+* two hinges are independent, and the copy menu lists live lanes except the pane's
+* own source lane. The hinge is hidden in 2-D (it only means something in the
+* depth field); the copy opener stays in place and becomes `aria-disabled` with an
+* explanation when there is no destination lane. Neither control changes the
+* focused lane.
 */
 function createStageBar(deps) {
-	const { element, framesBtn, selectLane, selectLaneInPane, setSplitMode, focusSplitPane, laneExprText, closeFrames } = deps;
+	const { element, framesBtn, selectLane, selectLaneInPane, setSplitMode, focusSplitPane, laneExprText, closeFrames, toggleFold, toggleCopy } = deps;
 	let stageDom = null;
 	function makeSelect(paneIdx) {
 		const select = document.createElement("select");
@@ -2684,6 +2714,28 @@ function createStageBar(deps) {
 			const expr = document.createElement("span");
 			expr.className = "stage-expr";
 			wrap.appendChild(expr);
+			const fold = document.createElement("button");
+			fold.type = "button";
+			fold.className = "op pane-fold";
+			fold.hidden = true;
+			fold.addEventListener("click", (ev) => {
+				ev.stopPropagation();
+				if (!S.view3d) return;
+				toggleFold(paneIdx);
+			});
+			wrap.appendChild(fold);
+			const copy = document.createElement("button");
+			copy.type = "button";
+			copy.className = "op pane-copy";
+			copy.textContent = "copy to…";
+			copy.setAttribute("aria-haspopup", "menu");
+			copy.setAttribute("aria-expanded", "false");
+			copy.addEventListener("click", (ev) => {
+				ev.stopPropagation();
+				if (copy.getAttribute("aria-disabled") === "true") return;
+				toggleCopy(copy, copy.dataset.lane);
+			});
+			wrap.appendChild(copy);
 			wrap.addEventListener("click", () => {
 				if (S.split3d) focusSplitPane(paneIdx);
 			});
@@ -2693,7 +2745,9 @@ function createStageBar(deps) {
 				dot,
 				select,
 				expr,
-				spBtn
+				spBtn,
+				fold,
+				copy
 			};
 		};
 		element.textContent = "";
@@ -2744,10 +2798,28 @@ function createStageBar(deps) {
 		btn.setAttribute("aria-disabled", String(!enabled));
 		btn.title = enabled ? "Split the 3-D view into two side-by-side visualizers (Alt+S)" : "Split is 3-D only — turn on 3D first (Alt+S)";
 	}
+	/** D47: keep one pane's hinge in step with that lane's session fold state. */
+	function syncFold(pane, laneKey) {
+		const sl = S.lanes[laneKey];
+		const fold = sl ? sl.fold : "a-far";
+		const far = fold === "a-far" ? "A far, B near" : "B far, A near";
+		pane.fold.hidden = !S.view3d || !sl;
+		pane.fold.textContent = fold === "a-far" ? "A far" : "B far";
+		pane.fold.setAttribute("aria-label", S.view3d && sl ? `3-D hinge for lane ${laneKey}: ${far}; press to swap` : "3-D hinge");
+		pane.fold.title = S.view3d && sl ? `Hinge for lane ${laneKey}: ${far} — press to swap the wings` : "Show the 3-D field to change the hinge";
+	}
+	/** D47: the copy opener names its own source lane and disables at one lane. */
+	function syncCopy(pane, laneKey, canCopy) {
+		pane.copy.dataset.lane = laneKey;
+		pane.copy.setAttribute("aria-disabled", String(!canCopy));
+		pane.copy.setAttribute("aria-label", canCopy ? `copy to… lane ${laneKey}` : `copy to… lane ${laneKey} — no other lane`);
+		pane.copy.title = canCopy ? `Copy lane ${laneKey} into another live lane` : "Copying needs a second live lane — add one in the frames view";
+	}
 	function syncStageBar() {
 		if (!stageDom) return;
 		const { p0, p1 } = stageDom;
 		const laneKeys = liveLaneKeys();
+		const canCopy = laneKeys.length > 1;
 		clearAgentLane(p0.select);
 		clearAgentLane(p1.select);
 		element.classList.toggle("is-split", S.split3d);
@@ -2770,6 +2842,8 @@ function createStageBar(deps) {
 			setSplitEnabled(p0.spBtn, false);
 			syncSelect(p0.select, S.laneKey, laneKeys);
 			p0.expr.textContent = laneExprText(curLane(), true);
+			syncFold(p0, S.laneKey);
+			syncCopy(p0, S.laneKey, canCopy);
 			p1.wrap.hidden = true;
 			return;
 		}
@@ -2784,6 +2858,8 @@ function createStageBar(deps) {
 			setSplitEnabled(p0.spBtn, true);
 			syncSelect(p0.select, S.laneKey, laneKeys);
 			p0.expr.textContent = laneExprText(sl, true);
+			syncFold(p0, S.laneKey);
+			syncCopy(p0, S.laneKey, canCopy);
 			p1.wrap.hidden = true;
 		} else {
 			const k0 = S.splitPair[0], k1 = S.splitPair[1];
@@ -2793,6 +2869,8 @@ function createStageBar(deps) {
 			p0.wrap.classList.toggle("focused", S.activePane === 0);
 			syncSelect(p0.select, k0, laneKeys);
 			p0.expr.textContent = laneExprText(S.lanes[k0], false);
+			syncFold(p0, k0);
+			syncCopy(p0, k0, canCopy);
 			p1.wrap.hidden = false;
 			p1.dot.hidden = false;
 			p1.spBtn.hidden = false;
@@ -2802,6 +2880,8 @@ function createStageBar(deps) {
 			p1.wrap.classList.toggle("focused", S.activePane === 1);
 			syncSelect(p1.select, k1, laneKeys);
 			p1.expr.textContent = laneExprText(S.lanes[k1], false);
+			syncFold(p1, k1);
+			syncCopy(p1, k1, canCopy);
 		}
 	}
 	return {
@@ -2813,11 +2893,12 @@ function createStageBar(deps) {
 /**
 * Keyboard map and file drop — global shortcuts for the instrument.
 *
-* Moved out of main.js in F2. Escape closes the navigator or copy mode,
-* Alt+1..8 selects a live lane (by its stable lane key; an absent key is a
-* no-op), Alt+S toggles split; arrows step the dataset. The stage-bar lane
-* dropdown is the declared lane-selection keyboard path; Alt+digit is the
-* shortcut beside it.
+* Moved out of main.js in F2. Escape closes the frames view or the open copy
+* menu (now a per-pane `copy to…` menu, D47), Alt+1..8 selects a live lane (by
+* its stable lane key; an absent key is a no-op), Alt+S toggles split; arrows
+* step the dataset. The stage-bar lane dropdown is the declared lane-selection
+* keyboard path; Alt+digit is the shortcut beside it. The truth disclosure is a
+* native button in the readout row (Tab, then Enter/Space); it adds no shortcut.
 */
 function attachKeyboard(deps) {
 	const { frameNav, syncViewUi, selectLane, setSplitMode, applyExample, loadCSV, copyMenu, onDropError, S: liveState, DEMO } = deps;
@@ -4016,7 +4097,7 @@ function createLiveStatus(store) {
 }
 // src/ui/copy-menu.js
 /**
-* Explicit `copy to…` menu (F4 IA, DESIGN §8).
+* Explicit `copy to…` menu (F4 IA, DESIGN §8; D47).
 *
 * Replaces the armed-mode button: opening the menu moves focus in, Escape or
 * an outside click closes it and returns focus, arrows move between the lane
@@ -4024,23 +4105,31 @@ function createLiveStatus(store) {
 * reports the destination state). The copy belongs to the rack, not the lane.
 *
 * D43/D46: items are labelled and identified by their stable lane key, and the
-* list is built from the **live** lane set on every open (excluding the focused
-* lane itself), so adding or deleting lanes keeps the menu truthful. Copying
-* needs a distinct destination lane that already exists; duplicating creates a
-* new lane and lives in the frames view.
+* list is built from the **live** lane set on every open, so adding or deleting
+* lanes keeps the menu truthful.
+*
+* D47: the menu is no longer bound to one module-global button and the focused
+* lane. Each pane head in the stage bar owns an opener, so `open(anchor,
+* sourceLane)` takes both: the source lane is the pane's lane (not necessarily
+* the globally focused one), items exclude that source lane, and the accessible
+* name says `copy lane <source> to`. Focus-in, arrow keys, Home/End, Esc,
+* outside click, resize close, return focus and the copy transaction are the
+* same as before.
 */
 function createCopyMenu(deps) {
-	const { store, button, onCopy } = deps;
+	const { store, onCopy } = deps;
 	const menu = document.createElement("div");
 	menu.className = "copy-menu";
+	menu.id = "copyMenu";
 	menu.hidden = true;
 	menu.setAttribute("role", "menu");
-	menu.setAttribute("aria-label", "copy the focused lane to");
 	let items = [];
 	let open = false;
+	let anchorEl = null;
+	let sourceLane = null;
 	function rebuildItems() {
 		menu.textContent = "";
-		const destinations = liveLaneKeys().filter((key) => key !== S.laneKey);
+		const destinations = liveLaneKeys().filter((key) => key !== sourceLane);
 		items = destinations.map((key) => {
 			const item = document.createElement("button");
 			item.type = "button";
@@ -4049,7 +4138,7 @@ function createCopyMenu(deps) {
 			item.setAttribute("tabindex", "-1");
 			item.dataset.lane = key;
 			item.textContent = `lane ${key}`;
-			item.title = `Copy lane ${S.laneKey} into lane ${key}`;
+			item.title = `Copy lane ${sourceLane} into lane ${key}`;
 			item.addEventListener("click", () => activate(key));
 			menu.appendChild(item);
 			return item;
@@ -4059,7 +4148,7 @@ function createCopyMenu(deps) {
 	document.body.appendChild(menu);
 	function position() {
 		menu.hidden = false;
-		const r = button.getBoundingClientRect();
+		const r = anchorEl.getBoundingClientRect();
 		const w = menu.offsetWidth;
 		const h = menu.offsetHeight;
 		const left = Math.min(Math.max(8, r.left), window.innerWidth - w - 8);
@@ -4073,16 +4162,24 @@ function createCopyMenu(deps) {
 		const n = items.length;
 		items[(index % n + n) % n].focus();
 	}
-	function openMenu() {
-		if (open) return;
+	/** Open the menu for `sourceLane`, anchored under the pane-head opener. */
+	function openMenu(anchor, lane) {
+		if (!anchor || !lane) return;
+		if (open) closeMenu(false);
+		sourceLane = lane;
 		if (rebuildItems().length === 0) return;
+		anchorEl = anchor;
 		open = true;
 		store.patch(() => {
 			S.copyArmed = true;
 		});
+		menu.dataset.sourceLane = sourceLane;
+		menu.setAttribute("aria-label", `copy lane ${sourceLane} to`);
+		menu.hidden = false;
 		position();
-		button.setAttribute("aria-expanded", "true");
-		button.classList.add("on");
+		anchorEl.setAttribute("aria-expanded", "true");
+		anchorEl.setAttribute("aria-controls", menu.id);
+		anchorEl.classList.add("on");
 		focusItem(0);
 		document.addEventListener("pointerdown", onOutside, true);
 		window.addEventListener("resize", onResize);
@@ -4091,23 +4188,30 @@ function createCopyMenu(deps) {
 		if (!open) return;
 		open = false;
 		menu.hidden = true;
-		button.setAttribute("aria-expanded", "false");
-		button.classList.remove("on");
+		if (anchorEl) {
+			anchorEl.setAttribute("aria-expanded", "false");
+			anchorEl.removeAttribute("aria-controls");
+			anchorEl.classList.remove("on");
+		}
 		document.removeEventListener("pointerdown", onOutside, true);
 		window.removeEventListener("resize", onResize);
 		if (S.copyArmed) store.patch(() => {
 			S.copyArmed = false;
 		});
-		if (refocus) button.focus();
+		const target = anchorEl;
+		anchorEl = null;
+		sourceLane = null;
+		if (refocus && target && target.isConnected) target.focus();
 	}
 	function activate(key) {
-		const src = S.laneKey;
+		const src = sourceLane;
+		const target = anchorEl;
 		closeMenu(false);
-		if (key !== src) onCopy(src, key);
-		button.focus();
+		if (src && key !== src) onCopy(src, key);
+		if (target && target.isConnected) target.focus();
 	}
 	function onOutside(event) {
-		if (event.target === button || menu.contains(event.target)) return;
+		if (event.target === anchorEl || menu.contains(event.target)) return;
 		closeMenu(false);
 	}
 	function onResize() {
@@ -4133,11 +4237,12 @@ function createCopyMenu(deps) {
 			closeMenu(true);
 		} else if (event.key === "Tab") closeMenu(false);
 	});
-	button.addEventListener("click", () => open ? closeMenu(true) : openMenu());
 	return {
 		open: openMenu,
 		close: closeMenu,
-		isOpen: () => open
+		isOpen: () => open,
+		isOpenFor: (anchor) => open && anchorEl === anchor,
+		sourceLane: () => sourceLane
 	};
 }
 // src/ui/help.js
@@ -8064,8 +8169,6 @@ var getPad = () => PAD;
 		chooseBinop(keys[next]);
 	});
 	const depthBtn = document.getElementById("depthBtn");
-	const foldBtn = document.getElementById("foldBtn");
-	const copyLaneBtn = document.getElementById("copySlotBtn");
 	const frameNav = createFrameNavigator({
 		store,
 		selectLane,
@@ -8102,16 +8205,42 @@ var getPad = () => PAD;
 		setSplitMode,
 		focusSplitPane,
 		laneExprText,
-		closeFrames: () => frameNav.close(true)
+		closeFrames: () => frameNav.close(true),
+		toggleFold,
+		toggleCopy: toggleCopyMenu
+	});
+	const truthToggle = document.getElementById("truthToggle");
+	if (truthToggle) truthToggle.addEventListener("click", () => {
+		store.patch(() => {
+			S.truthOpen = !S.truthOpen;
+		});
+		updateReadouts();
 	});
 	const copyMenu = createCopyMenu({
 		store,
-		button: copyLaneBtn,
 		onCopy: (srcKey, dstKey) => {
 			copyLaneInto(srcKey, dstKey);
 			liveStatus.say(`copied lane ${srcKey} → lane ${dstKey}`);
 		}
 	});
+	function toggleFold(paneIdx) {
+		if (!S.view3d) return;
+		const key = S.split3d ? S.splitPair[paneIdx] : S.laneKey;
+		const sl = S.lanes[key];
+		if (!sl) return;
+		store.patch(() => {
+			sl.fold = sl.fold === "a-far" ? "b-far" : "a-far";
+		});
+		stageBar.sync();
+	}
+	function toggleCopyMenu(anchor, laneKey) {
+		if (!anchor || !laneKey) return;
+		if (copyMenu.isOpenFor(anchor)) {
+			copyMenu.close(true);
+			return;
+		}
+		copyMenu.open(anchor, laneKey);
+	}
 	const hintEl = document.getElementById("hint");
 	createProjectMenu({
 		button: document.getElementById("projectBtn"),
@@ -8301,11 +8430,6 @@ var getPad = () => PAD;
 		depthBtn.setAttribute("aria-pressed", String(S.view3d));
 		depthBtn.classList.toggle("on", S.view3d);
 		depthBtn.title = S.view3d ? "Return to the 2D register view" : "Show the depth field: operands at frame 1 and 256, the result at 128";
-		const fold = curLane().fold;
-		foldBtn.hidden = !S.view3d;
-		foldBtn.textContent = fold === "a-far" ? "A far" : "B far";
-		foldBtn.setAttribute("aria-label", S.view3d ? `3-D hinge: ${fold === "a-far" ? "A far, B near" : "B far, A near"}; press to swap` : "3-D hinge");
-		foldBtn.title = S.view3d ? `Hinge: ${fold === "a-far" ? "A far, B near" : "B far, A near"} — press to swap the wings` : "Show the 3-D field to change the hinge";
 		const isSplit = S.view3d && S.split3d;
 		canvas.classList.toggle("readonly", S.view3d && !S.split3d);
 		canvas.classList.toggle("split-view", isSplit);
@@ -8320,14 +8444,6 @@ var getPad = () => PAD;
 			if (!S.view3d) S.split3d = false;
 			if (S.view3d) enableBOnLane(curLane());
 			refreshActiveLaneUi();
-		});
-	});
-	foldBtn.addEventListener("click", () => {
-		if (!S.view3d) return;
-		const sl = curLane();
-		store.patch(() => {
-			sl.fold = sl.fold === "a-far" ? "b-far" : "a-far";
-			syncViewUi();
 		});
 	});
 	function setViewMode(mode) {
@@ -8893,6 +9009,22 @@ var getPad = () => PAD;
     color: var(--dimmer);
   }
 
+  /* D47: the wave-view control lives in the header (VIEW + 3D toggle), just
+     left of the help `?`. Same op-button tokens; no new colour. */
+  .header-view {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: 0 0 auto;
+  }
+
+  .view-label {
+    font-size: 10.5px;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--dimmer);
+  }
+
   input[type="range"] {
     -webkit-appearance: none;
     appearance: none;
@@ -9016,6 +9148,10 @@ var getPad = () => PAD;
     min-width: 0;
     padding: 0 12px;
     pointer-events: auto;
+    /* D47: with the per-pane hinge and copy opener the head can wrap instead of
+       pushing the page sideways at 360 px (split panes are only half as wide). */
+    flex-wrap: wrap;
+    row-gap: 4px;
   }
 
   .stage-bar.is-split .pane-head { cursor: pointer; }
@@ -9080,6 +9216,17 @@ var getPad = () => PAD;
   }
 
   .pane-head.focused .stage-expr { color: var(--text); }
+
+  /* D47: per-pane hinge + copy opener. Same op tokens as the other stage-bar
+     mini controls; the copy opener says `copy to…` and owns the menu anchored
+     under itself; the hinge only exists in the depth field. */
+  .pane-fold,
+  .pane-copy {
+    font-size: 10.5px;
+    padding: 2px 7px;
+    line-height: 1.35;
+    white-space: nowrap;
+  }
 
   /* ── frames view — the stage as a lane/frame browser (D42) ───────────── */
   .stage.is-frames canvas,
@@ -9749,23 +9896,68 @@ var getPad = () => PAD;
   .kv.wide { flex: 1 1 260px; min-width: 0; }
   .kv.wide code { display: block; max-width: 100%; }
 
-  /* ── truth table ──────────────────────────────────────── */
+  /* ── truth disclosure ─────────────────────────────────── */
+  /* D47: the truth table is a collapsible disclosure in the readout row and is
+     present in every view. The block keeps a fixed inline size so opening or
+     closing the body can never move the hex readouts horizontally. */
+  .truth-disclosure {
+    flex: 0 0 auto;
+    inline-size: 132px;
+    border: 1px solid var(--line);
+    border-radius: 5px;
+    background: var(--panel-hi);
+    font-family: var(--mono);
+    font-size: 10.5px;
+    line-height: 1.35;
+  }
+
+  /* Header button is the disclosure control: live algebra, chevron, a 24 px
+     target and aria-expanded/aria-controls. Header always visible. */
+  .truth-toggle {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    inline-size: 100%;
+    min-block-size: 24px;
+    padding: 3px 8px;
+    border: 0;
+    border-radius: 4px;
+    background: transparent;
+    font-family: var(--mono);
+    font-size: 9.5px;
+    letter-spacing: 0.06em;
+    color: var(--dim);
+    text-align: left;
+    cursor: pointer;
+    transition: background-color 110ms linear, color 110ms linear;
+  }
+
+  .truth-toggle:hover { background: var(--panel-hover); color: var(--text); }
+
+  .truth-toggle:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+  }
+
+  .truth-chev {
+    flex: 0 0 auto;
+    width: 8px;
+    color: var(--dimmer);
+    font-size: 9px;
+  }
+
+  .truth-title {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .truth-body { padding: 0 9px 5px; }
+
   .truth {
     font-family: var(--mono);
     font-size: 10.5px;
     line-height: 1.35;
-    padding: 3px 9px 4px;
-    border: 1px solid var(--line);
-    border-radius: 5px;
-    background: var(--panel-hi);
-  }
-
-  .truth-h {
-    font-size: 9.5px;
-    letter-spacing: 0.06em;
-    color: var(--dim);
-    margin-bottom: 2px;
-    white-space: nowrap;
   }
 
   .truth-grid {
@@ -9773,6 +9965,7 @@ var getPad = () => PAD;
     grid-template-columns: repeat(4, auto);
     gap: 0 11px;
     align-items: baseline;
+    justify-content: start;
   }
 
   /* ARIA table rows are presentational for layout: `display: contents` keeps
@@ -10167,6 +10360,8 @@ var getPad = () => PAD;
     header { flex-wrap: wrap; gap: 12px; padding-top: 12px; padding-bottom: 12px; }
     .title p { display: none; }
     .sizer { width: 100%; order: 2; }
+    /* D47: the VIEW control stays beside `?` on the first header row. */
+    .header-view { order: 1; }
     #helpBtn { order: 1; }
     .sizer input[type="range"] { flex: 1 1 auto; width: auto; }
     #sizeOut { min-width: 0; }
@@ -10180,8 +10375,12 @@ var getPad = () => PAD;
   /* ── accessibility floor ─────────────────────────────────── */
 
   /* DESIGN §9: every interactive target is ≥24×24 CSS px. The stage-bar
-     controls are the ones small enough to need the floor. */
+     controls (including the D47 per-pane hinge/copy and the truth disclosure)
+     are the ones small enough to need the floor. */
   .op.mini,
+  .pane-fold,
+  .pane-copy,
+  .truth-toggle,
   .seg.mini .op {
     min-width: 24px;
     min-height: 24px;
@@ -10189,6 +10388,9 @@ var getPad = () => PAD;
     align-items: center;
     justify-content: center;
   }
+
+  /* The disclosure header is a full-width row, not a square glyph. */
+  .truth-toggle { justify-content: flex-start; }
 
   /* DESIGN §7: reduced motion removes decorative transitions and lets the
      LFO cap itself; 1:1 drag is untouched. */
@@ -10205,6 +10407,7 @@ var getPad = () => PAD;
     .unpair-btn,
     .frames-arrow,
     .lens-btn,
+    .truth-toggle,
     .nib {
       transition: none;
     }
@@ -10222,6 +10425,13 @@ var getPad = () => PAD;
     <label for="size">width</label>
     <input id="size" type="range" min="0" max="5" step="1" value="3" aria-label="Register width in bits" />
     <output id="sizeOut" for="size">64 bits · 16 nibbles</output>
+  </div>
+  <!-- D47: the wave-view control lives in the top bar (VIEW + 3D), immediately
+       left of the help `?`; the bottom VIEW row is gone. Same id, pressed state,
+       title and keyboard path as before. -->
+  <div class="header-view" role="group" aria-label="view">
+    <span class="view-label" aria-hidden="true">view</span>
+    <button class="op" id="depthBtn" aria-pressed="false" title="Show the depth field: A at frame 1, Z at 128, B at 256">3D</button>
   </div>
   <button class="op" id="helpBtn" type="button" aria-expanded="false" aria-controls="helpPanel" aria-keyshortcuts="?" title="Keyboard map (?)">?</button>
 </header>
@@ -10283,10 +10493,27 @@ var getPad = () => PAD;
   <div class="badge" id="slotBadge" hidden>lane 1</div>
   <div class="badge" id="trend">level</div>
 
+  <!-- D47: the truth table is a collapsible disclosure in the readout row and is
+       present in every view (A-only included). It is the first readout so its
+       position is identical in A-only and A·B modes (a wide readout must not
+       push it right). The header button carries the live `A ⊕ B → Z1` text,
+       `aria-expanded`/`aria-controls` and the keyboard path; the body holds the
+       same role="table" grid as before. The block width is fixed so expanding
+       never moves the hex readouts horizontally. -->
+  <div class="truth-disclosure" id="truthBlock">
+    <button class="truth-toggle" id="truthToggle" type="button" aria-expanded="true" aria-controls="truthBody"
+            aria-label="truth table for lane 1 A ⊕ B → Z1" title="Expand or collapse the truth table">
+      <span class="truth-chev" aria-hidden="true">▾</span>
+      <span class="truth-title">A ⊕ B → Z1</span>
+    </button>
+    <div class="truth-body" id="truthBody">
+      <div class="truth" id="truth"></div>
+    </div>
+  </div>
+
   <div class="aOnly kv"><span>hex</span><code id="hex">—</code></div>
   <div class="aOnly kv wide"><span>dec</span><code id="dec">—</code></div>
 
-  <div class="abOnly truth" id="truth"></div>
   <div class="abOnly kv"><button class="lens-btn" type="button" id="lblA" data-frame="a" aria-pressed="false" aria-label="focus A" title="Focus A to edit it">A</button><code id="hexA">—</code></div>
   <div class="abOnly kv"><button class="lens-btn" type="button" id="lblB" data-frame="b" aria-pressed="false" aria-label="focus B" title="Focus B to edit it">B</button><code id="hexB">—</code></div>
   <div class="abOnly kv"><button class="lens-btn" type="button" id="lblZ" data-frame="z" aria-pressed="false" aria-label="focus Z1 (read-only)" title="Z1 is derived — focus to inspect (read-only)">Z</button><code id="hexZ">—</code></div>
@@ -10388,13 +10615,6 @@ var getPad = () => PAD;
     </select>
   </div>
 
-  <div class="group" role="group" aria-label="view">
-    <label>view</label>
-    <button class="op" id="depthBtn" aria-pressed="false" title="Show the depth field: A at frame 1, Z at 128, B at 256">3D</button>
-    <button class="op" id="foldBtn" type="button" hidden title="Swap which operand is far vs near in the 3-D field (presentation only)">A far</button>
-    <button class="op" id="copySlotBtn" aria-haspopup="menu" aria-expanded="false" title="Copy the focused lane into another lane">copy to…</button>
-  </div>
-
   <span id="liveStatus" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></span>
 </section>
 
@@ -10420,7 +10640,8 @@ var getPad = () => PAD;
       <dt>Enter</dt><dd>hex entry: commit the whole word</dd>
       <dt>Esc</dt><dd>cancel hex entry, a menu or a panel</dd>
       <dt>Alt+1…8</dt><dd>select a live lane by its number (if it exists)</dd>
-      <dt>Alt+S</dt><dd>split the 3-D view</dd>
+      <dt>Alt+S</dt><dd>split the 3-D view (turn on 3D in the top bar first)</dd>
+      <dt>truth</dt><dd>the readout-row disclosure — Tab to it, then Enter or Space to expand or collapse</dd>
       <dt>← / →</dt><dd>step CSV examples when focus is outside the controls and the strip</dd>
       <dt>?</dt><dd>this help panel</dd>
     </dl>

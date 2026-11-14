@@ -100,6 +100,22 @@
     color: var(--dimmer);
   }
 
+  /* D47: the wave-view control lives in the header (VIEW + 3D toggle), just
+     left of the help `?`. Same op-button tokens; no new colour. */
+  .header-view {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: 0 0 auto;
+  }
+
+  .view-label {
+    font-size: 10.5px;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--dimmer);
+  }
+
   input[type="range"] {
     -webkit-appearance: none;
     appearance: none;
@@ -223,6 +239,10 @@
     min-width: 0;
     padding: 0 12px;
     pointer-events: auto;
+    /* D47: with the per-pane hinge and copy opener the head can wrap instead of
+       pushing the page sideways at 360 px (split panes are only half as wide). */
+    flex-wrap: wrap;
+    row-gap: 4px;
   }
 
   .stage-bar.is-split .pane-head { cursor: pointer; }
@@ -287,6 +307,17 @@
   }
 
   .pane-head.focused .stage-expr { color: var(--text); }
+
+  /* D47: per-pane hinge + copy opener. Same op tokens as the other stage-bar
+     mini controls; the copy opener says `copy to…` and owns the menu anchored
+     under itself; the hinge only exists in the depth field. */
+  .pane-fold,
+  .pane-copy {
+    font-size: 10.5px;
+    padding: 2px 7px;
+    line-height: 1.35;
+    white-space: nowrap;
+  }
 
   /* ── frames view — the stage as a lane/frame browser (D42) ───────────── */
   .stage.is-frames canvas,
@@ -956,23 +987,68 @@
   .kv.wide { flex: 1 1 260px; min-width: 0; }
   .kv.wide code { display: block; max-width: 100%; }
 
-  /* ── truth table ──────────────────────────────────────── */
+  /* ── truth disclosure ─────────────────────────────────── */
+  /* D47: the truth table is a collapsible disclosure in the readout row and is
+     present in every view. The block keeps a fixed inline size so opening or
+     closing the body can never move the hex readouts horizontally. */
+  .truth-disclosure {
+    flex: 0 0 auto;
+    inline-size: 132px;
+    border: 1px solid var(--line);
+    border-radius: 5px;
+    background: var(--panel-hi);
+    font-family: var(--mono);
+    font-size: 10.5px;
+    line-height: 1.35;
+  }
+
+  /* Header button is the disclosure control: live algebra, chevron, a 24 px
+     target and aria-expanded/aria-controls. Header always visible. */
+  .truth-toggle {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    inline-size: 100%;
+    min-block-size: 24px;
+    padding: 3px 8px;
+    border: 0;
+    border-radius: 4px;
+    background: transparent;
+    font-family: var(--mono);
+    font-size: 9.5px;
+    letter-spacing: 0.06em;
+    color: var(--dim);
+    text-align: left;
+    cursor: pointer;
+    transition: background-color 110ms linear, color 110ms linear;
+  }
+
+  .truth-toggle:hover { background: var(--panel-hover); color: var(--text); }
+
+  .truth-toggle:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+  }
+
+  .truth-chev {
+    flex: 0 0 auto;
+    width: 8px;
+    color: var(--dimmer);
+    font-size: 9px;
+  }
+
+  .truth-title {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .truth-body { padding: 0 9px 5px; }
+
   .truth {
     font-family: var(--mono);
     font-size: 10.5px;
     line-height: 1.35;
-    padding: 3px 9px 4px;
-    border: 1px solid var(--line);
-    border-radius: 5px;
-    background: var(--panel-hi);
-  }
-
-  .truth-h {
-    font-size: 9.5px;
-    letter-spacing: 0.06em;
-    color: var(--dim);
-    margin-bottom: 2px;
-    white-space: nowrap;
   }
 
   .truth-grid {
@@ -980,6 +1056,7 @@
     grid-template-columns: repeat(4, auto);
     gap: 0 11px;
     align-items: baseline;
+    justify-content: start;
   }
 
   /* ARIA table rows are presentational for layout: `display: contents` keeps
@@ -1374,6 +1451,8 @@
     header { flex-wrap: wrap; gap: 12px; padding-top: 12px; padding-bottom: 12px; }
     .title p { display: none; }
     .sizer { width: 100%; order: 2; }
+    /* D47: the VIEW control stays beside `?` on the first header row. */
+    .header-view { order: 1; }
     #helpBtn { order: 1; }
     .sizer input[type="range"] { flex: 1 1 auto; width: auto; }
     #sizeOut { min-width: 0; }
@@ -1387,8 +1466,12 @@
   /* ── accessibility floor ─────────────────────────────────── */
 
   /* DESIGN §9: every interactive target is ≥24×24 CSS px. The stage-bar
-     controls are the ones small enough to need the floor. */
+     controls (including the D47 per-pane hinge/copy and the truth disclosure)
+     are the ones small enough to need the floor. */
   .op.mini,
+  .pane-fold,
+  .pane-copy,
+  .truth-toggle,
   .seg.mini .op {
     min-width: 24px;
     min-height: 24px;
@@ -1396,6 +1479,9 @@
     align-items: center;
     justify-content: center;
   }
+
+  /* The disclosure header is a full-width row, not a square glyph. */
+  .truth-toggle { justify-content: flex-start; }
 
   /* DESIGN §7: reduced motion removes decorative transitions and lets the
      LFO cap itself; 1:1 drag is untouched. */
@@ -1412,6 +1498,7 @@
     .unpair-btn,
     .frames-arrow,
     .lens-btn,
+    .truth-toggle,
     .nib {
       transition: none;
     }

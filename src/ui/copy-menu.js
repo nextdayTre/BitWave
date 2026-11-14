@@ -1,5 +1,5 @@
 /**
- * Explicit `copy to…` menu (F4 IA, DESIGN §8).
+ * Explicit `copy to…` menu (F4 IA, DESIGN §8; D47).
  *
  * Replaces the armed-mode button: opening the menu moves focus in, Escape or
  * an outside click closes it and returns focus, arrows move between the lane
@@ -7,29 +7,37 @@
  * reports the destination state). The copy belongs to the rack, not the lane.
  *
  * D43/D46: items are labelled and identified by their stable lane key, and the
- * list is built from the **live** lane set on every open (excluding the focused
- * lane itself), so adding or deleting lanes keeps the menu truthful. Copying
- * needs a distinct destination lane that already exists; duplicating creates a
- * new lane and lives in the frames view.
+ * list is built from the **live** lane set on every open, so adding or deleting
+ * lanes keeps the menu truthful.
+ *
+ * D47: the menu is no longer bound to one module-global button and the focused
+ * lane. Each pane head in the stage bar owns an opener, so `open(anchor,
+ * sourceLane)` takes both: the source lane is the pane's lane (not necessarily
+ * the globally focused one), items exclude that source lane, and the accessible
+ * name says `copy lane <source> to`. Focus-in, arrow keys, Home/End, Esc,
+ * outside click, resize close, return focus and the copy transaction are the
+ * same as before.
  */
 
 import { S, liveLaneKeys } from "../state/instrument.ts";
 
 export function createCopyMenu(deps) {
-  const { store, button, onCopy } = deps;
+  const { store, onCopy } = deps;
 
   const menu = document.createElement("div");
   menu.className = "copy-menu";
+  menu.id = "copyMenu";
   menu.hidden = true;
   menu.setAttribute("role", "menu");
-  menu.setAttribute("aria-label", "copy the focused lane to");
 
   let items = [];
   let open = false;
+  let anchorEl = null;
+  let sourceLane = null;
 
   function rebuildItems() {
     menu.textContent = "";
-    const destinations = liveLaneKeys().filter((key) => key !== S.laneKey);
+    const destinations = liveLaneKeys().filter((key) => key !== sourceLane);
     items = destinations.map((key) => {
       const item = document.createElement("button");
       item.type = "button";
@@ -38,7 +46,7 @@ export function createCopyMenu(deps) {
       item.setAttribute("tabindex", "-1");
       item.dataset.lane = key;
       item.textContent = `lane ${key}`;
-      item.title = `Copy lane ${S.laneKey} into lane ${key}`;
+      item.title = `Copy lane ${sourceLane} into lane ${key}`;
       item.addEventListener("click", () => activate(key));
       menu.appendChild(item);
       return item;
@@ -50,7 +58,7 @@ export function createCopyMenu(deps) {
 
   function position() {
     menu.hidden = false;
-    const r = button.getBoundingClientRect();
+    const r = anchorEl.getBoundingClientRect();
     const w = menu.offsetWidth;
     const h = menu.offsetHeight;
     const left = Math.min(Math.max(8, r.left), window.innerWidth - w - 8);
@@ -66,15 +74,23 @@ export function createCopyMenu(deps) {
     items[((index % n) + n) % n].focus();
   }
 
-  function openMenu() {
-    if (open) return;
+  /** Open the menu for `sourceLane`, anchored under the pane-head opener. */
+  function openMenu(anchor, lane) {
+    if (!anchor || !lane) return;
+    if (open) closeMenu(false);
+    sourceLane = lane;
     /* Nothing to copy into when the lane set holds a single lane. */
     if (rebuildItems().length === 0) return;
+    anchorEl = anchor;
     open = true;
     store.patch(() => { S.copyArmed = true; });
+    menu.dataset.sourceLane = sourceLane;
+    menu.setAttribute("aria-label", `copy lane ${sourceLane} to`);
+    menu.hidden = false;
     position();
-    button.setAttribute("aria-expanded", "true");
-    button.classList.add("on");
+    anchorEl.setAttribute("aria-expanded", "true");
+    anchorEl.setAttribute("aria-controls", menu.id);
+    anchorEl.classList.add("on");
     focusItem(0);
     document.addEventListener("pointerdown", onOutside, true);
     window.addEventListener("resize", onResize);
@@ -84,23 +100,30 @@ export function createCopyMenu(deps) {
     if (!open) return;
     open = false;
     menu.hidden = true;
-    button.setAttribute("aria-expanded", "false");
-    button.classList.remove("on");
+    if (anchorEl) {
+      anchorEl.setAttribute("aria-expanded", "false");
+      anchorEl.removeAttribute("aria-controls");
+      anchorEl.classList.remove("on");
+    }
     document.removeEventListener("pointerdown", onOutside, true);
     window.removeEventListener("resize", onResize);
     if (S.copyArmed) store.patch(() => { S.copyArmed = false; });
-    if (refocus) button.focus();
+    const target = anchorEl;
+    anchorEl = null;
+    sourceLane = null;
+    if (refocus && target && target.isConnected) target.focus();
   }
 
   function activate(key) {
-    const src = S.laneKey;
+    const src = sourceLane;
+    const target = anchorEl;
     closeMenu(false);
-    if (key !== src) onCopy(src, key);
-    button.focus();
+    if (src && key !== src) onCopy(src, key);
+    if (target && target.isConnected) target.focus();
   }
 
   function onOutside(event) {
-    if (event.target === button || menu.contains(event.target)) return;
+    if (event.target === anchorEl || menu.contains(event.target)) return;
     closeMenu(false);
   }
 
@@ -123,7 +146,11 @@ export function createCopyMenu(deps) {
     }
   });
 
-  button.addEventListener("click", () => (open ? closeMenu(true) : openMenu()));
-
-  return { open: openMenu, close: closeMenu, isOpen: () => open };
+  return {
+    open: openMenu,
+    close: closeMenu,
+    isOpen: () => open,
+    isOpenFor: (anchor) => open && anchorEl === anchor,
+    sourceLane: () => sourceLane,
+  };
 }

@@ -16,15 +16,17 @@ no network, no dependencies — **open it directly in a browser.**
 - **`bitwave-v2.html`** — the current build, generated from `src/`. A live lane set of
   **1–8 lanes** (the boot instrument has three; add, duplicate and delete in the frames
   view, cap 8), the always-visible stage bar (a native per-pane lane dropdown, frames,
-  split), the **frames view** (every frame as an equal card, with lane scrolling and a
+  split, a per-pane 3-D `A far`/`B far` hinge and a per-pane `copy to…` menu), the
+  **frames view** (every frame as an equal card, with lane scrolling and a
   `+` tile that adds lanes), per-frame visibility eyes, the frame focus lens
   (A/B/Z1, C/D/Z2, E/F/Z3 … O/P/Z8), the `2L`-row **source table** (CSV columns, frame
   outputs or deterministic expressions, with driven inputs locked), wheel-to-adjust hex,
   an explicit copy-to-lane menu, the **A/B/Z1 readout labels as focus buttons** (choose
-  the frame the strip and word entry edit), a whole-word hex entry, CSV stepper,
+  the frame the strip and word entry edit), an always-present collapsible **truth
+  disclosure** in the readout row, a whole-word hex entry, CSV stepper,
   observation CSV export, DAW-style Record/log, LFO, split 3-D with a per-lane **hinge**
   that swaps which operand is far vs near, and a keyboard-editable strip (every nibble is
-  a spinbutton).
+  a spinbutton). The top bar carries the `VIEW` label + 2-D/3-D toggle beside `?`.
   Work is **persisted**: `.bitwave` save/open, autosave across reloads, and the state is
   shareable through the URL fragment. A `demo` button loads an embedded 8-row dataset.
 - **`index.html`** — untouched original reference build.
@@ -82,7 +84,7 @@ Paths: `assets/pwa/` holds the committed icons (regenerate with
 
 ```bash
 npm test               # DOM-free core + state + bindings + project/share + agent layer: 179 tests, zero dependencies
-npm run check:browser  # 59 artifact checks in headless Chromium (60 with --compare)
+npm run check:browser  # 61 artifact checks in headless Chromium (62 with --compare)
 npm run check:pwa      # 8 hosted/PWA checks incl. a server-down offline reload + served agent files
 npm run capture        # state screenshots → .tmp-captures/
 ```
@@ -94,21 +96,28 @@ the repo; edit `src/`, then `npm run build`.
 install, or `BITWAVE_CHROME=…`). It opens the artifact over `file://` — the way a
 user opens it — and asserts console cleanliness, layout at 360/420/720/1440, the
 DESIGN §5 strip geometry, the 2-D/3-D states, the frames view and focus lens,
-the 3-D truth table, CSV import, the source table, the §11 operation vectors, the
+the always-present truth disclosure (header, toggle, counts, no readout shift),
+CSV import, the source table, the §11 operation vectors, the
 agent surface, the F4 reflow (200 %/400 %), keyboard editing, roles/live status,
-reduced motion, targets, the IA pass (stage bar, module order, copy menu, hex entry,
-keyboard map), the F5 persistence paths (project open/reset, autosave reload, share
+reduced motion, targets, the IA pass (top-bar view control, five-module order,
+per-pane hinge and copy menus, hex entry, keyboard map), the F5 persistence paths
+(project open/reset, autosave reload, share
 link round-trip and budget, `?fresh`), the dynamic-lanes slice (lane dropdown, live 1–8
 lane set, add/duplicate/delete, eight-lane frames view) and an axe-core audit (dev-only;
 zero critical/serious).
 **Keyboard editing:** Tab into the strip, then ↑/↓ adjust a nibble, ←/→ move
 between nibbles, Home/End jump, 0–F set the digit; Tab to the A/B/Z1 readout labels and
-press Enter or Space to choose the frame you edit; `frames` opens the card view (Tab to a
+press Enter or Space to choose the frame you edit; the readout-row truth header is a
+button (Tab, Enter/Space expands or collapses it); `frames` opens the card view (Tab to a
 card, Enter/Space focuses that frame and returns; `Lanes` or Esc returns without choosing);
 `?` opens the keyboard map and Esc closes a menu or panel.
 
 `--compare` is the rebuild gate: it loads a reference artifact and the new one in
-the same Chromium and asserts identical screenshots across six states. The harness
+the same Chromium and asserts identical screenshots across six states. It is a valid gate
+only for slices that do not intentionally change the rendered layout; the GUI
+rearrangement (D47) re-homes the view toggle, the per-pane hinge/copy controls and the
+truth table, so parity for it is measured against the artifact that introduces D47 and
+the changed regions are recorded in `DECISIONS.md` D47. The harness
 uses grayscale AA and retries a mismatching state up to three times, because Chromium
 software compositing can shift a few glyph-edge pixels between two runs of the same
 artifact; a persistent difference still fails.

@@ -339,3 +339,10 @@ heads/hint (`dup`/`del`/`add lane`). `browser-check --compare` against the pre-s
 artifact therefore reports those states as intentionally different; parity for the stage,
 strip and readouts otherwise holds (measured: the only differing regions are the stage
 bar's lane control and the frames-view lane head/hint areas).
+
+**Later layout change (2026-11-14, D47).** The GUI rearrangement afterwards re-homes the
+view toggle into the top bar, the hinge and `copy to…` menu into each pane head, and the
+truth table into an always-present readout disclosure, and removes the bottom VIEW row.
+That slice intentionally changes those regions (and therefore the screenshots), so
+`--compare` parity for the D43–D46 dynamic-lanes artifacts stops at the D47 artifact; the
+lane semantics, schema, agent surface and toolset 1.4.0 are unchanged.

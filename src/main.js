@@ -539,8 +539,6 @@ import { toHexOf, updateReadouts } from "./render/readouts.js";
      ══════════════════════════════════════════════════════════ */
 
   const depthBtn = document.getElementById("depthBtn");
-  const foldBtn = document.getElementById("foldBtn");
-  const copyLaneBtn = document.getElementById("copySlotBtn");
   const frameNav = createFrameNavigator({
     store,
     selectLane,
@@ -581,18 +579,55 @@ import { toHexOf, updateReadouts } from "./render/readouts.js";
     focusSplitPane,
     laneExprText,
     closeFrames: () => frameNav.close(true),
+    toggleFold,
+    toggleCopy: toggleCopyMenu,
   });
 
-  /* Explicit copy menu — focus moves in, Esc/outside closes, and the live
+  /* D47: the truth table is a disclosure in the readout row. The toggle flips the
+     transient session preference through the store and re-renders in place; it is
+     never persisted in the project, the share link or the agent state. */
+  const truthToggle = document.getElementById("truthToggle");
+  if (truthToggle) {
+    truthToggle.addEventListener("click", () => {
+      store.patch(() => { S.truthOpen = !S.truthOpen; });
+      updateReadouts();
+    });
+  }
+
+  /* Explicit copy menu — one per pane head (D47): the opener supplies both the
+     anchor and its source lane; focus moves in, Esc/outside closes, and the live
      status reports the copy in words (F4 IA). */
   const copyMenu = createCopyMenu({
     store,
-    button: copyLaneBtn,
     onCopy: (srcKey, dstKey) => {
       copyLaneInto(srcKey, dstKey);
       liveStatus.say(`copied lane ${srcKey} → lane ${dstKey}`);
     },
   });
+
+  /* D47: hinge + copy menu are per-pane controls. The hinge toggles that pane's
+     lane fold (independent in split); the copy opener opens the menu for that
+     pane's lane, toggling closed when the same opener is pressed again. */
+  function toggleFold(paneIdx) {
+    if (!S.view3d) return;
+    const key = S.split3d ? S.splitPair[paneIdx] : S.laneKey;
+    const sl = S.lanes[key];
+    if (!sl) return;
+    store.patch(() => {
+      sl.fold = sl.fold === "a-far" ? "b-far" : "a-far";
+    });
+    stageBar.sync();
+  }
+
+  function toggleCopyMenu(anchor, laneKey) {
+    if (!anchor || !laneKey) return;
+    if (copyMenu.isOpenFor(anchor)) {
+      copyMenu.close(true);
+      return;
+    }
+    copyMenu.open(anchor, laneKey);
+  }
+
   const hintEl = document.getElementById("hint");
 
   /* F5 — project document menu: save, open, reset (explicit, focus-in menu). */
@@ -814,20 +849,8 @@ import { toHexOf, updateReadouts } from "./render/readouts.js";
     depthBtn.title = S.view3d
       ? "Return to the 2D register view"
       : "Show the depth field: operands at frame 1 and 256, the result at 128";
-    /* Hinge is a 3-D presentation lens: Z stays the middle plate; this swaps
-       which operand is far vs near. It is intentionally session state only. */
-    const fold = curLane().fold;
-    foldBtn.hidden = !S.view3d;
-    foldBtn.textContent = fold === "a-far" ? "A far" : "B far";
-    foldBtn.setAttribute(
-      "aria-label",
-      S.view3d
-        ? `3-D hinge: ${fold === "a-far" ? "A far, B near" : "B far, A near"}; press to swap`
-        : "3-D hinge",
-    );
-    foldBtn.title = S.view3d
-      ? `Hinge: ${fold === "a-far" ? "A far, B near" : "B far, A near"} — press to swap the wings`
-      : "Show the 3-D field to change the hinge";
+    /* D47: the hinge is now a per-pane stage-bar control (independent per pane in
+       split 3-D), so syncViewUi only hands the view state to the stage bar. */
     const isSplit = S.view3d && S.split3d;
     canvas.classList.toggle("readonly", S.view3d && !S.split3d);
     canvas.classList.toggle("split-view", isSplit);
@@ -844,15 +867,6 @@ import { toHexOf, updateReadouts } from "./render/readouts.js";
       if (!S.view3d) S.split3d = false;
       if (S.view3d) enableBOnLane(curLane());
       refreshActiveLaneUi();
-    });
-  });
-
-  foldBtn.addEventListener("click", () => {
-    if (!S.view3d) return;
-    const sl = curLane();
-    store.patch(() => {
-      sl.fold = sl.fold === "a-far" ? "b-far" : "a-far";
-      syncViewUi();
     });
   });
 

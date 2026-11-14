@@ -1,11 +1,12 @@
 /**
  * Keyboard map and file drop — global shortcuts for the instrument.
  *
- * Moved out of main.js in F2. Escape closes the navigator or copy mode,
- * Alt+1..8 selects a live lane (by its stable lane key; an absent key is a
- * no-op), Alt+S toggles split; arrows step the dataset. The stage-bar lane
- * dropdown is the declared lane-selection keyboard path; Alt+digit is the
- * shortcut beside it.
+ * Moved out of main.js in F2. Escape closes the frames view or the open copy
+ * menu (now a per-pane `copy to…` menu, D47), Alt+1..8 selects a live lane (by
+ * its stable lane key; an absent key is a no-op), Alt+S toggles split; arrows
+ * step the dataset. The stage-bar lane dropdown is the declared lane-selection
+ * keyboard path; Alt+digit is the shortcut beside it. The truth disclosure is a
+ * native button in the readout row (Tab, then Enter/Space); it adds no shortcut.
  */
 
 export function attachKeyboard(deps) {

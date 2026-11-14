@@ -17,6 +17,10 @@
  *   - the bit strip's gap / nibble width / x(j) follow the §5 formula;
  *   - the frame navigator opens, lists three frames and its eyes toggle;
  *   - 3-D shows A/B/Z, Z = A xor B and truth counts 23/11/9/21;
+ *   - D47: the top-bar VIEW/3D control replaces the bottom VIEW row (360/720/1440),
+ *     each pane head's hinge is per-lane/independent in split, each pane head's
+ *     `copy to…` menu names and excludes its own source lane, and the always-present
+ *     truth disclosure toggles in place without moving the hex readouts;
  *   - CSV import types a hex payload, binds lane 1 A and the §11 op vectors
  *     (ROL 4, NOT, BSWAP) hold on the live artifact;
  *   - optionally, deterministic state screenshots (same state → same bytes).
@@ -1099,7 +1103,7 @@ try {
       a: document.getElementById('hexA').previousElementSibling.textContent,
       b: document.getElementById('hexB').previousElementSibling.textContent,
       z: document.getElementById('hexZ').previousElementSibling.textContent,
-      truth: document.querySelector('#truth .truth-h').textContent
+      truth: document.querySelector('#truthToggle .truth-title').textContent
     })`));
     assert(lane2.strip === 'C', `lane 2 strip: ${lane2.strip}`);
     assert(/LANE 2 · C.*D.*→ Z2/.test(lane2.stage), `lane 2 stage: ${JSON.stringify(lane2.stage)}`);
@@ -1285,19 +1289,61 @@ try {
     return 'counts 23/11/9/21 · popcount(Z) = 20';
   });
 
-  await runCheck('3d · hinge swaps far/near operands without changing the maths', async () => {
+  await runCheck('3d · hinge is per pane: independent folds, maths unchanged', async () => {
+    await loadApp();
+    /* D47: the hinge lives in each pane head and is hidden in 2-D. */
+    const in2d = JSON.parse(await evaluate(`JSON.stringify({
+      folds: [...document.querySelectorAll('#stageBar .pane-fold')].filter((b) => !b.hidden).length
+    })`));
+    assert(in2d.folds === 0, `the hinge should be hidden in 2-D: ${in2d.folds} visible`);
+
+    await click('#depthBtn');
+    await waitFor(
+      `[...document.querySelectorAll('#stageBar .pane-fold')].some((b) => !b.hidden)`,
+      '3-D hinge'
+    );
     const before = await readInstrument();
-    const offLabel = await evaluate(`document.getElementById('foldBtn').textContent`);
-    const offHidden = await evaluate(`document.getElementById('foldBtn').hidden`);
-    await click('#foldBtn');
-    const onLabel = await evaluate(`document.getElementById('foldBtn').textContent`);
+    const offLabel = await evaluate(`document.querySelector('#stageBar .pane-fold:not([hidden])').textContent`);
+    const offHidden = await evaluate(`document.querySelector('#stageBar .pane-fold:not([hidden])').hidden`);
+    await click('#stageBar .pane-fold:not([hidden])');
+    const onLabel = await evaluate(`document.querySelector('#stageBar .pane-fold:not([hidden])').textContent`);
     const after = await readInstrument();
     assert(!offHidden, 'fold control should be visible in 3-D');
     assert(offLabel === 'A far' && onLabel === 'B far', `fold labels: ${offLabel} → ${onLabel}`);
     assert(before.hexA === after.hexA && before.hexB === after.hexB, 'hinge changed operand values');
     assert(before.hexZ === after.hexZ, 'hinge changed Z');
-    await click('#foldBtn');
-    return 'A far ⇄ B far · A/B/Z unchanged';
+    await click('#stageBar .pane-fold:not([hidden])');
+
+    /* In split 3-D each pane folds its own lane: toggling pane 0 must not move
+       pane 1's label. */
+    await click('#stageBar .op.mini');
+    await sleep(250);
+    const split = JSON.parse(await evaluate(`JSON.stringify({
+      folds: [...document.querySelectorAll('#stageBar .pane-head:not([hidden]) .pane-fold')].map((b) => b.textContent.trim()),
+      lanes: [...document.querySelectorAll('#stageBar .pane-head:not([hidden]) .lane-select')].map((s) => s.value)
+    })`));
+    assert(split.folds.length === 2, `split hinges: ${JSON.stringify(split.folds)}`);
+    assert(split.folds.every((label) => label === 'A far'), `split starting folds: ${JSON.stringify(split.folds)}`);
+    await click('#stageBar .pane-head[data-pane="0"] .pane-fold');
+    await sleep(150);
+    const folded = JSON.parse(await evaluate(`JSON.stringify({
+      folds: [...document.querySelectorAll('#stageBar .pane-head:not([hidden]) .pane-fold')].map((b) => b.textContent.trim()),
+      lanes: [...document.querySelectorAll('#stageBar .pane-head:not([hidden]) .lane-select')].map((s) => s.value)
+    })`));
+    assert(
+      JSON.stringify(folded.folds) === JSON.stringify(['B far', 'A far']),
+      `pane 0 fold leaked into pane 1 (or vice versa): ${JSON.stringify(folded.folds)}`,
+    );
+    const splitValues = await evaluate(`JSON.stringify([
+      document.getElementById('hexA').textContent,
+      document.getElementById('hexB').textContent,
+      document.getElementById('hexZ').textContent
+    ])`);
+    assert(
+      JSON.parse(splitValues).join(',') === [before.hexA, before.hexB, before.hexZ].join(','),
+      `split hinge changed the maths: ${splitValues}`,
+    );
+    return 'A far ⇄ B far · per-pane in split (no leak) · A/B/Z unchanged';
   });
 
   /* 5. CSV import + §11 op vectors ------------------------------------- */
@@ -1418,8 +1464,10 @@ try {
 
   await runCheck('keyboard · Tab enters the strip and Enter-focus survives a render', async () => {
     await loadApp();
-    /* DOM order: header → help → stage bar (lane set, frames, split) → strip. */
-    await evaluate(`document.querySelector('#stageBar .op.mini').focus()`);
+    /* DOM order: header → help → stage bar (lane set, frames, split, copy) → strip.
+       D47: the per-pane copy opener is the last stage-bar control before the strip
+       (the hinge is hidden in 2-D), so Tab from it must land on the first nibble. */
+    await evaluate(`document.querySelector('#stageBar .pane-copy').focus()`);
     await pressNative('Tab', 'Tab', 9);
     const entered = await evaluate(`document.activeElement?.closest?.('.nib')?.dataset?.j ?? null`);
     assert(entered === '0', `Tab from the stage bar did not enter the strip (active nibble: ${entered})`);
@@ -1502,16 +1550,16 @@ try {
       JSON.stringify(a.inside) === JSON.stringify(['stage', 'strip', 'meta', 'controls', 'help-panel']),
       `main children: ${JSON.stringify(a.inside)}`
     );
-    assert(a.groups === 6 && a.named === a.groups, `named groups: ${a.named}/${a.groups}`);
+    assert(a.groups === 5 && a.named === a.groups, `named groups: ${a.named}/${a.groups}`);
     assert(
-      JSON.stringify(a.groupLabels) === JSON.stringify(['source', 'register edit', 'operate', 'derive', 'motion', 'view']),
-      `group order: ${JSON.stringify(a.groupLabels)}`
+      JSON.stringify(a.groupLabels) === JSON.stringify(['source', 'register edit', 'operate', 'derive', 'motion']),
+      `group order: ${JSON.stringify(a.groupLabels)}`,
     );
     assert(a.canvasRole === 'img', `canvas role: ${a.canvasRole}`);
     assert(/2-D waveform · lane 1 · A 8ADEFEDA85210125 · editing A/.test(a.canvasAlt), `canvas alt: ${a.canvasAlt}`);
     assert(a.liveRole === 'status' && a.liveLive === 'polite' && a.liveAtomic === 'true', 'live region attributes');
     assert(a.stripRole === 'group' && /A register/.test(a.stripLabel), `strip group: ${a.stripRole}/${a.stripLabel}`);
-    return 'main landmark · 6 named groups in module order · canvas alt · polite live region';
+    return 'main landmark · 5 named groups (view moved to the top bar, D47) · canvas alt · polite live region';
   });
 
   await runCheck('a11y · live status announces committed changes only', async () => {
@@ -1607,21 +1655,25 @@ try {
     await sleep(200);
     const stageSizes = JSON.parse(await evaluate(`JSON.stringify((() => {
       const rect = (el) => { const r = el.getBoundingClientRect(); return { w: r.width, h: r.height }; };
-      const minis = [...document.querySelectorAll('.op.mini, .seg.mini .op')]
+      const minis = [...document.querySelectorAll('.op.mini, .pane-fold, .pane-copy, .seg.mini .op')]
         .filter((el) => el.offsetParent !== null);
       const laneSelect = document.querySelector('#stageBar .lane-select');
+      const truth = rect(document.getElementById('truthToggle'));
       return {
         miniCount: minis.length,
         minW: minis.length ? Math.min(...minis.map((el) => rect(el).w)) : 0,
         minH: minis.length ? Math.min(...minis.map((el) => rect(el).h)) : 0,
         selectW: rect(laneSelect).w,
         selectH: rect(laneSelect).h,
+        truthW: truth.w,
+        truthH: truth.h,
         rangeH: rect(document.getElementById('size')).h,
       };
     })())`));
     assert(stageSizes.miniCount > 0, 'no stage-bar mini controls found');
     assert(stageSizes.minW >= 24 && stageSizes.minH >= 24, `mini controls ${stageSizes.minW.toFixed(1)}×${stageSizes.minH.toFixed(1)} < 24`);
     assert(stageSizes.selectW >= 24 && stageSizes.selectH >= 24, `lane select ${stageSizes.selectW.toFixed(1)}×${stageSizes.selectH.toFixed(1)} < 24`);
+    assert(stageSizes.truthW > 24 && stageSizes.truthH >= 24, `truth toggle target ${stageSizes.truthW.toFixed(1)}×${stageSizes.truthH.toFixed(1)} < 24`);
     assert(stageSizes.rangeH >= 24, `width slider target height ${stageSizes.rangeH}`);
 
     /* The frames view's lane-head controls are only laid out while it is open. */
@@ -1677,7 +1729,9 @@ try {
       splitDisabled: document.querySelector('#stageBar .op.mini').getAttribute('aria-disabled'),
       expr: document.querySelector('#stageBar .stage-expr').textContent,
       controlsHasLane: document.querySelectorAll('.controls [data-lane]').length,
-      controlsHasSplit: document.querySelectorAll('.controls .op.mini').length
+      controlsHasSplit: document.querySelectorAll('.controls .op.mini').length,
+      foldsVisible: [...document.querySelectorAll('#stageBar .pane-fold')].filter((b) => !b.hidden).length,
+      copiesVisible: [...document.querySelectorAll('#stageBar .pane-head:not([hidden]) .pane-copy')].length
     })`));
     assert(bar.visible, 'stage bar is hidden in 2-D');
     assert(bar.hasFrames, 'frames opener is not in the stage bar');
@@ -1687,29 +1741,97 @@ try {
     assert(/LANE 1 · A ⊕ B → Z1/.test(bar.expr), `stage expression: ${JSON.stringify(bar.expr)}`);
     assert(bar.controlsHasLane === 0, 'lane set is duplicated in the controls row');
     assert(bar.controlsHasSplit === 0, 'split is duplicated in the controls row');
+    assert(bar.foldsVisible === 0, `the D47 hinge should be hidden in 2-D: ${bar.foldsVisible} visible`);
+    assert(bar.copiesVisible === 1, `the per-pane copy opener should be in place in 2-D: ${bar.copiesVisible}`);
 
     await click('#depthBtn');
     await sleep(200);
     bar = JSON.parse(await evaluate(`JSON.stringify({
       splitDisabled: document.querySelector('#stageBar .op.mini').getAttribute('aria-disabled'),
-      expr: document.querySelector('#stageBar .stage-expr').textContent
+      expr: document.querySelector('#stageBar .stage-expr').textContent,
+      foldsVisible: [...document.querySelectorAll('#stageBar .pane-fold')].filter((b) => !b.hidden).length,
+      foldLabel: document.querySelector('#stageBar .pane-fold:not([hidden])').textContent.trim()
     })`));
     assert(bar.splitDisabled === 'false', 'split should be enabled in 3-D');
+    assert(bar.foldsVisible === 1 && bar.foldLabel === 'A far', `3-D hinge: ${JSON.stringify(bar)}`);
 
     await click('#stageBar .op.mini');
     await sleep(250);
     const split = JSON.parse(await evaluate(`JSON.stringify({
       panes: [...document.querySelectorAll('#stageBar .pane-head')].filter((p) => !p.hidden).length,
-      expr: document.querySelector('#stageBar .pane-head[data-pane="1"] .stage-expr').textContent
+      expr: document.querySelector('#stageBar .pane-head[data-pane="1"] .stage-expr').textContent,
+      folds: [...document.querySelectorAll('#stageBar .pane-head:not([hidden]) .pane-fold')].length,
+      copies: [...document.querySelectorAll('#stageBar .pane-head:not([hidden]) .pane-copy')].length
     })`));
     assert(split.panes === 2, `split panes: ${split.panes}`);
     assert(/C ⊕ D → Z2/.test(split.expr), `split second-pane expression: ${JSON.stringify(split.expr)}`);
+    assert(split.folds === 2 && split.copies === 2, `split per-pane controls: ${JSON.stringify(split)}`);
 
     await click('#stageBar .pane-head[data-pane="1"] .op.mini');
     await sleep(250);
     const unsplit = await evaluate(`[...document.querySelectorAll('#stageBar .pane-head')].filter((p) => !p.hidden).length`);
     assert(unsplit === 1, `returning from split left ${unsplit} panes visible`);
-    return 'stage bar visible in 2-D and 3-D · lane+frames+split single home · split panes';
+    return 'stage bar visible in 2-D and 3-D · lane+frames+split+fold+copy single home · split panes';
+  });
+
+  await runCheck('ia · top-bar VIEW control replaces the bottom VIEW row', async () => {
+    await loadApp();
+    const bar = JSON.parse(await evaluate(`JSON.stringify((() => {
+      const header = document.querySelector('header');
+      const btn = document.getElementById('depthBtn');
+      const view = document.querySelector('.header-view');
+      const help = document.getElementById('helpBtn');
+      return {
+        inHeader: header.contains(btn),
+        label: view ? view.querySelector('.view-label').textContent.trim() : null,
+        groupLabel: view ? view.getAttribute('aria-label') : null,
+        leftOfHelp: view ? view.getBoundingClientRect().left < help.getBoundingClientRect().left : false,
+        text: btn.textContent.trim(),
+        pressed: btn.getAttribute('aria-pressed'),
+        inControls: document.querySelectorAll('.controls #depthBtn').length,
+        viewGroups: document.querySelectorAll('.controls .group[aria-label="view"]').length
+      };
+    })())`));
+    assert(bar.inHeader && bar.inControls === 0, 'the view control is not in the top bar');
+    assert(bar.label === 'view' && bar.groupLabel === 'view', `VIEW label/group: ${JSON.stringify(bar)}`);
+    assert(bar.leftOfHelp, 'the VIEW control is not immediately left of the help button');
+    assert(bar.text === '3D' && bar.pressed === 'false', `depth button state: ${JSON.stringify(bar)}`);
+    assert(bar.viewGroups === 0, 'the bottom VIEW group still exists in the controls row');
+
+    await click('#depthBtn');
+    await sleep(200);
+    assert(
+      (await evaluate(`document.getElementById('depthBtn').getAttribute('aria-pressed')`)) === 'true',
+      'the top-bar 3D toggle did not turn 3-D on',
+    );
+    await evaluate(`document.getElementById('depthBtn').focus()`);
+    await pressActivate();
+    await sleep(200);
+    assert(
+      (await evaluate(`document.getElementById('depthBtn').getAttribute('aria-pressed')`)) === 'false',
+      'the top-bar 3D toggle did not turn 3-D off from the keyboard',
+    );
+
+    /* The header must hold the re-homed control at every shipped breakpoint. */
+    for (const [width, height] of [[360, 780], [720, 900], [1440, 900]]) {
+      await loadApp({ width, height });
+      const fit = JSON.parse(await evaluate(`JSON.stringify((() => {
+        const h = document.querySelector('header');
+        const view = document.querySelector('.header-view');
+        return {
+          pageOverflow: document.body.scrollWidth - document.body.clientWidth,
+          headerOverflow: h.scrollWidth - h.clientWidth,
+          viewVisible: view.offsetParent !== null,
+          depthLeft: document.getElementById('depthBtn').getBoundingClientRect().left,
+          helpLeft: document.getElementById('helpBtn').getBoundingClientRect().left
+        };
+      })())`));
+      assert(fit.pageOverflow === 0, `header caused horizontal overflow at ${width}: ${fit.pageOverflow}`);
+      assert(fit.headerOverflow <= 0, `header content overflows at ${width}: ${fit.headerOverflow}`);
+      assert(fit.viewVisible, `the VIEW control is not laid out at ${width}`);
+      assert(fit.helpLeft > fit.depthLeft, `VIEW is not left of ? at ${width}`);
+    }
+    return 'VIEW + 3D in the header left of ? · click and Enter toggle · no overflow at 360/720/1440';
   });
 
   await runCheck('ia · reserved space: modules and disabled placeholders stay put', async () => {
@@ -1733,7 +1855,7 @@ try {
       })()
     })`));
     assert(
-      JSON.stringify(boot.groups) === JSON.stringify(['source', 'register edit', 'operate', 'derive', 'motion', 'view']),
+      JSON.stringify(boot.groups) === JSON.stringify(['source', 'register edit', 'operate', 'derive', 'motion']),
       `module order: ${JSON.stringify(boot.groups)}`
     );
     assert(boot.binops.every((b) => b.visible), 'binops were removed from the DOM without B');
@@ -1765,37 +1887,60 @@ try {
     assert(bOn.disabled === 'false', 'binops should enable with B');
     assert(bOn.checkedTab === '0', `checked binop tabindex: ${bOn.checkedTab}`);
     assert(bOn.bState === 'B on', `B state chip: ${bOn.bState}`);
-    return 'six modules in order · disabled placeholders stay in place';
+    return 'five modules in order · disabled placeholders stay in place';
   });
 
-  await runCheck('ia · copy to… is an explicit focus-in menu with Esc', async () => {
+  await runCheck('ia · per-pane copy to… menu: source lane, dynamic anchor, Esc', async () => {
     await loadApp();
-    await click('#copySlotBtn');
+    /* D47: the copy opener lives in the pane head, in place in 2-D, and names its
+       own source lane (the pane's lane, not necessarily the focused one). */
+    const boot = JSON.parse(await evaluate(`JSON.stringify((() => {
+      const opener = document.querySelector('#stageBar .pane-head:not([hidden]) .pane-copy');
+      return {
+        text: opener.textContent.trim(),
+        expanded: opener.getAttribute('aria-expanded'),
+        disabled: opener.getAttribute('aria-disabled'),
+        haspopup: opener.getAttribute('aria-haspopup'),
+        viewGroups: document.querySelectorAll('.controls .group[aria-label="view"]').length,
+        viewRowBtn: Boolean(document.querySelector('.controls #depthBtn')),
+      };
+    })())`));
+    assert(boot.text === 'copy to…', `copy opener text: ${JSON.stringify(boot.text)}`);
+    assert(boot.haspopup === 'menu' && boot.expanded === 'false', `copy opener state: ${JSON.stringify(boot)}`);
+    assert(boot.disabled === 'false', 'copy should be enabled with three lanes');
+    assert(boot.viewGroups === 0 && boot.viewRowBtn === false, 'the bottom VIEW row/group is still present');
+
+    await click('#stageBar .pane-head:not([hidden]) .pane-copy');
     let menu = JSON.parse(await evaluate(`JSON.stringify({
       open: !document.querySelector('.copy-menu').hidden,
       role: document.querySelector('.copy-menu').getAttribute('role'),
+      label: document.querySelector('.copy-menu').getAttribute('aria-label'),
       items: [...document.querySelectorAll('.copy-menu [role="menuitem"]')].map((b) => b.textContent.trim()),
-      expanded: document.getElementById('copySlotBtn').getAttribute('aria-expanded'),
+      expanded: document.querySelector('#stageBar .pane-head:not([hidden]) .pane-copy').getAttribute('aria-expanded'),
       focused: document.activeElement.getAttribute('role')
     })`));
     assert(menu.open && menu.role === 'menu', 'copy menu did not open as a menu');
+    assert(menu.label === 'copy lane 1 to', `menu name does not name the source lane: ${JSON.stringify(menu.label)}`);
     assert(
       JSON.stringify(menu.items) === JSON.stringify(['lane 2', 'lane 3']),
-      `menu items exclude the focused lane: ${JSON.stringify(menu.items)}`,
+      `menu items exclude the source lane: ${JSON.stringify(menu.items)}`,
     );
-    assert(menu.expanded === 'true', 'copy button aria-expanded is not true');
+    assert(menu.expanded === 'true', 'copy opener aria-expanded is not true');
     assert(menu.focused === 'menuitem', `focus did not move into the menu: ${menu.focused}`);
     assert((await evaluate(`window.BitWave.state().editing.copyArmed`)) === true, 'copyArmed not reported while open');
 
     await keydown('Escape');
     menu = JSON.parse(await evaluate(`JSON.stringify({
       open: !document.querySelector('.copy-menu').hidden,
-      focused: document.activeElement.id,
+      focusedClass: document.activeElement.className,
       armed: window.BitWave.state().editing.copyArmed
     })`));
-    assert(menu.open === false && menu.focused === 'copySlotBtn' && menu.armed === false, `Esc did not close cleanly: ${JSON.stringify(menu)}`);
+    assert(
+      menu.open === false && /pane-copy/.test(menu.focusedClass) && menu.armed === false,
+      `Esc did not close cleanly and return focus: ${JSON.stringify(menu)}`,
+    );
 
-    await click('#copySlotBtn');
+    await click('#stageBar .pane-head:not([hidden]) .pane-copy');
     await sleep(100);
     const before = JSON.parse(await evaluate(`JSON.stringify({
       a: window.BitWave.state().lanes['1'].frames.A,
@@ -1812,7 +1957,55 @@ try {
     assert(copied.c === before.a && copied.d === before.b, `lane 2 was not copied: ${JSON.stringify(copied)}`);
     assert(copied.open === false, 'menu stayed open after copy');
     assert(/copied lane 1 → lane 2/.test(copied.live), `live status did not report the copy: ${copied.live}`);
-    return 'menu opens with focus in, Esc cancels, lane copy + spoken confirmation';
+
+    /* Split: the second pane's opener is the source lane for its own menu. */
+    await click('#depthBtn');
+    await waitFor(`document.getElementById('depthBtn').getAttribute('aria-pressed') === 'true'`, '3-D');
+    await click('#stageBar .op.mini');
+    await sleep(250);
+    await click('#stageBar .pane-head[data-pane="1"] .pane-copy');
+    const splitMenu = JSON.parse(await evaluate(`JSON.stringify({
+      label: document.querySelector('.copy-menu').getAttribute('aria-label'),
+      items: [...document.querySelectorAll('.copy-menu [role="menuitem"]')].map((b) => b.textContent.trim()),
+      open: !document.querySelector('.copy-menu').hidden
+    })`));
+    assert(splitMenu.open, 'the split pane copy menu did not open');
+    assert(splitMenu.label === 'copy lane 2 to', `split menu source: ${JSON.stringify(splitMenu.label)}`);
+    assert(
+      JSON.stringify(splitMenu.items) === JSON.stringify(['lane 1', 'lane 3']),
+      `split menu destinations: ${JSON.stringify(splitMenu.items)}`,
+    );
+    await keydown('Escape');
+
+    /* With a single live lane the opener stays in place, disabled with a reason. */
+    await openFramesView();
+    for (const key of ['2', '3']) {
+      await click(`#framesGrid [data-lane="${key}"] [data-act="del"]`);
+      await sleep(180);
+      await click(`#framesGrid [data-lane="${key}"] [data-act="confirm"]`);
+      await sleep(320);
+    }
+    await click('#lanesBtn');
+    await sleep(250);
+    const oneLane = JSON.parse(await evaluate(`JSON.stringify((() => {
+      const opener = document.querySelector('#stageBar .pane-head:not([hidden]) .pane-copy');
+      return {
+        lanes: Object.keys(window.bitwave.getState().lanes).length,
+        disabled: opener.getAttribute('aria-disabled'),
+        title: opener.title,
+        expanded: opener.getAttribute('aria-expanded')
+      };
+    })())`));
+    assert(oneLane.lanes === 1, `lanes after delete: ${oneLane.lanes}`);
+    assert(oneLane.disabled === 'true', 'copy should be aria-disabled with one lane');
+    assert(/second live lane/.test(oneLane.title), `one-lane copy title: ${JSON.stringify(oneLane.title)}`);
+    await click('#stageBar .pane-head:not([hidden]) .pane-copy');
+    await sleep(120);
+    assert(
+      (await evaluate(`document.querySelector('.copy-menu').hidden`)) === true,
+      'a disabled copy opener still opened the menu',
+    );
+    return 'in-place per-pane opener · names source lane · excludes it · Esc/refocus · split source follows the pane · disabled at one lane';
   });
 
   await runCheck('ia · whole-word hex entry commits, rejects and reverts', async () => {
@@ -1888,21 +2081,154 @@ try {
     return '? opens · focus moves in · Escape closes';
   });
 
-  await runCheck('ia · truth table has table semantics', async () => {
+  await runCheck('ia · truth disclosure: header, table semantics, in-place toggle', async () => {
     await loadApp();
-    await click('#depthBtn');
-    await sleep(250);
-    const table = JSON.parse(await evaluate(`JSON.stringify({
-      role: document.querySelector('#truth [role="table"]')?.getAttribute('role') ?? null,
+    /* D47: present by default in A-only (no longer gated on A·B). */
+    const aOnly = JSON.parse(await evaluate(`JSON.stringify({
+      visible: document.getElementById('truthBlock').offsetParent !== null,
+      expanded: document.getElementById('truthToggle').getAttribute('aria-expanded'),
+      controls: document.getElementById('truthToggle').getAttribute('aria-controls'),
+      title: document.querySelector('#truthToggle .truth-title').textContent.trim(),
+      label: document.getElementById('truthToggle').getAttribute('aria-label'),
+      chev: document.querySelector('#truthToggle .truth-chev').textContent.trim(),
+      bodyHidden: document.getElementById('truthBody').hidden,
+      tableRole: document.querySelector('#truth [role="table"]')?.getAttribute('role') ?? null,
       rows: document.querySelectorAll('#truth [role="row"]').length,
       headers: document.querySelectorAll('#truth [role="columnheader"]').length,
-      cells: document.querySelectorAll('#truth [role="cell"]').length
+      cells: document.querySelectorAll('#truth [role="cell"]').length,
+      counts: [...document.querySelectorAll('#truth .ct')].map((el) => el.textContent.trim()),
+      hexLeft: document.getElementById('hex').getBoundingClientRect().left,
+      blockLeft: document.getElementById('truthBlock').getBoundingClientRect().left,
+      blockWidth: document.getElementById('truthBlock').getBoundingClientRect().width
     })`));
-    assert(table.role === 'table', 'truth table has no table role');
-    assert(table.rows === 5, `truth rows: ${table.rows}`);
-    assert(table.headers === 4, `truth column headers: ${table.headers}`);
-    assert(table.cells === 16, `truth cells: ${table.cells}`);
-    return 'role=table · 5 rows · 4 column headers · 16 cells';
+    assert(aOnly.visible, 'the truth disclosure is missing in A-only');
+    assert(aOnly.expanded === 'true' && aOnly.bodyHidden === false, `default open state: ${JSON.stringify(aOnly)}`);
+    assert(aOnly.controls === 'truthBody', `aria-controls: ${aOnly.controls}`);
+    assert(aOnly.title === 'A ⊕ B → Z1', `header text: ${JSON.stringify(aOnly.title)}`);
+    assert(aOnly.label === 'truth table for lane 1 A ⊕ B → Z1', `accessible name: ${JSON.stringify(aOnly.label)}`);
+    assert(aOnly.tableRole === 'table', 'truth table has no table role');
+    assert(aOnly.rows === 5, `truth rows: ${aOnly.rows}`);
+    assert(aOnly.headers === 4, `truth column headers: ${aOnly.headers}`);
+    assert(aOnly.cells === 16, `truth cells: ${aOnly.cells}`);
+    assert(
+      JSON.stringify(aOnly.counts) === JSON.stringify(['23', '11', '9', '21']),
+      `A-only truth counts: ${JSON.stringify(aOnly.counts)}`,
+    );
+
+    /* Collapsing must not move the hex readout horizontally. */
+    await click('#truthToggle');
+    await sleep(150);
+    const collapsed = JSON.parse(await evaluate(`JSON.stringify({
+      expanded: document.getElementById('truthToggle').getAttribute('aria-expanded'),
+      bodyHidden: document.getElementById('truthBody').hidden,
+      chev: document.querySelector('#truthToggle .truth-chev').textContent.trim(),
+      hexLeft: document.getElementById('hex').getBoundingClientRect().left,
+      blockWidth: document.getElementById('truthBlock').getBoundingClientRect().width
+    })`));
+    assert(collapsed.expanded === 'false' && collapsed.bodyHidden === true, `collapsed state: ${JSON.stringify(collapsed)}`);
+    assert(collapsed.chev !== aOnly.chev, 'the chevron did not flip with the disclosure');
+    assert(
+      collapsed.hexLeft === aOnly.hexLeft && collapsed.blockWidth === aOnly.blockWidth,
+      `collapsing moved the readouts: hex ${aOnly.hexLeft}→${collapsed.hexLeft}, block ${aOnly.blockWidth}→${collapsed.blockWidth}`,
+    );
+
+    /* Keyboard: native button + Enter toggles it back open. */
+    await evaluate(`document.getElementById('truthToggle').focus()`);
+    await pressActivate();
+    await sleep(150);
+    const reopened = JSON.parse(await evaluate(`JSON.stringify({
+      expanded: document.getElementById('truthToggle').getAttribute('aria-expanded'),
+      bodyHidden: document.getElementById('truthBody').hidden,
+      hexLeft: document.getElementById('hex').getBoundingClientRect().left
+    })`));
+    assert(reopened.expanded === 'true' && reopened.bodyHidden === false, 'keyboard Enter did not reopen the disclosure');
+    assert(reopened.hexLeft === aOnly.hexLeft, 'reopening moved the hex readout');
+    return 'present in A-only · A ⊕ B → Z1 header · role=table 5 rows · Enter/click toggles · readouts stay put';
+  });
+
+  await runCheck('ia · truth disclosure is present in every view and follows the lane', async () => {
+    await loadApp();
+    const read = async () => JSON.parse(await evaluate(`JSON.stringify({
+      visible: document.getElementById('truthBlock').offsetParent !== null,
+      title: document.querySelector('#truthToggle .truth-title').textContent.trim(),
+      label: document.getElementById('truthToggle').getAttribute('aria-label'),
+      expanded: document.getElementById('truthToggle').getAttribute('aria-expanded')
+    })`));
+
+    /* A·B in 2-D (choose the B card, which returns to the lanes view). */
+    await openFramesView();
+    await pickFrameCard('1', 'b');
+    let state = await read();
+    assert(state.visible && state.title === 'A ⊕ B → Z1', `A·B truth: ${JSON.stringify(state)}`);
+
+    /* 3-D. */
+    await click('#depthBtn');
+    await sleep(200);
+    state = await read();
+    assert(state.visible && state.title === 'A ⊕ B → Z1', `3-D truth: ${JSON.stringify(state)}`);
+    const aLeft3d = await evaluate(`document.getElementById('hexA').getBoundingClientRect().left`);
+    await click('#truthToggle');
+    await sleep(150);
+    const collapsed3d = JSON.parse(await evaluate(`JSON.stringify({
+      expanded: document.getElementById('truthToggle').getAttribute('aria-expanded'),
+      headerVisible: document.getElementById('truthToggle').offsetParent !== null,
+      aLeft: document.getElementById('hexA').getBoundingClientRect().left
+    })`));
+    assert(collapsed3d.expanded === 'false' && collapsed3d.headerVisible, 'the truth header is not visible while collapsed');
+    assert(collapsed3d.aLeft === aLeft3d, `collapsing moved the 3-D hex readout: ${aLeft3d}→${collapsed3d.aLeft}`);
+    await click('#truthToggle');
+    await sleep(150);
+
+    /* Lane 4 (>1 lane) names its own frames: G ⊕ H → Z4. Add two lanes through
+       the frames view's live + tile, leave 3-D (so the blank lane's B stays
+       zero), then focus lane 4. */
+    await openFramesView();
+    await click('#framesGrid .frame-add');
+    await click('#framesGrid .frame-add');
+    await sleep(300);
+    await click('#lanesBtn');
+    await sleep(200);
+    await click('#depthBtn');
+    await sleep(200);
+    await selectLaneInPane('4', 0);
+    state = await read();
+    assert(
+      state.title === 'G ⊕ H → Z4' && state.label === 'truth table for lane 4 G ⊕ H → Z4',
+      `lane 4 truth header/name: ${JSON.stringify(state)}`,
+    );
+    const lane4Table = JSON.parse(await evaluate(`JSON.stringify({
+      counts: [...document.querySelectorAll('#truth .ct')].map((el) => el.textContent.trim()),
+      rows: document.querySelectorAll('#truth [role="row"]').length
+    })`));
+    assert(JSON.stringify(lane4Table.counts) === JSON.stringify(['64', '0', '0', '0']), `lane 4 counts: ${JSON.stringify(lane4Table.counts)}`);
+
+    /* Arithmetic variant in the same disclosure: ADD gets the carry-out row. */
+    await evaluate(`window.bitwave.setBinop('add')`);
+    await sleep(200);
+    state = await read();
+    const arith = JSON.parse(await evaluate(`JSON.stringify({
+      title: document.querySelector('#truthToggle .truth-title').textContent.trim(),
+      rows: document.querySelectorAll('#truth [role="row"]').length,
+      headers: [...document.querySelectorAll('#truth [role="columnheader"]')].map((el) => el.textContent.trim()),
+      cells: [...document.querySelectorAll('#truth [role="cell"]')].map((el) => el.textContent.trim())
+    })`));
+    assert(state.title === 'G + H → Z4', `arithmetic header: ${JSON.stringify(state.title)}`);
+    assert(arith.rows === 1 && arith.headers.join(',') === 'carry out', `arithmetic rows: ${JSON.stringify(arith)}`);
+    assert(arith.cells.length === 1 && (arith.cells[0] === 'no' || arith.cells[0] === 'yes'), `carry cell: ${JSON.stringify(arith.cells)}`);
+
+    /* Split: the disclosure stays bound to the focused lane (pane 0 focus). */
+    await click('#depthBtn');
+    await sleep(200);
+    await click('#stageBar .op.mini');
+    await sleep(250);
+    await click('#stageBar .pane-head[data-pane="0"]');
+    await sleep(250);
+    state = await read();
+    assert(
+      state.visible && state.title === 'A ⊕ B → Z1',
+      `split truth did not follow the focused pane: ${JSON.stringify(state)}`,
+    );
+    return 'present in A-only/A·B/3-D/split · lane 4 G ⊕ H → Z4 · ADD carry-out variant · follows focus';
   });
 
   /* 5f. F5 — persistence & reach ---------------------------------------- */

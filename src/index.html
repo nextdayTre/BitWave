@@ -21,11 +21,18 @@
       live operand, grouped by lane) is the routing housing: labels carry the
       assignment and driven inputs are locked
     · F4 IA (author-approved 2026-11-06): stable module order
-      source | width·edit | operate | derive | motion | view; an always-visible
+      source | width·edit | operate | derive | motion; an always-visible
       stage bar is the single home of lane (a native per-pane select), frames
-      and split; `copy to…` is an explicit menu; `width` replaces `register`; a
-      whole-word hex entry sits beside the edit target; inapplicable controls
-      stay in place (aria-disabled) instead of disappearing
+      and split; `copy to…` is an explicit per-pane menu; `width` replaces
+      `register`; a whole-word hex entry sits beside the edit target;
+      inapplicable controls stay in place (aria-disabled) instead of
+      disappearing
+    · D47 GUI rearrangement (author note 2026-11-14): the view control moves to
+      the top bar (`VIEW` + 2D/3D toggle, immediately left of `?`), so the
+      bottom VIEW group is gone; each pane head carries its own 3-D hinge
+      (`A far`/`B far`, independent per pane) and its own `copy to…` menu; the
+      truth table is a collapsible disclosure in the readout row, present in
+      every view with its header always visible
     · F4 accessibility: every operand nibble is a focusable spinbutton (keyboard
       editing), the canvas has a live text alternative, there is one polite live
       region for committed changes, reduced motion is honoured and targets are
@@ -53,6 +60,13 @@
     <label for="size">width</label>
     <input id="size" type="range" min="0" max="5" step="1" value="3" aria-label="Register width in bits" />
     <output id="sizeOut" for="size">64 bits · 16 nibbles</output>
+  </div>
+  <!-- D47: the wave-view control lives in the top bar (VIEW + 3D), immediately
+       left of the help `?`; the bottom VIEW row is gone. Same id, pressed state,
+       title and keyboard path as before. -->
+  <div class="header-view" role="group" aria-label="view">
+    <span class="view-label" aria-hidden="true">view</span>
+    <button class="op" id="depthBtn" aria-pressed="false" title="Show the depth field: A at frame 1, Z at 128, B at 256">3D</button>
   </div>
   <button class="op" id="helpBtn" type="button" aria-expanded="false" aria-controls="helpPanel" aria-keyshortcuts="?" title="Keyboard map (?)">?</button>
 </header>
@@ -114,10 +128,27 @@
   <div class="badge" id="slotBadge" hidden>lane 1</div>
   <div class="badge" id="trend">level</div>
 
+  <!-- D47: the truth table is a collapsible disclosure in the readout row and is
+       present in every view (A-only included). It is the first readout so its
+       position is identical in A-only and A·B modes (a wide readout must not
+       push it right). The header button carries the live `A ⊕ B → Z1` text,
+       `aria-expanded`/`aria-controls` and the keyboard path; the body holds the
+       same role="table" grid as before. The block width is fixed so expanding
+       never moves the hex readouts horizontally. -->
+  <div class="truth-disclosure" id="truthBlock">
+    <button class="truth-toggle" id="truthToggle" type="button" aria-expanded="true" aria-controls="truthBody"
+            aria-label="truth table for lane 1 A ⊕ B → Z1" title="Expand or collapse the truth table">
+      <span class="truth-chev" aria-hidden="true">▾</span>
+      <span class="truth-title">A ⊕ B → Z1</span>
+    </button>
+    <div class="truth-body" id="truthBody">
+      <div class="truth" id="truth"></div>
+    </div>
+  </div>
+
   <div class="aOnly kv"><span>hex</span><code id="hex">—</code></div>
   <div class="aOnly kv wide"><span>dec</span><code id="dec">—</code></div>
 
-  <div class="abOnly truth" id="truth"></div>
   <div class="abOnly kv"><button class="lens-btn" type="button" id="lblA" data-frame="a" aria-pressed="false" aria-label="focus A" title="Focus A to edit it">A</button><code id="hexA">—</code></div>
   <div class="abOnly kv"><button class="lens-btn" type="button" id="lblB" data-frame="b" aria-pressed="false" aria-label="focus B" title="Focus B to edit it">B</button><code id="hexB">—</code></div>
   <div class="abOnly kv"><button class="lens-btn" type="button" id="lblZ" data-frame="z" aria-pressed="false" aria-label="focus Z1 (read-only)" title="Z1 is derived — focus to inspect (read-only)">Z</button><code id="hexZ">—</code></div>
@@ -219,13 +250,6 @@
     </select>
   </div>
 
-  <div class="group" role="group" aria-label="view">
-    <label>view</label>
-    <button class="op" id="depthBtn" aria-pressed="false" title="Show the depth field: A at frame 1, Z at 128, B at 256">3D</button>
-    <button class="op" id="foldBtn" type="button" hidden title="Swap which operand is far vs near in the 3-D field (presentation only)">A far</button>
-    <button class="op" id="copySlotBtn" aria-haspopup="menu" aria-expanded="false" title="Copy the focused lane into another lane">copy to…</button>
-  </div>
-
   <span id="liveStatus" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></span>
 </section>
 
@@ -251,7 +275,8 @@
       <dt>Enter</dt><dd>hex entry: commit the whole word</dd>
       <dt>Esc</dt><dd>cancel hex entry, a menu or a panel</dd>
       <dt>Alt+1…8</dt><dd>select a live lane by its number (if it exists)</dd>
-      <dt>Alt+S</dt><dd>split the 3-D view</dd>
+      <dt>Alt+S</dt><dd>split the 3-D view (turn on 3D in the top bar first)</dd>
+      <dt>truth</dt><dd>the readout-row disclosure — Tab to it, then Enter or Space to expand or collapse</dd>
       <dt>← / →</dt><dd>step CSV examples when focus is outside the controls and the strip</dd>
       <dt>?</dt><dd>this help panel</dd>
     </dl>

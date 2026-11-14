@@ -1,6 +1,6 @@
 # BitWave — implementation status
 
-**Updated:** 2026-11-14 · **Phase:** F0 **done**, F1 **done**, F2 spine + render + UI modules done (pointer/lane controllers still in `main.js`), F3 source table + frame routing **done**, F4 accessibility + IA **done**, F5 persistence & reach **done**, **F6 distribution done**, the **agent interface done** (2026-11-08), the **external-routing slice done** (2026-11-08, D40) — expression sources, a DAW-style Record/log, `.bitwave` schema 3, and bridge `setExpression`/`record`/`getLog` (toolset 1.1.0) — the **frame-navigation pair done** (2026-11-14, D41/D42), and the **dynamic-lanes pass complete** (D43–D46, 2026-11-14): core naming primitives, state lane-key identity, `.bitwave` schema 4 + migration (D44), the compact `#bw=` codec + budget proof (D45), the live 1–8 lane UI (D46: native per-pane lane dropdown, frames-view add/duplicate/delete, `2L` source rows, `3L` Record rows), and the **agent-surface + docs slice** (toolset 1.4.0: agent lane range 1–8, frames `A`–`P`/`Z1`–`Z8`, lane dropdown selector in the manifest, eight-lane verification + fixture, docs/screenshots). The plan's funded path is complete; Tauri remains deferred (D37).
+**Updated:** 2026-11-14 · **Phase:** F0 **done**, F1 **done**, F2 spine + render + UI modules done (pointer/lane controllers still in `main.js`), F3 source table + frame routing **done**, F4 accessibility + IA **done**, F5 persistence & reach **done**, **F6 distribution done**, the **agent interface done** (2026-11-08), the **external-routing slice done** (2026-11-08, D40) — expression sources, a DAW-style Record/log, `.bitwave` schema 3, and bridge `setExpression`/`record`/`getLog` (toolset 1.1.0) — the **frame-navigation pair done** (2026-11-14, D41/D42), the **dynamic-lanes pass complete** (D43–D46, 2026-11-14): core naming primitives, state lane-key identity, `.bitwave` schema 4 + migration (D44), the compact `#bw=` codec + budget proof (D45), the live 1–8 lane UI (D46: native per-pane lane dropdown, frames-view add/duplicate/delete, `2L` source rows, `3L` Record rows), the **agent-surface + docs slice** (toolset 1.4.0: agent lane range 1–8, frames `A`–`P`/`Z1`–`Z8`, lane dropdown selector in the manifest, eight-lane verification + fixture, docs/screenshots), and the **GUI rearrangement done** (2026-11-14, D47: top-bar VIEW + 2D/3D toggle, per-pane hinge + copy menu, always-present readout truth disclosure, bottom VIEW row removed). The plan's funded path is complete; Tauri remains deferred (D37).
 **Source of truth:** [`PLAN.md`](PLAN.md) for the plan, [`DECISIONS.md`](DECISIONS.md) for choices taken, [`DESIGN.md`](DESIGN.md) for the visual contract. `index.html` is still untouched and remains the shipping instrument.
 
 ## Author decisions (2026-11-06)
@@ -35,12 +35,12 @@ cell enough? Confirm before the matrix lands in the app.
 | **F1 Core + routing engine** | **Done** | 11 DOM-free modules; lanes 1/2/3; 38 core tests green. |
 | **F2 State spine + renderers** | **Mostly done** | DOM-free tree, transaction store, `actions.ts`, core `evaluateAll()`; render layer; UI feature modules; every writer inside `store.patch`. `main.js` is ~1,000 lines of composition, pointer input, lane/view controllers, persistence wiring, loop/boot and the agent surface. Remaining: extract pointer + lane/view controllers. |
 | **F3 Source-table housing** | **Done** | Six-row `src/ui/source-table.js` (opened from the data group) over `src/state/bindings.ts`: each input reads a CSV column (`data`), a frame output (`1:1`/`z⁻¹`) or `—`. Labels carry the assignment (`A · Hex 1`, matching the import dropdown). Driven inputs are locked against local edits, CSV/LFO skip them, unplug restores the parked base, resize remaps parked bases, and a fresh import rebuilds the board. |
-| **F4 A11y + IA** | **Done** | DESIGN amended first (change protocol §13). Shipped: reflow/zoom contract, nibble spinbutton keyboard editing, landmarks/names/radiogroups, canvas alt, live status, reduced motion, 24 px targets, axe gate — then the author-approved IA pass: always-visible stage bar (lane + frames + split), module order `source | register edit | operate | derive | motion | view`, explicit `copy to…` menu, `width` rename + whole-word hex entry, reserved-space disabled placeholders, `?` keyboard map and truth-table semantics. Palette untouched (D10). |
+| **F4 A11y + IA** | **Done** | DESIGN amended first (change protocol §13). Shipped: reflow/zoom contract, nibble spinbutton keyboard editing, landmarks/names/radiogroups, canvas alt, live status, reduced motion, 24 px targets, axe gate — then the author-approved IA pass: always-visible stage bar (lane + frames + split), module order `source | register edit | operate | derive | motion | view`, explicit `copy to…` menu, `width` rename + whole-word hex entry, reserved-space disabled placeholders, `?` keyboard map and truth-table semantics. Palette untouched (D10). **D47 (2026-11-14) re-homed the later additions**: the `view` module moved to the top bar (`VIEW` + 2D/3D left of `?`), the hinge and copy menu moved into each pane head, the truth table became an always-present readout disclosure, and the controls row now renders five modules. |
 | **F5 Persistence & reach** | **Done** | `.bitwave` schema 2 (additive focus/frameVis, LFO mode/rate, dataset cursor) with a DOM-free app bridge; explicit `project…` menu (save/open/reset); debounced autosave + boot restore; `#bw=` URL-fragment share that wins over autosave; embedded 8-row demo dataset; visible dataset/status line that refuses empty/non-token CSVs; `?fresh` ephemeral sessions; stale `index.html.bak` deleted. Palette untouched (D10). |
 | **Agent interface** | **Done** | Additive agent layer (2026-11-08): `src/core/agent-*.ts` one registry/state/deeplink source; `window.bitwave` bridge (state/setters/call/subscribe/events) beside the untouched `window.BitWave`; hidden `#bitwave-state` + `body[data-agent-ready]`; `keys | agent` help-panel tab; `agent/cli.mjs` + `agent/mcp-server.mjs` (zero deps); generated `agent/manifest.json` + examples (`--check`); AGENTS/contract/llms/screenshot/ecosystem docs; hosted build serves the agent files. Default rendering pixel-identical (D39). |
 | **External routing** | **Done** | `.bitwave` schema 3 (expressions additive; schema 1/2 load); six source rows gain a validated `expr` editor; DAW-style Record toggle + bounded transient frame log + `export log`; expression-aware clocked pass (routes → expression sources → Z) with the previous row as `log.<frame>`; bridge `setExpression`/`record`/`getLog`, state `recording` + per-lane `expressions`; toolset 1.1.0. Float is a boundary authoring format (converted once to exact values). D40. |
 | **Frame navigation** | **Done (2026-11-14)** | A/B/Z1 readout labels are focus buttons bound to the whole-word hex entry (D41); the pop-out frame navigator is replaced by the stage-level **frames view** — equal cards per frame, lane columns, mini-splines, per-card eyes, `unpair B`, horizontal scroll arrows/track, `Lanes`/Esc return, and a perpetual `+` tile that names the 3-lane cap until dynamic lanes (D42). Canvas hidden while open; strip/meta/controls stay live; default pixels unchanged when closed. |
-| **Dynamic lanes (D43–D46)** | **Done (2026-11-14)** | **Core naming primitives** and **state lane-key identity** landed; **`.bitwave` schema 4 + migration (D44)**: `lanes` keyed by the stable lane key (`"1"`..`"13"`, gaps allowed, at most `APP_LANE_CAP` (8) lanes, ascending numeric order), schema 1/2/3 documents and `#bw=` links load and upgrade on read, 9 lanes/invalid keys refused, Z never stored; **compact share codec + budget proof (D45)**: canonical `#bw=` links are compact (8 lanes/256-bit = 1260 chars against the unchanged 2000 budget), legacy JSON links load, dataset then expressions drop with explicit flags; **live lane UI (D46)**: the tree holds the document's whole 1–8 lane set, the stage bar uses a native per-pane lane dropdown (`Lane 1`…`Lane 8`, `[data-agent-lane]`), the frames view `+` adds lanes and each lane head duplicates/deletes (reference-counted inline confirmation), the source table shows `2L` grouped rows and Record rows are `3L`; **agent-surface + docs slice (toolset 1.4.0)**: agent lane range 1–8 (`FrameRef.slotKey` optional, legacy lanes 1–3 only), frames `A`–`P`/`Z1`–`Z8`, `laneSelect` manifest selector, bridge refuses non-live lanes with `E_OUT_OF_RANGE`, `examples/eight-lanes.bitwave.json` + eight-lane verifier/screenshot, contract/AGENTS/llms/README/DESIGN/ecosystem docs updated. Gate counts: `npm test` 179, browser harness 59/59 (60/60 with parity vs the D46 UI artifact — 6/6 states pixel-identical), `agent/selftest.mjs` 26/26, `agent/verify-browser.mjs` 34/34, PWA 8/8. |
+| **Dynamic lanes (D43–D46)** | **Done (2026-11-14)** | **Core naming primitives** and **state lane-key identity** landed; **`.bitwave` schema 4 + migration (D44)**: `lanes` keyed by the stable lane key (`"1"`..`"13"`, gaps allowed, at most `APP_LANE_CAP` (8) lanes, ascending numeric order), schema 1/2/3 documents and `#bw=` links load and upgrade on read, 9 lanes/invalid keys refused, Z never stored; **compact share codec + budget proof (D45)**: canonical `#bw=` links are compact (8 lanes/256-bit = 1260 chars against the unchanged 2000 budget), legacy JSON links load, dataset then expressions drop with explicit flags; **live lane UI (D46)**: the tree holds the document's whole 1–8 lane set, the stage bar uses a native per-pane lane dropdown (`Lane 1`…`Lane 8`, `[data-agent-lane]`), the frames view `+` adds lanes and each lane head duplicates/deletes (reference-counted inline confirmation), the source table shows `2L` grouped rows and Record rows are `3L`; **agent-surface + docs slice (toolset 1.4.0)**: agent lane range 1–8 (`FrameRef.slotKey` optional, legacy lanes 1–3 only), frames `A`–`P`/`Z1`–`Z8`, `laneSelect` manifest selector, bridge refuses non-live lanes with `E_OUT_OF_RANGE`, `examples/eight-lanes.bitwave.json` + eight-lane verifier/screenshot, contract/AGENTS/llms/README/DESIGN/ecosystem docs updated. Gate counts at the time of the slice: `npm test` 179, browser harness 59/59 (60/60 with parity vs the then-current D46 UI artifact — 6/6 states pixel-identical), `agent/selftest.mjs` 26/26, `agent/verify-browser.mjs` 34/34, PWA 8/8. The later **D47 GUI rearrangement** intentionally changes the rendered re-homed regions (top bar, pane heads, readout row, removed bottom row), so `--compare` parity stops at the D47 artifact and the current browser gate is 61/61. |
 | **F6 Distribution** | **Done** | Hosted/installable PWA build (`dist/hosted/`): manifest + maskable icons, hash-versioned app-shell service worker, relative URLs, offline reload. The committed single-file `bitwave-v2.html` is untouched and still has zero external references (asserted). `npm run check:pwa` proves install/offline against the real built output; deploy/install/privacy guidance in [`docs/hosting.md`](docs/hosting.md). Tauri 2 deferred (D37). |
 
 ## F4 progress (2026-11-06) — complete
@@ -174,8 +174,9 @@ status line, §10.39–41 persistence invariants, §11 persistence checks, §12 
 **Presentation-only, session state (D40 follow-up).** The 3-D field can now fold which
 operand wing is far vs near per lane:
 
-- `S.slots[*].fold` (`"a-far"` default / `"b-far"`), toggled by `#foldBtn` (3-D only;
-  follows the active split pane). Z stays the fixed middle plate and the Z label keeps the
+- `S.lanes[*].fold` (`"a-far"` default / `"b-far"`), toggled by the bottom-view `#foldBtn`
+  at the time (D47 later re-homed the control into each pane head as a per-pane
+  `A far`/`B far` button). Z stays the fixed middle plate and the Z label keeps the
   true operand order (`A ⊕ B`); line style follows the operand (A solid, B dashed), not the
   position. Registers, bindings, operator and Z are unchanged (asserted in the browser
   harness).
@@ -295,7 +296,63 @@ pixel-identical to the D46 UI artifact.
   observation logger stays focused-lane by design; share length is a measured metric, not
   a lane constraint.
 
+## GUI rearrangement (2026-11-14) — done (D47)
+
+**Layout re-homing, not new logic.** The author's 2026-11-14 mockup (`minor-guiflip`) moved
+the wave-view control, the hinge and the copy menu out of the bottom row and folded the
+truth table into the readout row; every behaviour kept its old semantics and no hue,
+token, font or style was added.
+
+- **Top bar.** `VIEW` + the existing `#depthBtn` now sit in a named `view` group in
+  `header`, immediately left of the help `?`; id, `aria-pressed`, title and
+  Tab + `Enter`/`Space` are unchanged, and the digit `3` is still the `Alt+3` lane
+  shortcut (there was never a dedicated `3` view shortcut). The bottom VIEW group is
+  deleted; the controls row renders five named modules with no empty band.
+- **Pane heads (stage bar).** Each visible pane head keeps dot, lane dropdown,
+  frames/split, expression and gains its own 3-D hinge (`A far`/`B far`, that lane's
+  `fold`, hidden in 2-D, independent per pane in split) and its own `copy to…` opener.
+  `createCopyMenu` is now `open(anchor, sourceLane)`: items are the live lanes except the
+  pane's lane, the menu name is `copy lane <source> to`,
+  focus-in/arrows/Home/End/Esc/outside-click/refocus and the copy transaction are
+  unchanged; the opener is `aria-disabled` with a reason at one lane. Heads wrap at
+  360/720 instead of scrolling sideways.
+- **Truth disclosure.** `#truth` is no longer `.abOnly`; `#truthBlock` wraps a
+  `#truthToggle` header button (live algebra, chevron,
+  `aria-expanded`/`aria-controls`, 24 px target, accessible name
+  `truth table for lane <n> <algebra>`) and the unchanged `role="table"` body. It is
+  present in A-only/A·B/3-D/split, default expanded, toggles in place, and its fixed
+  inline size keeps the hex readouts from moving. Open state is the transient
+  `S.truthOpen` — never in `.bitwave`, the share link or the agent state.
+- **A11y/no-regression.** Native buttons, focus-visible, reduced-motion removes the
+  disclosure transition; the five `data-agent-*` selectors and `#depthBtn` are unchanged,
+  so `agent/manifest.json`/toolset do not bump; `verify-browser` stays 34/34.
+- **Docs/screens.** DESIGN §2/§8/§10.60–62/§11/§12/§13 amended first and D47 recorded;
+  the six `docs/agent/*.png` shots are recaptured from the rearranged artifact and
+  `docs/AGENT-SCREENSHOTS.md` names the new control homes; README/STATUS/AGENTS updated
+  where layout references changed. The re-homed regions are the documented parity
+  exception (the toolset-1.4.0 artifact differs there by design).
+
 ## Verified this session
+
+### GUI-rearrangement slice gates (2026-11-14, D47)
+
+- `npm test` → **179 tests, all pass, 0 fail** (unchanged; the change is DOM/UI only).
+- `npm run typecheck` → **clean**.
+- `node agent/gen-agent-artifacts.mjs --check` → **8 files current** (no agent contract
+  change; `manifest.json`/examples byte-identical).
+- `node agent/selftest.mjs` → **26/26**.
+- `npm run build` → **`bitwave-v2.html` 341.8 KB**, single file, no external references.
+- `node tools/browser-check.mjs` → **61/61** (up from 59: top-bar re-homing, per-pane
+  hinge/copy source semantics, always-present truth disclosure with readout-stability
+  assertions); `--compare` against the pre-D47 artifact is intentionally not a parity
+  gate for this slice — measured, it reports **6/6 states differing** (`2d-default`,
+  `frames-open`, `3d`, `3d-focus-z1`, `csv-import`, `breakpoint-720`) exactly in the
+  re-homed regions (canvas, strip, values and readout order otherwise identical; D47
+  records the exception).
+- `node agent/verify-browser.mjs` → **34/34** (five documented `data-agent-*` selectors
+  unchanged).
+- `node tools/build-pwa.mjs && node tools/check-pwa.mjs` → **8/8**.
+
 
 ### Agent-surface slice gates (2026-11-14, D46 / toolset 1.4.0)
 
@@ -485,7 +542,7 @@ pixel-identical to the D46 UI artifact.
 | Artifact | Purpose |
 |---|---|
 | [`src/`](src/index.html) | App source: `index.html` template, `main.js` (~1,000-line composition + controllers), `styles/app.css` |
-| [`src/state/instrument.ts`](src/state/instrument.ts) | DOM-free state tree, frame names, factories and selection helpers |
+| [`src/state/instrument.ts`](src/state/instrument.ts) | DOM-free state tree, frame names, factories and selection helpers; transient session fields (`truthOpen`, fold, view) |
 | [`src/state/store.ts`](src/state/store.ts) | Transaction boundary: `get`/`patch`/`subscribe`, nested patches collapse |
 | [`src/state/actions.ts`](src/state/actions.ts) | Commands: core unary ops/presets, focus/binop/visibility/bit/nibble/hex/copy/unpair |
 | [`src/state/bindings.ts`](src/state/bindings.ts) | Six input bindings, data/frame/none sources, driven + parked-base helpers |
@@ -493,11 +550,11 @@ pixel-identical to the D46 UI artifact.
 | [`src/state/project-bridge.ts`](src/state/project-bridge.ts) | App ↔ `.bitwave` schema-4 bridge: lane-key map, capture/apply, expressions, wider-document filtering, unknown-field preservation |
 | [`src/state/record.ts`](src/state/record.ts) | Transient DAW-style frame log (bounded ring, `lastLog`, CSV export) |
 | [`src/state/dataset.ts`](src/state/dataset.ts) | Dataset state (columns, rows, cursor) shared by the shell and canvas code |
-| [`src/render/`](src/render/canvas.js) | Canvas + 3-D field, strip, readouts; the only DOM/canvas renderers |
+| [`src/render/`](src/render/canvas.js) | Canvas + 3-D field, strip, readouts; the only DOM/canvas renderers (readouts owns the truth disclosure render) |
 | [`src/ui/source-table.js`](src/ui/source-table.js) | The six-row matrix panel: data/frame/expr/none source, validated expression editor, B-style labels, state chips |
 | [`src/ui/record.js`](src/ui/record.js) | Record toggle/count/export-log UI + store subscription |
-| [`src/ui/`](src/ui/frame-navigator.js) | Frames view (stage card grid + focus lens), stage bar (lane/frames/split/`Lanes`), copy menu, project menu, keyboard map + map panel, CSV stepper, controls + LFO, committed-change live status |
-| [`src/ui/copy-menu.js`](src/ui/copy-menu.js) | Explicit `copy to…` menu: focus-in, arrow nav, Esc, spoken copy confirmation |
+| [`src/ui/`](src/ui/frame-navigator.js) | Frames view (stage card grid + focus lens), stage bar (lane/frames/split/per-pane hinge+copy/`Lanes`), copy menu, project menu, keyboard map + map panel, CSV stepper, controls + LFO, committed-change live status |
+| [`src/ui/copy-menu.js`](src/ui/copy-menu.js) | Explicit per-pane `copy to…` menu (`open(anchor, sourceLane)`): focus-in, arrow nav, Esc, spoken copy confirmation |
 | [`src/ui/project-menu.js`](src/ui/project-menu.js) | `project…` menu: save/open/reset with the same focus contract |
 | [`src/ui/help.js`](src/ui/help.js) | `?` keyboard-map panel — the one declared shortcut surface |
 | [`src/io/`](src/io/observations.js) | Observation logger/CSV export, `.bitwave` download/read, autosave, URL share |
@@ -521,7 +578,7 @@ pixel-identical to the D46 UI artifact.
 | [`examples/demo.bitwave.json`](examples/demo.bitwave.json) | Versioned project document (lanes 1/2/3; routes + parked bases; dataset) |
 | [`spike/routing-matrix.html`](spike/routing-matrix.html) | The reference housing prototype that F3 implements (360 lines) |
 | [`spike/f4-ia.html`](spike/f4-ia.html) | The author-approved F4 IA layout mockup (annotated, 1440/720/360 screenshots) |
-| [`tools/browser-check.mjs`](tools/browser-check.mjs) | Zero-dependency CDP harness: 54 checks (55 with `--shots` or `--compare`), incl. reflow/zoom, keyboard editing, IA, axe, F5 persistence, the 3-D hinge and readout stability |
+| [`tools/browser-check.mjs`](tools/browser-check.mjs) | Zero-dependency CDP harness: **61 checks (62 with `--shots` or `--compare`)**, incl. reflow/zoom, keyboard editing, top-bar view control, per-pane hinge/copy, truth disclosure, IA, axe, F5 persistence, the 3-D hinge and readout stability |
 | [`tools/build-pwa.mjs`](tools/build-pwa.mjs) | Hosted/PWA build: `dist/hosted/` from the untouched artifact + served agent files; injects manifest/SW registration, writes the hash-versioned worker |
 | [`tools/check-pwa.mjs`](tools/check-pwa.mjs) | Zero-dependency PWA gate: local static server + CDP; manifest/icons, worker control, hash cache, served agent files, server-down offline reload, artifact cleanliness (8 checks) |
 | [`tools/make-pwa-icons.py`](tools/make-pwa-icons.py) | Reproducible icon set (`assets/pwa/`): 192/512/maskable/32 from the palette, Pillow only |

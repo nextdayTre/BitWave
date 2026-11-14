@@ -45,6 +45,11 @@ the same object.
    amber is structure.
 5. **Motion exists to show causation.** Animation lets you watch a state change happen.
    It is never applied as polish. Nothing animates that you did not cause.
+6. **Chrome is re-homed, not redesigned.** A layout change moves an existing control to
+   the surface it belongs to and removes the row it left behind; it never invents a new
+   style, size or hue. D47 is the reference case: the wave-view toggle moved to the top
+   bar, the 3-D hinge and `copy to…` menu moved into each pane head, and the truth table
+   became a disclosure in the readout row — every behaviour kept its old semantics.
 
 ---
 
@@ -443,7 +448,9 @@ The easing constant is deliberately high (`0.24`) — fast enough to feel like t
   `role="radiogroup"` with `role="radio"` + `aria-checked` and a roving `tabindex`**;
   true toggles keep `aria-pressed`. Visual `.on` may remain, but state is programmatic —
   a selected segment must never be colour-only (SC 1.4.1).
-- **Truth table** (`.truth`) — mono 10.5px, 4 columns `a b → n`. The `n` column is
+- **Truth table** (the body of `.truth-disclosure`) — mono 10.5px, 4 columns `a b → n`.
+  D47 nests it in the readout-row disclosure described above; the header text moved from a
+  static `.truth-h` line to the disclosure button. The `n` column is
   separated by a 1px rule: it is data *about* the register, not part of the algebra, and
   must not read as a fifth logic cell. It carries table semantics (`role="table"` with
   row/cell roles or a real `<table>`) so a screen reader hears `a 1, b 0, n 9` as rows,
@@ -479,31 +486,60 @@ The easing constant is deliberately high (`0.24`) — fast enough to feel like t
   lane 2) plus any routed CSV column names. The depth axis shows the
   *relationship between the inputs and the result*; it deliberately does **not** imply 256
   morphing frames.
-- **3-D hinge** (`#foldBtn`, visible only in 3-D) — a per-lane presentation control that
-  swaps which operand is at frame 1 (far) and frame 256 (near). Z stays the fixed middle
-  plate, so the metaphor is a hinge with two foldable wings; the default `A far / B near`
-  preserves the existing view. The swap never changes registers, bindings, the operator or
-  the Z label (`128 · Z1 · A ⊕ B` remains the truth); line style follows the operand
-  (A solid, B dashed), not the position. The control follows the active pane in split 3-D.
-  This is **session-only presentation state** for now — it is not in `.bitwave` or the agent
-  state; persisting `lanes.<n>.fold` belongs to the dynamic-lanes schema pass
+- **3-D hinge** (`.pane-fold`, visible only in 3-D, one per pane head) — a per-lane
+  presentation control that swaps which operand is at frame 1 (far) and frame 256 (near).
+  Z stays the fixed middle plate, so the metaphor is a hinge with two foldable wings; the
+  default `A far / B near` preserves the existing view. The swap never changes registers,
+  bindings, the operator or the Z label (`128 · Z1 · A ⊕ B` remains the truth); line style
+  follows the operand (A solid, B dashed), not the position. **D47 re-homes it from the old
+  bottom VIEW row into each stage-bar pane head**, where it acts on that pane's lane: in
+  split 3-D the two hinges are independent (toggling one never moves the other), and
+  neither changes the focused lane. It is hidden in 2-D. This is **session-only
+  presentation state** — it is not in `.bitwave` or the agent state; persisting
+  `lanes.<n>.fold` belongs to the dynamic-lanes schema pass
   ([`docs/DYNAMIC-LANES.md`](docs/DYNAMIC-LANES.md)).
+- **Top bar** (`header`) — brand and subtitle at the left, the shared register width
+  slider (`width`) in the middle, then the **wave-view control** and the help `?` at the
+  right. D47 moves the `3D` toggle here (`#depthBtn`, inside a named `view` group with a
+  small uppercase `VIEW` label immediately left of `?`): it keeps its id, `aria-pressed`,
+  title and keyboard path (Tab, `Enter`/`Space`), and it toggles the 2-D/3-D lens — it never
+  writes a register or changes lane state. The bottom controls row therefore has **no view
+  group** (five modules: source | register edit | operate | derive | motion), and the
+  header holds the control without horizontal overflow at 360/720/1440 px (at the 720
+  breakpoint the width slider wraps to its own row and VIEW stays beside `?`).
+- **Truth disclosure** (`.truth-disclosure`, `.truth-toggle`) — D47: the truth table is a
+  **collapsible disclosure in the readout/meta row and is present in every view** (A-only,
+  A·B, 3-D and split), not only when operand B is shown. The header is a native button
+  carrying the live algebra (`A ⊕ B → Z1`, `G ⊕ H → Z4`, or `G + H → Z4`), a chevron,
+  `aria-expanded`, `aria-controls`, the 24×24 px floor and the keyboard path
+  (Tab + `Enter`/`Space`); its accessible name is `truth table for lane <n> <algebra>`. The
+  body expands/collapses in place, default **expanded**, and keeps the same live
+  `role="table"` grid (`a b → n` with the four counts, or the ADD/SUB carry/borrow row) —
+  the counts and semantics are unchanged. Open/closed is the transient session preference
+  `S.truthOpen`, never persisted in `.bitwave`, the share link or the agent state. The
+  block has a fixed inline size and is the **first readout after the badges**, so its
+  position is identical in A-only and A·B modes (a wide `dec` readout cannot push it to
+  the right); toggling it can never move the hex readouts horizontally. No new hue; no
+  animation under reduced motion.
 - **Stage bar** (`.stage-bar`) — **always visible**, and the single canonical home of the
   lane selector, the `frames` view toggle (and `Lanes` while the frames view is open),
-  `split` and the routing-aware lane expression
-  (`LANE 1 · A ⊕ B → Z1`). The lane selector is one native
+  `split`, the per-pane 3-D hinge, the per-pane `copy to…` opener and the routing-aware
+  lane expression (`LANE 1 · A ⊕ B → Z1`). The lane selector is one native
   `<select class="op lane-select">` **per pane** (D46): options are the live lanes,
   labelled `Lane 1`…`Lane 8` with the stable lane key as the value, so adding lanes
-  cannot grow the bar sideways. In split 3-D there are two selects and the second is
-  named **"Lane (second pane)"**; split stays exactly two panes. The native select is the
-  declared keyboard path (Tab to it, then arrows/Home/End/type-ahead); `Alt+1…8` selects
-  a live lane by its number as a shortcut (an absent/gapped key is a no-op). Every live
+  cannot grow the bar sideways. In split 3-D there are two selects, two hinges and two
+  copy openers; the second is named **"Lane (second pane)"**, and split stays exactly two
+  panes. The native select is the declared keyboard path (Tab to it, then
+  arrows/Home/End/type-ahead); `Alt+1…8` selects a live lane by its number as a shortcut
+  (an absent/gapped key is a no-op). Every live
   lane shares register width `S.N` and each holds its own operand pair and derived frame
   (`A/B/Z1`, `C/D/Z2`, …, `O/P/Z8`), binary/arithmetic operator, B-phase and the source
-  bindings. In 2-D `split` stays in place `aria-disabled`; in 3-D it splits the stage into
-  two side-by-side axonometric visualizers separated by a `1px` `--line` rule while the
-  strip, truth table and controls stay bound to the focused lane. Per-pane focus dots and
-  the second pane head only exist in split 3-D. Drawn exclusively from `--panel-hi`,
+  bindings. In 2-D `split` stays in place `aria-disabled` and the hinge is hidden; in 3-D
+  it splits the stage into two side-by-side axonometric visualizers separated by a `1px`
+  `--line` rule while the strip, truth table and controls stay bound to the focused lane.
+  Per-pane focus dots, the second select, the second hinge and the second copy opener only
+  exist in split 3-D. D47 adds the hinge and copy opener to every pane head; the head wraps
+  (rather than scrolls sideways) at 360/720 px. Drawn exclusively from `--panel-hi`,
   `--line`, `--text`, `--dim`, `--dimmer` and `--accent`; the select uses the same tokens
   and is at least 24 px tall.
 - **Frames view** (`.frames-view`) — the `frames` button swaps the **stage** to a card
@@ -530,13 +566,17 @@ The easing constant is deliberately high (`0.24`) — fast enough to feel like t
   the view adds no hue and no motion beyond the scroll. Closing returns to the exact
   2-D/3-D view and focus; with the default three lanes the view keeps the same card
   geometry (only the lane-head controls and the `+` hint are new).
-- **Copy menu** (`.copy-menu`) — `copy to…` opens an explicit `role="menu"` with one
-  `role="menuitem"` per **live lane except the focused one** (built on every open); focus
-  moves into the menu, `↑/↓`/`Home`/`End` move between items, `Enter` copies, `Escape` or
-  an outside click closes and returns focus, and the live status says
-  `copied lane 1 → lane 2`. There is no invisible armed mode. `copyLane` clones the focused
-  lane's base registers; routes belong to the rack. Copying needs an existing destination
-  lane; creating one is the frames view's `dup`/`+`.
+- **Copy menu** (`.copy-menu`) — each pane head owns a `copy to…` opener (D47). It opens an
+  explicit `role="menu"` anchored under that opener with one `role="menuitem"` per **live
+  lane except the pane's source lane** (built on every open; the menu's accessible name is
+  `copy lane <source> to`); focus moves into the menu, `↑/↓`/`Home`/`End` move between
+  items, `Enter` copies, `Escape` or an outside click closes and returns focus to that
+  opener, and the live status says `copied lane 1 → lane 2`. In split 3-D the source lane is
+  the pane's own lane, not necessarily the focused one. There is no invisible armed mode.
+  `copyLane` clones the source lane's base registers; routes belong to the rack. Copying
+  needs an existing destination lane, so the opener stays in place and becomes
+  `aria-disabled` with a reason when only one lane is live; creating a lane is the frames
+  view's `dup`/`+`.
 - **Register edit module** (`.edit-target`, `.hex-entry`) — the read-only edit target
   (`edit · A`) plus the whole-word mono hex entry; the width slider itself stays in the
   header. The module is always present; the entry is disabled and explained when the
@@ -827,6 +867,28 @@ something that looked fine until it was measured.
     environments, LFO snapshots, CSV column mapping, resize remapping, Record rows, the
     observation/export-log columns and the agent `getState()` lane map all iterate the
     live lanes — adding or deleting a lane changes them together, in one transaction.
+60. **The wave-view control lives in the top bar.** D47: the 2-D/3-D toggle (`#depthBtn`,
+    `aria-pressed`, title, Tab + `Enter`/`Space`) sits in a named `view` group with a small
+    `VIEW` label immediately left of the help `?`; the bottom controls row has five named
+    modules (`source`, `register edit`, `operate`, `derive`, `motion`) and **no view
+    group or empty band**. The header layout must hold at 360/720/1440 px without
+    horizontal overflow or a clipped control. Re-homing the control changes no behaviour:
+    it still only toggles the view lens and brings operand B into existence on entry.
+61. **The hinge and the copy menu are per-pane controls.** D47: every pane head owns its
+    own 3-D hinge (`A far`/`B far`, visible only in 3-D) and its own `copy to…` opener.
+    The hinge toggles **that pane's lane** fold — in split 3-D the two panes are
+    independent — and the copy menu's source is **that pane's lane**, so its items are the
+    live lanes except that source. Neither control changes the focused lane, writes a
+    register or alters Z. With a single live lane the copy opener stays in place,
+    `aria-disabled`, with a reason (no other lane to copy into).
+62. **The truth table is an always-present disclosure, never a view-gated block.** D47:
+    the header button (`A ⊕ B → Z1` etc., `aria-expanded`/`aria-controls`, 24 px target,
+    Tab + `Enter`/`Space`) is visible in A-only, A·B, 3-D and split; the body keeps the
+    same live `role="table"` grid and counts, including the ADD/SUB carry/borrow variant.
+    It defaults expanded, expands/collapses in place, and its fixed block width means the
+    toggle can never move the hex readouts horizontally. `S.truthOpen` is transient
+    session state: it is not in `.bitwave`, the share link or the agent state, and no
+    toggle writes a register or changes the view.
 
 ---
 
@@ -871,9 +933,21 @@ The visual contract is measurable, so measure it rather than eyeballing:
   renumbering) and a freed key is reusable; the source table then shows `2L` rows grouped
   under a lane header; the Record export header lists `3L` frames; an 8-lane 256-bit
   document round-trips through a compact `#bw=` link within 2000 characters.
-- 3-D hinge: in 3-D `#foldBtn` reads `A far`; pressing it reads `B far`, moves the dashed B
-  plate from near to far (and A solid to near), and leaves A/B/Z values and the Z label
-  unchanged; the control is hidden in 2-D and follows the active split pane.
+- 3-D hinge: in 3-D each visible pane head carries its own hinge; it reads `A far`; pressing
+  it reads `B far`, moves that pane lane's dashed B plate from near to far (and A solid to
+  near), and leaves A/B/Z values and the Z label unchanged; the control is hidden in 2-D
+  and, in split, the two hinges are independent (toggling one never changes the other).
+- Top bar: the `VIEW` label + `3D` toggle sit in the header immediately left of the help
+  `?`; the bottom controls row has five named modules and no view group/empty band; the
+  toggle round-trips through click and `Enter`, its `aria-pressed` and view state agree,
+  and the header still holds at 360/720/1440 with zero horizontal overflow (D47).
+- Truth disclosure: the header button (`A ⊕ B → Z1` for lane 1, `G ⊕ H → Z4` for lane 4,
+  `G + H → Z4` for arithmetic) carries `aria-expanded`/`aria-controls`, is at least 24 px,
+  and toggles with click and `Enter`; the body is the same live `role="table"` grid and
+  the same counts (`23 11 9 21` for the §11 pair; the ADD/SUB carry/borrow row for
+  arithmetic); it is present and open by default in A-only, A·B, 3-D and split; collapsing
+  and reopening never move `#hex`/`#hexA`/`#hexZ` horizontally; the preference is not in
+  the project/link/agent state (D47).
 - Readout stability: with the trend badge forced through `level`, `step-up` and `step-down`
   in 2-D and 3-D, the badge width and the `#hex`/`#hexA`/`#hexZ` positions must not move;
   the badge word must not overflow its slot.
@@ -922,9 +996,16 @@ The visual contract is measurable, so measure it rather than eyeballing:
   `window.BitWave` surface, deeplink reloads twice, the agent tab, no overflow at
   360/720/1440 and zero console errors. The default 2-D view is compared against the
   artifact that introduced the current UI slice (`browser-check --compare`); the
-  external-routing slice intentionally adds the Record control, and the dynamic-lanes slice
-  intentionally changes the stage-bar lane control and the frames-view lane heads (D46),
-  so those states are expected to differ from the pre-slice artifact.
+  external-routing slice intentionally adds the Record control, the dynamic-lanes slice
+  intentionally changes the stage-bar lane control and the frames-view lane heads (D46), and
+  the GUI-rearrangement slice re-homes the view toggle, the hinge/copy controls and the
+  truth table into the readout disclosure (D47), so those states are expected to differ
+  from the pre-slice artifacts. `--compare` is therefore not a valid parity gate across
+  D47: parity for this slice is measured against the artifact that introduces it, and the
+  re-homed regions are recorded in D47. Measured at review time: `--compare` against the
+  toolset-1.4.0 HEAD artifact reports **6/6 states differing** (`2d-default`, `frames-open`,
+  `3d`, `3d-focus-z1`, `csv-import`, `breakpoint-720`), with the canvas, strip, values and
+  readout order otherwise identical — i.e. only the deliberately re-homed regions differ.
 - **Agent lane surface (toolset 1.4.0):** the lane enum is the shipped 1–8 range and the
   frame vocabulary is `A`–`P`/`Z1`–`Z8`; the stage-bar dropdown is the documented lane
   selector (`ui.laneSelect`, active select carries `[data-agent-lane]`) and names the
@@ -932,8 +1013,10 @@ The visual contract is measurable, so measure it rather than eyeballing:
   carry return `E_OUT_OF_RANGE` with no state change and no event; an eight-lane schema-4
   document loads through its canonical compact `#bw=` link reporting eight stable lane
   keys, `setLane(8)` works, and the frames view renders 24 cards (`A`–`P`/`Z1`–`Z8`).
-  `node agent/verify-browser.mjs` is **34/34** and the rebuild stays **6/6 states
-  pixel-identical** to the D46 UI artifact (`browser-check --compare`).
+  `node agent/verify-browser.mjs` is **34/34** and the D46 rebuild stayed **6/6 states
+  pixel-identical** to the D46 UI artifact (`browser-check --compare`); the D47 layout
+  slice intentionally re-homes the view/hinge/copy/truth controls, so that parity note
+  stops at the D47 artifact.
 - **External routing (schema 3; schema 4 additive):** the source table offers `expr` rows; a valid expression
   changes the operand and Z on the next evaluation, an invalid one restores the previous
   text and leaves the registers alone (`E_INVALID_EXPRESSION` from the bridge); Record
@@ -945,13 +1028,16 @@ The visual contract is measurable, so measure it rather than eyeballing:
   eight-lane frames-view states.
 
 - **Information architecture:** the stage bar is visible in 2-D and 3-D and is the only
-  home of the lane selector (a native per-pane dropdown), the `frames` opener and `split`
-  (disabled in 2-D); the controls row renders the six named modules in order at every
-  width; inapplicable controls are present and `aria-disabled`, never absent; `copy to…`
-  is a focus-in menu that Esc closes and whose copy is spoken (listing the live lanes
-  except the focused one); the hex entry right-aligns a word, refuses invalid input and
-  reverts on Esc; `?` opens the keyboard map; the truth table exposes `role="table"`
-  rows/cells.
+  home of the lane selector (a native per-pane dropdown), the `frames` opener, `split`, the
+  per-pane 3-D hinge and the per-pane `copy to…` opener (disabled in 2-D for split, hidden in
+  2-D for the hinge); the controls row renders **five** named modules in order at every
+  width (`source | register edit | operate | derive | motion`), with no view group; the
+  top bar owns the `VIEW` label + `2D/3D` toggle left of `?`; inapplicable controls are
+  present and `aria-disabled`, never absent; `copy to…` is a focus-in per-pane menu that
+  Esc closes and whose copy is spoken (listing the live lanes except that pane's source
+  lane, and aria-disabled at one lane); the hex entry right-aligns a word, refuses invalid
+  input and reverts on Esc; `?` opens the keyboard map; the truth table exposes
+  `role="table"` rows/cells inside the always-present readout disclosure.
 
 A headless-Chrome CDP pass drives these in seconds: `npm run check:browser`
 ([`tools/browser-check.mjs`](tools/browser-check.mjs), zero dependencies) asserts
@@ -1041,6 +1127,17 @@ them.
   widens the agent surface to the same live 1–8 range (toolset 1.4.0: frames
   `A`–`P`/`Z1`–`Z8`, the stage-bar dropdown as the documented lane selector, non-live
   lane setters refused, an eight-lane state verified and screenshotted).
+- **GUI rearrangement (2026-11-14, D47)** — layout re-homing with unchanged behaviour:
+  the `VIEW` + 2D/3D toggle moves to the top bar immediately left of `?` (the bottom VIEW
+  row is removed and the controls row keeps five modules); each stage-bar pane head gains
+  its own 3-D hinge (`A far`/`B far`, independent per pane in split) and its own `copy to…`
+  menu (source = that pane's lane, destinations exclude it, disabled with a reason at one
+  lane); the truth table becomes a collapsible disclosure in the readout row, present in
+  A-only/A·B/3-D/split, default expanded, header always visible with `aria-expanded`/
+  `aria-controls` and a 24 px target, body in place with unchanged `role="table"` content
+  and counts, session-only open state (`S.truthOpen`), and no horizontal movement of the
+  hex readouts when toggled. No new hue, no new style; the re-homed regions are the
+  documented parity exception.
 
 ### Next
 
@@ -1078,7 +1175,8 @@ them.
    `node tools/browser-check.mjs --compare <old-artifact>` (six states, pixel-identical) —
    unless a reviewed UI slice intentionally changes the rendered instrument, in which case
    compare against the artifact that introduced that slice and record the changed states
-   (as D40 did for Record and D46 does for the lane dropdown and frames-view lane heads).
+   (as D40 did for Record, D46 does for the lane dropdown and frames-view lane heads, and
+   D47 does for the re-homed view control, hinge/copy controls and truth disclosure).
    `index.html` stays untouched as the reference build.
 6. **Any new control must declare its keyboard path and accessible name in §8** and
    implement it before shipping. A control a keyboard-only user cannot reach is not done.
