@@ -79,19 +79,23 @@ timestamps, randomness or locale formatting. A receiver must respect `width` —
 
 `window.bitwave.getState()` / `#bitwave-state` carry the view state: `schemaVersion`,
 `width`, `lane`, `frame`, `view`, `lanes` (frames, sources, driven flags, derived values),
-`lfo`, `dataset`, `editing`, `deeplink`, `bridge`. The shape is additive: keys may be
-added, never repurposed without a schema bump. A consumer should accept
+`lfo`, `dataset`, `editing`, `deeplink`, `bridge`. `lanes` reports exactly the live set —
+the shipped instrument holds 1–8 lanes (the default document has three), keyed by the
+stable lane key and named from it (`A`–`P`, `Z1`–`Z8` at the cap). The shape is additive:
+keys may be added, never repurposed without a schema bump. A consumer should accept
 `schemaVersion: 1`, and refuse or degrade on newer versions rather than guess.
 
 ### 3. Deeplink (`#bw=`)
 
 The whole view state as a URL fragment:
-`bitwave-v2.html#bw=<unpadded base64url(UTF-8 JSON of a .bitwave schema-4 document)>`.
-Canonical links omit `savedAt`, so equal state ⇒ equal link, and the payload stays within
-the 2000-character share budget (a dataset that would overflow is dropped and flagged
-`datasetDropped`). This is the human-portable carrier: paste a link and the receiving
-BitWave reproduces the state with no server. For a portable base, build it with an
-`http(s)` URL; over `file://` the fragment only works against the same file path.
+`bitwave-v2.html#bw=<unpadded base64url(UTF-8 compact JSON array)>` — the array expands to
+a `.bitwave` schema-4 document (legacy JSON-document links still load). Canonical links
+omit `savedAt`, so equal state ⇒ equal link, and the payload stays within the
+2000-character share budget (the dataset drops first, then expression sources, each flagged
+`datasetDropped`/`expressionsDropped`). This is the human-portable carrier: paste a link
+and the receiving BitWave reproduces the state with no server. For a portable base, build
+it with an `http(s)` URL; over `file://` the fragment only works against the same file
+path.
 
 ### 4. Envelope and manifest
 
@@ -99,8 +103,9 @@ Every tool answer uses one envelope — `{ ok, schemaVersion, tool, data, deepli
 on success, `{ ok:false, schemaVersion, tool, error:{ code, message, hint? }, warnings }`
 on failure — with a closed error-code set. The manifest
 (`agent/manifest.json`, byte-identical to `getManifest()`) is the machine-readable
-identity: id `bitwave`, toolset `1.3.0`, `schemaVersion: 1`, `urls`, `deeplink`,
-`ui` selectors, `tools`, `errorCodes`, `invariants`, and the reserved `relatedTools`.
+identity: id `bitwave`, toolset `1.4.0`, `schemaVersion: 1`, `urls`, `deeplink`,
+`ui` selectors (including `ui.laneSelect` for the stage-bar lane dropdown), `tools`,
+`errorCodes`, `invariants`, and the reserved `relatedTools`.
 
 A future handoff would populate `relatedTools` — for example:
 

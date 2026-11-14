@@ -5,9 +5,9 @@
   "data": {
     "id": "bitwave",
     "title": "BitWave",
-    "version": "1.3.0",
+    "version": "1.4.0",
     "schemaVersion": 1,
-    "description": "BitWave renders a bit register as a wavetable. Compute Z = A op B for any lane, compare operators, parse CSV/TSV datasets and build canonical #bw= deeplinks from one shared, deterministic core.",
+    "description": "BitWave renders a bit register as a wavetable: compute Z = A op B for any lane (the shipped range is 1–8; the default instrument boots with 3), compare operators, parse CSV/TSV datasets and build canonical #bw= deeplinks from one shared, deterministic core.",
     "urls": {
       "app": "bitwave-v2.html",
       "manifest": "agent/manifest.json",
@@ -30,6 +30,7 @@
       "stateSelector": "#bitwave-state",
       "panelSelector": "[data-agent-panel]",
       "tabSelector": "[data-agent-tab]",
+      "laneSelect": "#stageBar .lane-select",
       "laneSelector": "[data-agent-lane]",
       "frameSelector": "[data-agent-frame]"
     },

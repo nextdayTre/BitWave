@@ -1,0 +1,158 @@
+{
+  "schema": 4,
+  "app": "bitwave",
+  "savedAt": "2026-11-14T00:00:00.000Z",
+  "N": 64,
+  "view": {
+    "lane": "8",
+    "view3d": false,
+    "split3d": false,
+    "splitPair": [
+      "7",
+      "8"
+    ],
+    "activePane": 0,
+    "lfoMode": "rotcw",
+    "lfoRate": 4
+  },
+  "lanes": {
+    "1": {
+      "a": "8ADEFEDA85210125",
+      "b": "FFFFFFFF00000000",
+      "showB": true,
+      "binop": "xor",
+      "edit": "a",
+      "seededB": true,
+      "lfoB": "0",
+      "colA": -1,
+      "colB": -1,
+      "focus": "a",
+      "frameVis": {
+        "a": true,
+        "b": true,
+        "z": true
+      }
+    },
+    "2": {
+      "a": "0123456789ABCDEF",
+      "b": "FEDCBA9876543210",
+      "showB": true,
+      "binop": "and",
+      "edit": "a",
+      "seededB": true,
+      "lfoB": "0",
+      "colA": -1,
+      "colB": -1,
+      "focus": "a",
+      "frameVis": {
+        "a": true,
+        "b": true,
+        "z": true
+      }
+    },
+    "3": {
+      "a": "0F0F0F0F0F0F0F0F",
+      "b": "F0F0F0F0F0F0F0F0",
+      "showB": true,
+      "binop": "or",
+      "edit": "a",
+      "seededB": true,
+      "lfoB": "0",
+      "colA": -1,
+      "colB": -1,
+      "focus": "a",
+      "frameVis": {
+        "a": true,
+        "b": true,
+        "z": true
+      }
+    },
+    "4": {
+      "a": "AAAAAAAAAAAAAAAA",
+      "b": "5555555555555555",
+      "showB": true,
+      "binop": "xor",
+      "edit": "a",
+      "seededB": true,
+      "lfoB": "0",
+      "colA": -1,
+      "colB": -1,
+      "focus": "a",
+      "frameVis": {
+        "a": true,
+        "b": true,
+        "z": true
+      }
+    },
+    "5": {
+      "a": "0000000000000001",
+      "b": "0000000000000002",
+      "showB": true,
+      "binop": "add",
+      "edit": "a",
+      "seededB": true,
+      "lfoB": "0",
+      "colA": -1,
+      "colB": -1,
+      "focus": "a",
+      "frameVis": {
+        "a": true,
+        "b": true,
+        "z": true
+      }
+    },
+    "6": {
+      "a": "FFFFFFFFFFFFFFFF",
+      "b": "0000000000000001",
+      "showB": true,
+      "binop": "sub",
+      "edit": "a",
+      "seededB": true,
+      "lfoB": "0",
+      "colA": -1,
+      "colB": -1,
+      "focus": "a",
+      "frameVis": {
+        "a": true,
+        "b": true,
+        "z": true
+      }
+    },
+    "7": {
+      "a": "123456789ABCDEF0",
+      "b": "0FEDCBA987654321",
+      "showB": true,
+      "binop": "xor",
+      "edit": "a",
+      "seededB": true,
+      "lfoB": "0",
+      "colA": -1,
+      "colB": -1,
+      "focus": "a",
+      "frameVis": {
+        "a": true,
+        "b": true,
+        "z": true
+      }
+    },
+    "8": {
+      "a": "DEADBEEFCAFEBABE",
+      "b": "0123456789ABCDEF",
+      "showB": true,
+      "binop": "xor",
+      "edit": "a",
+      "seededB": true,
+      "lfoB": "0",
+      "colA": -1,
+      "colB": -1,
+      "focus": "a",
+      "frameVis": {
+        "a": true,
+        "b": true,
+        "z": true
+      }
+    }
+  },
+  "routes": [],
+  "parked": {}
+}

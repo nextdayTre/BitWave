@@ -4,24 +4,27 @@
 
 BitWave renders a bit register as a wavetable: dragging a nibble rewrites its
 bits and reshapes the wave; bitwise operations behave like DSP operations.
-Two operands (A, B) feed a derived result (Z), across three numbered lanes,
-with 2-D and 3-D views, an LFO, CSV/TSV import and observation export.
+Two operands (A, B) feed a derived result (Z), across **1–8 numbered lanes**
+(the default instrument boots with three), with 2-D and 3-D views, an LFO,
+CSV/TSV import and observation export.
 
 ## Run it
 
 **`bitwave-v2.html`** is the instrument: one self-contained HTML file, no server,
 no network, no dependencies — **open it directly in a browser.**
 
-- **`bitwave-v2.html`** — the current build, generated from `src/`. Lanes 1/2/3,
-  the always-visible stage bar (lane, frames, split), the **frames view** (every frame
-  as an equal card, with lane scrolling and a `+` tile at the 3-lane cap),
-  per-frame visibility eyes, the frame focus lens (A/B/Z1, C/D/Z2, E/F/Z3), the six-input
-  **source table** (CSV columns, frame outputs or deterministic expressions, with driven
-  inputs locked), wheel-to-adjust hex, an explicit copy-to-lane menu, the **A/B/Z1 readout
-  labels as focus buttons** (choose the frame the strip and word entry edit), a whole-word
-  hex entry, CSV stepper, observation CSV export, DAW-style Record/log, LFO, split 3-D with
-  a per-lane **hinge** that swaps which operand is far vs near, and a keyboard-editable
-  strip (every nibble is a spinbutton).
+- **`bitwave-v2.html`** — the current build, generated from `src/`. A live lane set of
+  **1–8 lanes** (the boot instrument has three; add, duplicate and delete in the frames
+  view, cap 8), the always-visible stage bar (a native per-pane lane dropdown, frames,
+  split), the **frames view** (every frame as an equal card, with lane scrolling and a
+  `+` tile that adds lanes), per-frame visibility eyes, the frame focus lens
+  (A/B/Z1, C/D/Z2, E/F/Z3 … O/P/Z8), the `2L`-row **source table** (CSV columns, frame
+  outputs or deterministic expressions, with driven inputs locked), wheel-to-adjust hex,
+  an explicit copy-to-lane menu, the **A/B/Z1 readout labels as focus buttons** (choose
+  the frame the strip and word entry edit), a whole-word hex entry, CSV stepper,
+  observation CSV export, DAW-style Record/log, LFO, split 3-D with a per-lane **hinge**
+  that swaps which operand is far vs near, and a keyboard-editable strip (every nibble is
+  a spinbutton).
   Work is **persisted**: `.bitwave` save/open, autosave across reloads, and the state is
   shareable through the URL fragment. A `demo` button loads an embedded 8-row dataset.
 - **`index.html`** — untouched original reference build.
@@ -78,8 +81,8 @@ Paths: `assets/pwa/` holds the committed icons (regenerate with
 ## Verify
 
 ```bash
-npm test               # DOM-free core + state + bindings + project/share + agent layer: 169 tests, zero dependencies
-npm run check:browser  # 52 artifact checks in headless Chromium (53 with --shots or --compare)
+npm test               # DOM-free core + state + bindings + project/share + agent layer: 179 tests, zero dependencies
+npm run check:browser  # 59 artifact checks in headless Chromium (60 with --compare)
 npm run check:pwa      # 8 hosted/PWA checks incl. a server-down offline reload + served agent files
 npm run capture        # state screenshots → .tmp-captures/
 ```
@@ -95,8 +98,9 @@ the 3-D truth table, CSV import, the source table, the §11 operation vectors, t
 agent surface, the F4 reflow (200 %/400 %), keyboard editing, roles/live status,
 reduced motion, targets, the IA pass (stage bar, module order, copy menu, hex entry,
 keyboard map), the F5 persistence paths (project open/reset, autosave reload, share
-link round-trip and budget, `?fresh`) and an axe-core audit (dev-only; zero
-critical/serious).
+link round-trip and budget, `?fresh`), the dynamic-lanes slice (lane dropdown, live 1–8
+lane set, add/duplicate/delete, eight-lane frames view) and an axe-core audit (dev-only;
+zero critical/serious).
 **Keyboard editing:** Tab into the strip, then ↑/↓ adjust a nibble, ←/→ move
 between nibbles, Home/End jump, 0–F set the digit; Tab to the A/B/Z1 readout labels and
 press Enter or Space to choose the frame you edit; `frames` opens the card view (Tab to a
@@ -118,8 +122,8 @@ node tools/browser-check.mjs --compare path/to/reference.html
 `bitwave-v2.html` exposes a read-only, versioned state/geometry surface after boot:
 
 ```js
-BitWave.state()      // frozen snapshot: lanes, frames A–F/Z1–Z3, values, focus, view, dataset
-BitWave.bindings()   // the six input bindings: data column / frame source / state chip
+BitWave.state()      // frozen snapshot: live lanes, global frame names, values, focus, view, dataset
+BitWave.bindings()   // the live input bindings (`2L`; six at the three-lane boot): data column / frame source / state chip
 BitWave.geometry()   // plot rect, nibble geometry, control-point xs[], DOM nibble rects
 BitWave.frames()     // the frame-name table per lane
 ```
@@ -147,16 +151,16 @@ type-stripping) and zero extra dependencies.
 
 ### Expressions and Record (since toolset 1.1.0)
 
-Each of the six source rows can be a deterministic **expression** (`expr`) instead of a
-data column or route. Expressions are text in the `.bitwave` schema-4 document, evaluated
-in the shared core on every clocked update after routes and before `Z`, with the current
-frames plus the previous recorded row as `log.<frame>`. Coefficients from float/DSP tooling
-are welcome: a float is converted once at the boundary to an exact value, so the register
-bits remain reproducible. Invalid text never mutates registers (the bridge reports
-`E_INVALID_EXPRESSION`).
+Each source row (`2L` rows — six at boot) can be a deterministic **expression** (`expr`)
+instead of a data column or route. Expressions are text in the `.bitwave` schema-4
+document, evaluated in the shared core on every clocked update after routes and before
+`Z`, with the current frames plus the previous recorded row as `log.<frame>`. Coefficients
+from float/DSP tooling are welcome: a float is converted once at the boundary to an exact
+value, so the register bits remain reproducible. Invalid text never mutates registers
+(the bridge reports `E_INVALID_EXPRESSION`).
 
 **Record** is the DAW-style take beside the observation log: arm it, and one row of all
-nine frame registers is appended per settled update (in memory only; starting clears the
+`3L` frame registers is appended per settled update (in memory only; starting clears the
 take; the pointer-drag stream is skipped). `export log` downloads CSV. Expressions can
 read the previous row, so a recorded feedback loop is well-defined. The bridge can build
 the whole patch headlessly too (`setRoute`/`setSource`, `setExpression`, `record`,
@@ -169,7 +173,9 @@ The URL fragment is the whole view state, written by the compact `.bitwave` code
 (D45): `#bw=` is unpadded base64url of a compact JSON array, not the JSON document.
 Legacy JSON links and schema-1/2/3 documents still load and upgrade on read: the `lanes`
 object is keyed by the stable lane key (`"1"`..`"13"`, gaps allowed, at most 8 lanes per
-document, ascending key order) and the shipped build always writes schema 4. Build
+document, ascending key order) and the shipped build always writes schema 4. The shipped
+live range is 1–8, so a link can carry up to eight lanes
+(`examples/eight-lanes.bitwave.json` is the committed fixture). Build
 canonical links headlessly:
 
 ```powershell
@@ -193,12 +199,13 @@ this in the console:
 
 ```js
 window.bitwave.schemaVersion            // 1
-window.bitwave.version                  // "1.3.0"
-window.bitwave.getState()               // full UI state (schema 1)
+window.bitwave.version                  // "1.4.0"
+window.bitwave.getState()               // full UI state (schema 1); lanes = the live set
 window.bitwave.getManifest()            // manifest data
 window.bitwave.tools()                  // tool definitions
 window.bitwave.call("compare_operands", { a: "8ADEFEDA85210125", b: "FFFFFFFF00000000" })
-window.bitwave.setLane(2)               // setters never throw
+window.bitwave.setLane(2)               // lanes 1–8; a non-live lane is E_OUT_OF_RANGE
+window.bitwave.setFrame("D")             // frame names A–P / Z1–Z8, live lane only
 window.bitwave.setRegister("A", "DEADBEEF")
 window.bitwave.setExpression("D", "round(1.2599210498948732 * C)") // expr source
 window.bitwave.setRoute("D", "1.z")     // bind an input to a frame route
@@ -254,8 +261,8 @@ catalogue.
 
 ```powershell
 node agent/gen-agent-artifacts.mjs --check   # manifest + examples current (deterministic)
-node agent/selftest.mjs                      # CLI + MCP + canonical vectors
-node agent/verify-browser.mjs                # independent headless-browser checklist
+node agent/selftest.mjs                      # CLI + MCP + canonical vectors: 26 checks
+node agent/verify-browser.mjs                # independent headless-browser checklist: 34 checks
 npm test                                     # includes the agent-tools/state tests
 ```
 

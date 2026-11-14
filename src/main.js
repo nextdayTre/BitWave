@@ -1140,26 +1140,12 @@ import { toHexOf, updateReadouts } from "./render/readouts.js";
      Additive: installed after boot so the instrument is settled.
      ══════════════════════════════════════════════════════════ */
 
-  /* Contract §7 automation hooks: additive data attributes on the existing
-     lane buttons and frame rows. The modules that build them are untouched;
-     a small observer keeps dynamically rebuilt rows labelled. */
+  /* Contract §7 automation hooks: additive data attributes on the frames-view
+     cards. The lane selector hook (`[data-agent-lane]`) is owned by the stage
+     bar itself, which keeps it synchronous with the native dropdown; a small
+     observer keeps dynamically rebuilt cards labelled. */
   (function setupAgentAttributes() {
     const annotate = () => {
-      const stageEl = document.getElementById("stageBar");
-      if (stageEl) {
-        for (const btn of stageEl.querySelectorAll("[data-lane]")) {
-          const pane = btn.closest(".pane-head");
-          /* Only the panes actually on screen: 2-D has one lane set, split 3-D
-             has two. Duplicate hidden mirrors would confuse selector-driven
-             tooling (`[data-agent-lane]` should be the three live buttons). */
-          const value = pane && pane.hidden ? null : btn.dataset.lane;
-          if (value === null) {
-            if (btn.hasAttribute("data-agent-lane")) btn.removeAttribute("data-agent-lane");
-          } else if (btn.getAttribute("data-agent-lane") !== value) {
-            btn.setAttribute("data-agent-lane", value);
-          }
-        }
-      }
       const gridEl = document.getElementById("framesGrid");
       if (gridEl) {
         for (const card of gridEl.querySelectorAll("[data-lane][data-frame]")) {
@@ -1172,7 +1158,6 @@ import { toHexOf, updateReadouts } from "./render/readouts.js";
       if (!el || typeof MutationObserver !== "function") return;
       new MutationObserver(annotate).observe(el, { childList: true, subtree: true, attributes: true });
     };
-    observe(document.getElementById("stageBar"));
     observe(document.getElementById("framesGrid"));
     annotate();
   })();

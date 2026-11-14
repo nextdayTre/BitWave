@@ -1,6 +1,6 @@
 # BitWave — implementation status
 
-**Updated:** 2026-11-14 · **Phase:** F0 **done**, F1 **done**, F2 spine + render + UI modules done (pointer/lane controllers still in `main.js`), F3 source table + frame routing **done**, F4 accessibility + IA **done**, F5 persistence & reach **done**, **F6 distribution done**, the **agent interface done** (2026-11-08), the **external-routing slice done** (2026-11-08, D40) — expression sources, a DAW-style Record/log, `.bitwave` schema 3, and bridge `setExpression`/`record`/`getLog` (toolset 1.1.0) — the **frame-navigation pair done** (2026-11-14, D41/D42), and the **dynamic-lanes pass** started 2026-11-14 (D43): cap 8, stable name-index lanes, compact share codec, staged slices. Landed so far: **core naming primitives**, **state lane-key identity** (A/B/C slots removed, three-lane pixels unchanged), **`.bitwave` schema 4 + migration** (D44: lane map keyed by stable lane key, gaps, cap 8, schema 1/2/3 upgrade, three-lane document unchanged in the new shape) and the **compact `#bw=` codec + budget proof** (D45: 8 lanes/256-bit = 1260 chars, legacy JSON links still load, dataset/expression drops flagged, toolset 1.3.0). Pending: live lane UI, agent-surface widening. The plan's funded path is complete; Tauri remains deferred (D37).
+**Updated:** 2026-11-14 · **Phase:** F0 **done**, F1 **done**, F2 spine + render + UI modules done (pointer/lane controllers still in `main.js`), F3 source table + frame routing **done**, F4 accessibility + IA **done**, F5 persistence & reach **done**, **F6 distribution done**, the **agent interface done** (2026-11-08), the **external-routing slice done** (2026-11-08, D40) — expression sources, a DAW-style Record/log, `.bitwave` schema 3, and bridge `setExpression`/`record`/`getLog` (toolset 1.1.0) — the **frame-navigation pair done** (2026-11-14, D41/D42), and the **dynamic-lanes pass complete** (D43–D46, 2026-11-14): core naming primitives, state lane-key identity, `.bitwave` schema 4 + migration (D44), the compact `#bw=` codec + budget proof (D45), the live 1–8 lane UI (D46: native per-pane lane dropdown, frames-view add/duplicate/delete, `2L` source rows, `3L` Record rows), and the **agent-surface + docs slice** (toolset 1.4.0: agent lane range 1–8, frames `A`–`P`/`Z1`–`Z8`, lane dropdown selector in the manifest, eight-lane verification + fixture, docs/screenshots). The plan's funded path is complete; Tauri remains deferred (D37).
 **Source of truth:** [`PLAN.md`](PLAN.md) for the plan, [`DECISIONS.md`](DECISIONS.md) for choices taken, [`DESIGN.md`](DESIGN.md) for the visual contract. `index.html` is still untouched and remains the shipping instrument.
 
 ## Author decisions (2026-11-06)
@@ -40,7 +40,7 @@ cell enough? Confirm before the matrix lands in the app.
 | **Agent interface** | **Done** | Additive agent layer (2026-11-08): `src/core/agent-*.ts` one registry/state/deeplink source; `window.bitwave` bridge (state/setters/call/subscribe/events) beside the untouched `window.BitWave`; hidden `#bitwave-state` + `body[data-agent-ready]`; `keys | agent` help-panel tab; `agent/cli.mjs` + `agent/mcp-server.mjs` (zero deps); generated `agent/manifest.json` + examples (`--check`); AGENTS/contract/llms/screenshot/ecosystem docs; hosted build serves the agent files. Default rendering pixel-identical (D39). |
 | **External routing** | **Done** | `.bitwave` schema 3 (expressions additive; schema 1/2 load); six source rows gain a validated `expr` editor; DAW-style Record toggle + bounded transient frame log + `export log`; expression-aware clocked pass (routes → expression sources → Z) with the previous row as `log.<frame>`; bridge `setExpression`/`record`/`getLog`, state `recording` + per-lane `expressions`; toolset 1.1.0. Float is a boundary authoring format (converted once to exact values). D40. |
 | **Frame navigation** | **Done (2026-11-14)** | A/B/Z1 readout labels are focus buttons bound to the whole-word hex entry (D41); the pop-out frame navigator is replaced by the stage-level **frames view** — equal cards per frame, lane columns, mini-splines, per-card eyes, `unpair B`, horizontal scroll arrows/track, `Lanes`/Esc return, and a perpetual `+` tile that names the 3-lane cap until dynamic lanes (D42). Canvas hidden while open; strip/meta/controls stay live; default pixels unchanged when closed. |
-| **Dynamic lanes (D43/D44/D45)** | **In progress** | Core naming primitives and state lane-key identity landed; **`.bitwave` schema 4 + migration landed (D44)**: `lanes` is keyed by the stable lane key (`"1"`..`"13"`, gaps allowed, at most `APP_LANE_CAP` (8) lanes, ascending numeric order), schema 1/2/3 documents and `#bw=` links load and upgrade on read, 9 lanes/invalid keys are refused, Z is never stored; the app bridge maps by key and still ships three lanes (wider documents load the representable lanes, and a dropped route restores its parked base); routing evaluation is lane-set aware. **Compact share codec + budget proof landed (D45)**: canonical `#bw=` links are compact (8 lanes/256-bit = 1260 chars against the unchanged 2000 budget), legacy JSON links load, the dataset drops first then expression sources with explicit `datasetDropped`/`expressionsDropped` flags; the address bar, `getDeeplink()`, `build_deeplink` and the CLI agree; toolset **1.3.0**, artifacts regenerated. Pending: live lane UI (cap 8, `+`, deletion), agent-surface widening. |
+| **Dynamic lanes (D43–D46)** | **Done (2026-11-14)** | **Core naming primitives** and **state lane-key identity** landed; **`.bitwave` schema 4 + migration (D44)**: `lanes` keyed by the stable lane key (`"1"`..`"13"`, gaps allowed, at most `APP_LANE_CAP` (8) lanes, ascending numeric order), schema 1/2/3 documents and `#bw=` links load and upgrade on read, 9 lanes/invalid keys refused, Z never stored; **compact share codec + budget proof (D45)**: canonical `#bw=` links are compact (8 lanes/256-bit = 1260 chars against the unchanged 2000 budget), legacy JSON links load, dataset then expressions drop with explicit flags; **live lane UI (D46)**: the tree holds the document's whole 1–8 lane set, the stage bar uses a native per-pane lane dropdown (`Lane 1`…`Lane 8`, `[data-agent-lane]`), the frames view `+` adds lanes and each lane head duplicates/deletes (reference-counted inline confirmation), the source table shows `2L` grouped rows and Record rows are `3L`; **agent-surface + docs slice (toolset 1.4.0)**: agent lane range 1–8 (`FrameRef.slotKey` optional, legacy lanes 1–3 only), frames `A`–`P`/`Z1`–`Z8`, `laneSelect` manifest selector, bridge refuses non-live lanes with `E_OUT_OF_RANGE`, `examples/eight-lanes.bitwave.json` + eight-lane verifier/screenshot, contract/AGENTS/llms/README/DESIGN/ecosystem docs updated. Gate counts: `npm test` 179, browser harness 59/59 (60/60 with parity vs the D46 UI artifact — 6/6 states pixel-identical), `agent/selftest.mjs` 26/26, `agent/verify-browser.mjs` 34/34, PWA 8/8. |
 | **F6 Distribution** | **Done** | Hosted/installable PWA build (`dist/hosted/`): manifest + maskable icons, hash-versioned app-shell service worker, relative URLs, offline reload. The committed single-file `bitwave-v2.html` is untouched and still has zero external references (asserted). `npm run check:pwa` proves install/offline against the real built output; deploy/install/privacy guidance in [`docs/hosting.md`](docs/hosting.md). Tauri 2 deferred (D37). |
 
 ## F4 progress (2026-11-06) — complete
@@ -260,7 +260,57 @@ three-lane instrument still renders pixel-identically, and every legacy link sti
   `x`, legacy JSON decode/upgrade, corrupt/truncated refusal, the measured budget table and
   drop flags, and app-vs-agent canonical agreement; existing assertions were kept.
 
+## Dynamic lanes — agent surface + docs (2026-11-14) — final slice landed
+
+**Toolset 1.4.0: the agent surface and documentation match the live 1–8 lane instrument
+(D43–D46 complete).** No visible UI change: the rebuilt artifact is 6/6 states
+pixel-identical to the D46 UI artifact.
+
+- **Agent range.** `laneKeyFromNumber` accepts 1..`APP_LANE_CAP` (8) and rejects others;
+  `frameRefFromName` resolves the global names `A`–`P`/`Z1`–`Z8` case-insensitively;
+  `FRAME_NAMES` is generated for the cap (lanes 1–8). `FrameRef.slotKey` is now optional:
+  old `A`–`F`/`Z1`–`Z3` refs keep the legacy `A`/`B`/`C` slot letter, lanes 4–8 omit it.
+  `SLOT_OF_LANE`/`LANE_OF_SLOT` stay as the legacy lanes-1–3 map.
+- **Live-tree behaviour.** `buildUiState` already reported exactly the document's lanes;
+  it is now covered for eight lanes. The bridge accepts a `lane`/`frame` only when the
+  live tree carries that lane and otherwise returns the closed-set `E_OUT_OF_RANGE`
+  (never creates a lane); `setLane(8)` on a real eight-lane document works.
+- **Manifest/selectors.** `agent/manifest.json` (regenerated with the examples) carries
+  toolset `1.4.0`, a description naming the 1–8 lane range, and the explicit
+  `ui.laneSelect: "#stageBar .lane-select"` selector beside
+  `ui.laneSelector: "[data-agent-lane]"`. The active stage-bar lane `<select>` carries
+  `[data-agent-lane]` synchronously (hidden panes and the frames view carry none).
+- **Verification.** `agent/selftest.mjs` pins 1.4.0 and adds manifest-selector and
+  eight-lane-headless-state checks; `agent/verify-browser.mjs` adds three checks: the
+  dropdown is the documented selector and follows setLane, non-live lane/frame setters are
+  truthful `E_OUT_OF_RANGE` no-ops with no event, and an eight-lane schema-4 document loads
+  through its canonical compact deeplink (8 stable keys, frames `A`–`P`/`Z1`–`Z8`,
+  `setLane(8)`, 24 frames-view cards). `examples/eight-lanes.bitwave.json` is the
+  committed fixture (payload 568 chars).
+- **Docs.** `docs/AGENT-INTERFACE.md` (1.4.0), `AGENTS.md`, `llms.txt`, `README.md`,
+  `DESIGN.md` §11/§12, `docs/DYNAMIC-LANES.md` (shipped), `docs/BITWAVE-ECOSYSTEM-MAP.md`
+  and `docs/AGENT-SCREENSHOTS.md` (six states incl. an eight-lane screenshot, all
+  recaptured from the current artifact).
+- **Deferred.** `fold` (the 3-D hinge) remains session-only by design; the Record/
+  observation logger stays focused-lane by design; share length is a measured metric, not
+  a lane constraint.
+
 ## Verified this session
+
+### Agent-surface slice gates (2026-11-14, D46 / toolset 1.4.0)
+
+- `npm test` → **179 tests, all pass, 0 fail** (the widened agent enum, eight-lane state,
+  fixture round-trip and 1.4.0 pins are additive; existing assertions kept).
+- `npm run typecheck` → **clean**.
+- `node agent/gen-agent-artifacts.mjs --check` → **8 files current** after intentional
+  regeneration (toolset 1.4.0, `laneSelect` selector, 1–8 description).
+- `node agent/selftest.mjs` → **26/26**.
+- `npm run build` → **`bitwave-v2.html` 333.4 KB**, single file, no external references.
+- `node tools/browser-check.mjs` → **59/59**; `--compare` against the D46 HEAD artifact →
+  **6/6 states pixel-identical** (60/60 with parity).
+- `node agent/verify-browser.mjs` → **34/34** (adds the lane-dropdown selector, non-live
+  refusal and eight-lane-document checks).
+- `node tools/build-pwa.mjs && node tools/check-pwa.mjs` → **8/8**.
 
 ### Compact-codec slice gates (2026-11-14, D45)
 

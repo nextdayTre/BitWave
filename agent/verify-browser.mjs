@@ -1,12 +1,14 @@
 #!/usr/bin/env node
 /**
- * Independent browser verification for the BitWave agent layer (toolset 1.3.0).
+ * Independent browser verification for the BitWave agent layer (toolset 1.4.0).
  *
  * Drives the built single-file artifact (`bitwave-v2.html`) over `file://` in a
  * fresh-profile headless Chrome/Edge over the DevTools Protocol, then asserts the
  * contract in docs/AGENT-INTERFACE.md — including the external-routing slice:
  * expression sources (`setExpression`), the transient Record take (`record`,
- * `getLog`) and the schema-4 project document behind `#bw=` links.
+ * `getLog`), the schema-4 project document behind `#bw=` links, and the shipped
+ * 1–8 lane range (the stage-bar lane dropdown, non-live lane refusal, and an
+ * eight-lane document loaded from a canonical compact link).
  *
  * Expectations are derived from `src/core` (the tool registry, the manifest, the
  * state builder, the project codec, the expression evaluator) — never from the
@@ -37,6 +39,7 @@ import {
   normalizeAgentPatch,
 } from "../src/core/agent-tools.ts";
 import { FRAME_NAMES, bootProjectDoc } from "../src/core/agent-defaults.ts";
+import { buildShareLink } from "../src/core/agent-share.ts";
 import { buildUiState } from "../src/core/agent-state.ts";
 import { evaluateExpression } from "../src/core/expression.ts";
 import { PROJECT_SCHEMA, deserializeProject } from "../src/core/project.ts";
@@ -55,7 +58,7 @@ function flag(name, fallback) {
 const artifactPath = resolve(flag("--artifact", join(ROOT, "bitwave-v2.html")));
 const artifactUrl = pathToFileURL(artifactPath).href;
 
-/** The bridge surface the contract promises: v1 base + 1.1.0 additions + the 1.2.0 schema-4 document shape (links are compact since 1.3.0). */
+/** The bridge surface the contract promises: v1 base + 1.1.0 additions + the 1.2.0 schema-4 document shape (links are compact since 1.3.0; lanes are 1–8 since 1.4.0). */
 const BRIDGE_KEYS = [
   "schemaVersion",
   "version",
@@ -84,9 +87,21 @@ const BRIDGE_KEYS = [
   "subscribe",
 ].sort();
 
-/** The nine global frame names, in lane order; derived from the shared core. */
+/** The nine boot frame names (the shipped 3-lane boot document), in lane order. */
 const FRAME_LIST = ["1", "2", "3"].flatMap((lane) => Object.values(FRAME_NAMES[lane]));
+/** The boot document's stable lane keys. */
 const LANE_KEYS = ["1", "2", "3"];
+/** Every global frame name of the shipped 1–8 lane cap, in lane order (24 names). */
+const ALL_FRAME_NAMES = Object.keys(FRAME_NAMES).flatMap((lane) => Object.values(FRAME_NAMES[lane]));
+/** The shipped 1–8 lane keys, derived from the shared frame-name table. */
+const ALL_LANE_KEYS = Object.keys(FRAME_NAMES);
+
+/** The committed eight-lane fixture, as engine state plus its canonical compact link. */
+function eightLaneLink() {
+  const doc = JSON.parse(readFileSync(join(ROOT, "examples", "eight-lanes.bitwave.json"), "utf8"));
+  const link = buildShareLink(doc);
+  return { doc, link, url: artifactUrl + link.fragment };
+}
 
 const CHROME_CANDIDATES = [
   process.env.BITWAVE_CHROME,
@@ -447,6 +462,52 @@ async function main() {
       assertEqual(parsed.bridge, { schemaVersion: SCHEMA_VERSION, version: TOOLSET_VERSION });
     });
 
+    await run("the stage-bar lane dropdown is the documented lane selector", async () => {
+      const report = await browser.evaluate(`(() => {
+        const bar = document.getElementById("stageBar");
+        const manifest = window.bitwave.getManifest();
+        const selects = [...bar.querySelectorAll("select.lane-select")];
+        const active = [...bar.querySelectorAll("select.lane-select[data-agent-lane]")];
+        const marked = bar.querySelectorAll("[data-agent-lane]");
+        const select = active[0];
+        return {
+          selects: selects.length,
+          selectorMatches: document.querySelectorAll(manifest.ui.laneSelect).length,
+          options: select ? [...select.options].map((option) => option.textContent) : [],
+          value: select ? select.value : null,
+          markedCount: marked.length,
+          markedValue: marked[0] ? marked[0].getAttribute("data-agent-lane") : null,
+          markedTag: marked[0] ? marked[0].tagName : null,
+          hiddenMarked: [...bar.querySelectorAll(".pane-head[hidden] [data-agent-lane]")].length,
+          laneSelect: manifest.ui.laneSelect,
+          laneSelector: manifest.ui.laneSelector,
+        };
+      })()`);
+      assertEqual(report.selectorMatches >= 1, true, "the manifest laneSelect selector must match the stage-bar dropdown");
+      assertEqual(report.selects, 2, "the stage bar builds one select per pane (the second pane is hidden in 2-D)");
+      assertEqual(report.markedCount, 1, "only the active (visible) lane dropdown carries [data-agent-lane]");
+      assertEqual(report.hiddenMarked, 0, "a hidden pane must not advertise a lane");
+      assertEqual(report.options, ["Lane 1", "Lane 2", "Lane 3"]);
+      assertEqual(report.value, "1");
+      assertEqual(report.markedValue, "1");
+      assertEqual(report.markedTag, "SELECT");
+      assertEqual(report.laneSelect, "#stageBar .lane-select");
+      assertEqual(report.laneSelector, "[data-agent-lane]");
+      const focused = await browser.evaluate(`(() => {
+        const result = window.bitwave.setLane(2);
+        const marked = document.querySelectorAll("#stageBar [data-agent-lane]");
+        return {
+          ok: result.ok,
+          markedValue: marked[0] ? marked[0].getAttribute("data-agent-lane") : null,
+          dropdown: document.querySelector("#stageBar select[data-agent-lane]").value,
+        };
+      })()`);
+      assertEqual(focused.ok, true);
+      assertEqual(focused.markedValue, "2");
+      assertEqual(focused.dropdown, "2");
+      await browser.evaluate("window.bitwave.setLane(1)");
+    });
+
     await run("state matches the core UI-state builder on the boot document", async () => {
       const pageState = await state();
       const { expected } = expectedStateShapes();
@@ -556,6 +617,33 @@ async function main() {
         assert(result.stateUnchanged, `${JSON.stringify(patch)} mutated the state`);
         assertEqual(result.immediateWidth, 64);
       }
+    });
+
+    await run("a non-live lane/frame is a truthful E_OUT_OF_RANGE, never a lane creation", async () => {
+      await browser.navigate(freshUrl);
+      const result = await browser.evaluate(`(() => {
+        const before = JSON.stringify(window.bitwave.getState());
+        const changesBefore = window.__bitwaveVerify.changes;
+        const lane8 = window.bitwave.setState({ lane: 8 });
+        const lane4 = window.bitwave.setLane(4);
+        const frameO = window.bitwave.setFrame("O");
+        const after = window.bitwave.getState();
+        return {
+          lane8: { ok: lane8.ok, code: lane8.error && lane8.error.code },
+          lane4: { ok: lane4.ok, code: lane4.error && lane4.error.code },
+          frameO: { ok: frameO.ok, code: frameO.error && frameO.error.code },
+          unchanged: JSON.stringify(after) === before,
+          lanes: Object.keys(after.lanes),
+          changes: window.__bitwaveVerify.changes - changesBefore,
+        };
+      })()`);
+      for (const [label, answer] of [["lane8", result.lane8], ["lane4", result.lane4], ["frameO", result.frameO]]) {
+        assertEqual(answer.ok, false, `${label} must not silently succeed`);
+        assertEqual(answer.code, "E_OUT_OF_RANGE", `${label} code`);
+      }
+      assertEqual(result.unchanged, true, "a non-live lane/frame mutated the state");
+      assertEqual(result.lanes, LANE_KEYS);
+      assertEqual(result.changes, 0, "a refused setter emitted a change event");
     });
 
     await run("setRegister writes an operand frame truthfully", async () => {
@@ -881,6 +969,75 @@ async function main() {
       assertEqual(second, first);
     });
 
+    /* ── dynamic lanes: an eight-lane document through the live bridge ──── */
+
+    await run("an eight-lane compact deeplink loads and the bridge manages all 8 lanes", async () => {
+      const { doc, link, url } = eightLaneLink();
+      assertEqual(link.withinBudget, true, "the eight-lane fixture must fit the share budget");
+      assertEqual(link.datasetDropped, false);
+      assertEqual(link.expressionsDropped, false);
+
+      await browser.reload(url);
+      const loaded = await liveState();
+      assertEqual(Object.keys(loaded.lanes), ALL_LANE_KEYS, "state must report the 8 stable lane keys");
+      assertEqual(loaded.lane, 8);
+      assertEqual(loaded.frame, "O");
+      assertEqual(loaded.bridge, { schemaVersion: SCHEMA_VERSION, version: TOOLSET_VERSION });
+      for (const lane of ALL_LANE_KEYS) {
+        assertEqual(loaded.lanes[lane].lane, Number(lane), `lane ${lane} number`);
+        assertEqual(Object.keys(loaded.lanes[lane].frames), Object.values(FRAME_NAMES[lane]));
+      }
+      assertEqual(loaded.lanes["1"].frames.Z1, "7521012585210125");
+      assertEqual(loaded.lanes["8"].frames.O, "DEADBEEFCAFEBABE");
+
+      /* Focus throught the live tree: 1 -> 8 succeeds and is reflected in the selector. */
+      const focused = await browser.evaluate(`(() => {
+        const one = window.bitwave.setLane(1);
+        const eight = window.bitwave.setLane(8);
+        const state = window.bitwave.getState();
+        const marked = document.querySelectorAll("#stageBar [data-agent-lane]");
+        const select = document.querySelector("#stageBar select.lane-select");
+        return {
+          oneOk: one.ok,
+          eightOk: eight.ok,
+          lane: state.lane,
+          frame: state.frame,
+          markedValue: marked[0] ? marked[0].getAttribute("data-agent-lane") : null,
+          options: select ? [...select.options].map((option) => option.value) : [],
+          value: select ? select.value : null,
+        };
+      })()`);
+      assertEqual(focused.oneOk, true);
+      assertEqual(focused.eightOk, true);
+      assertEqual(focused.lane, 8);
+      assertEqual(focused.frame, "O");
+      assertEqual(focused.markedValue, "8");
+      assertEqual(focused.options, ALL_LANE_KEYS);
+      assertEqual(focused.value, "8");
+
+      /* The frames view shows one card per global frame of the live set (8 × 3). */
+      await browser.evaluate("document.getElementById('framesBtn').click()");
+      await sleep(150);
+      const rendered = await browser.evaluate(`(() => ({
+        names: [...document.querySelectorAll("[data-agent-frame]")]
+          .map((card) => card.getAttribute("data-agent-frame")),
+        laneSelect: document.querySelectorAll("#stageBar [data-agent-lane]").length,
+      }))()`);
+      assertEqual(rendered.names.slice().sort(), ALL_FRAME_NAMES.slice().sort(), "frames-view cards must cover A–P/Z1–Z8");
+      assertEqual(rendered.laneSelect, 0, "the frames-view stage must not advertise a stale lane dropdown");
+      await browser.evaluate("document.getElementById('lanesBtn').click()");
+
+      /* The page really is the live 8-lane instrument, not a 3-lane view of it. */
+      const view = await browser.evaluate(`(() => {
+        const state = window.bitwave.getState();
+        return { lanes: Object.keys(state.lanes), width: state.width, view: state.view.mode };
+      })()`);
+      assertEqual(view.lanes, ALL_LANE_KEYS);
+      assertEqual(view.width, 64);
+      assertEqual(view.view, "2d");
+      assertEqual(doc.schema, 4, "the fixture is a schema-4 dynamic-lane document");
+    });
+
     await run("the help panel agent tab opens and reports an active bridge", async () => {
       await browser.navigate(artifactUrl);
       await browser.evaluate(`(() => {
@@ -970,7 +1127,7 @@ async function main() {
     await browser.close();
   }
 
-  console.log("BitWave agent browser verification (toolset 1.3.0 / schema 4)");
+  console.log("BitWave agent browser verification (toolset 1.4.0 / schema 4)");
   console.log(`  artifact: ${artifactPath} (${existsSync(artifactPath) ? readFileSync(artifactPath).length : 0} bytes)`);
   console.log(`  browser:  ${chromePath}`);
   console.log(

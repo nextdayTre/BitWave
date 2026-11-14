@@ -5,12 +5,18 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { buildUiState } from "../src/core/agent-state.ts";
 import { DEFAULT_LANE_COUNT, laneDefs } from "../src/core/lanedefs.ts";
 import { exampleProjectDoc } from "../src/core/agent-defaults.ts";
+import { deserializeProject } from "../src/core/project.ts";
 import { computeZ } from "../src/core/derive.ts";
 import { fromHex, toHex } from "../src/core/registers.ts";
+
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 const state = (doc = exampleProjectDoc()) =>
   buildUiState(doc, { deeplink: "file:///bitwave-v2.html#bw=abc" });
@@ -57,7 +63,7 @@ test("state has the contract keys and the focused defaults", () => {
   assert.equal(s.editing.enabled, true);
   assert.deepEqual(s.recording, { on: false, rows: 0 });
   assert.equal(s.deeplink, "file:///bitwave-v2.html#bw=abc");
-  assert.deepEqual(s.bridge, { schemaVersion: 1, version: "1.3.0" });
+  assert.deepEqual(s.bridge, { schemaVersion: 1, version: "1.4.0" });
   assert.deepEqual(Object.keys(s.lanes), ["1", "2", "3"]);
 });
 
@@ -160,4 +166,22 @@ test("a schema-4 document with a wider lane map reports those lanes by stable ke
   assert.equal(s.lane, 4);
   assert.equal(s.frame, "G");
   assert.deepEqual(s.view.splitPair, [1, 3]);
+});
+
+test("the eight-lane fixture reports eight stable lane keys and names A-P/Z1-Z8", () => {
+  const fixture = JSON.parse(readFileSync(path.join(ROOT, "examples", "eight-lanes.bitwave.json"), "utf8"));
+  const engine = deserializeProject(fixture);
+  const s = buildUiState(fixture, { deeplink: "file:///bitwave-v2.html#bw=x" });
+  assert.deepEqual(Object.keys(s.lanes), ["1", "2", "3", "4", "5", "6", "7", "8"]);
+  const expectedNames = laneDefs(8).map((def) => ({ key: def.key, names: [def.a, def.b, def.z] }));
+  for (const { key, names } of expectedNames) {
+    assert.equal(s.lanes[key].lane, Number(key));
+    assert.deepEqual(Object.keys(s.lanes[key].frames), names, `lane ${key} frame names`);
+  }
+  /* State reports the engine values, not a fixed three-lane table. */
+  assert.deepEqual(Object.keys(engine.lanes).sort(), ["1", "2", "3", "4", "5", "6", "7", "8"]);
+  assert.equal(s.lane, 8);
+  assert.equal(s.frame, "O");
+  assert.equal(s.lanes["1"].frames.Z1, "7521012585210125");
+  assert.equal(s.lanes["8"].frames.O, "DEADBEEFCAFEBABE");
 });

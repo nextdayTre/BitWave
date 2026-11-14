@@ -2,7 +2,8 @@
 
 BitWave is a single-file, offline instrument that renders a bit register as a wavetable:
 every nibble is a sample, bitwise/arithmetic operators behave like DSP operations, and
-three lanes (`1/2/3`) each compute `Z = A <op> B`. It answers "what does this word look
+up to **eight lanes** (`1`–`8`; the default instrument boots with three, `1/2/3`) each
+compute `Z = A <op> B`. It answers "what does this word look
 like, and what does this operation do to it?" — for teaching, research and bit-level
 play.
 
@@ -12,8 +13,10 @@ disagree: one implementation, one envelope, deterministic output.
 
 Onboarding path: this file → the normative contract
 [`docs/AGENT-INTERFACE.md`](docs/AGENT-INTERFACE.md). User docs:
-[`README.md`](README.md). Version: toolset `1.3.0`, state schema `1`, `.bitwave` schema
-`4` (schema 1/2/3 still load and upgrade).
+[`README.md`](README.md). Version: toolset `1.4.0`, state schema `1`, `.bitwave` schema
+`4` (schema 1/2/3 still load and upgrade). Toolset 1.4.0 is the dynamic-lanes slice:
+lanes are a live 1–8 set, frames are `A`–`P`/`Z1`–`Z8`, and the bridge focuses only lanes
+the tree carries.
 
 ## Quick start
 
@@ -38,11 +41,15 @@ server. The browser layer works directly from the committed single file.
 ## The mental model
 
 A lane is three frames: operand `A`, derived `Z`, operand `B`. One shared register width
-(`8/16/32/64/128/256` bits). Frame names are global: lane 1 `A/B/Z1`, lane 2 `C/D/Z2`,
-lane 3 `E/F/Z3`. A CSV/TSV dataset can drive any of the six operands; a routed input is *driven* and
+(`8/16/32/64/128/256` bits). Frame names are global and derive from the stable lane key:
+lane 1 `A/B/Z1`, lane 2 `C/D/Z2`, lane 3 `E/F/Z3`, lane 4 `G/H/Z4`, … lane 8 `O/P/Z8`
+(the closed agent vocabulary is `A`–`P` plus `Z1`–`Z8`; the `1`–`13` ceiling remains a
+grammar limit, not a shipped cap). The live instrument holds 1–8 lanes; the default
+document still boots with three and new lanes are added in the frames view. A CSV/TSV
+dataset can drive any of the `2L` operands; a routed input is *driven* and
 read-only. An operand can also be a deterministic **expression source** (`expr`),
 evaluated on every clocked update with the current frames plus the previous
-`log.<frame>` snapshot; **Record** appends one transient row of all nine frames per
+`log.<frame>` snapshot; **Record** appends one transient row of all `3L` frames per
 settled update (in memory only, not in the project or link).
 
 | step | object | what happens |
@@ -83,7 +90,8 @@ bitwave-v2.html#bw=<unpadded base64url(UTF-8 compact JSON array)>
   in `docs/AGENT-INTERFACE.md` §5 and `DECISIONS.md` D45.
 - A document is a lane map keyed by the stable lane key (`"1"`..`"13"`, gaps allowed, at
   most 8 lanes, ascending numeric key order); a schema 1/2/3 document is the closed
-  three-lane object. Z is never stored.
+  three-lane object. Z is never stored. The shipped live range is 1–8, matching the agent
+  enums; a document may carry a subset (e.g. `examples/eight-lanes.bitwave.json`).
 - Build canonical links headlessly with `node agent/cli.mjs deeplink --project
   examples/demo.bitwave.json --base "file:///C:/path/to/bitwave-v2.html" --json`
   (or `window.bitwave.getDeeplink()` in a live page). The address bar, `getDeeplink()`,
@@ -102,12 +110,14 @@ bitwave-v2.html#bw=<unpadded base64url(UTF-8 compact JSON array)>
 
 ```js
 window.bitwave.schemaVersion            // 1
-window.bitwave.version                  // "1.3.0"
+window.bitwave.version                  // "1.4.0"
 window.bitwave.getState()               // full UI state (§6 of the contract)
 window.bitwave.getManifest()            // manifest data
 window.bitwave.tools()                  // tool definitions
 window.bitwave.call("compare_operands", { a: "8ADEFEDA85210125", b: "FFFFFFFF00000000" })
-window.bitwave.setState({ lane: 2 })    // setters never throw
+window.bitwave.setState({ lane: 2 })    // setters never throw; lanes 1–8, live only
+window.bitwave.setLane(8)               // E_OUT_OF_RANGE unless lane 8 is live
+window.bitwave.setFrame("O")            // frame names A–P / Z1–Z8 (live lane only)
 window.bitwave.setRegister("A", "DEADBEEF")
 window.bitwave.setExpression("D", "round(1.2599210498948732 * C)") // expr source
 window.bitwave.setRoute("D", "1.z")     // or setSource("D", {kind:"frame", from:"1.z"})
@@ -124,7 +134,9 @@ const off = window.bitwave.subscribe(state => console.log(state));
 
 `call` returns the same envelope as the CLI/MCP. Setters return `{ok, state}` or
 `{ok:false, error, state}`; after one returns, `getState()` already reflects it; a no-op
-setter emits no change event. The legacy read-only `window.BitWave`
+setter emits no change event. Lane/frame setters accept the shipped 1–8 range but require
+the lane to be live in the tree, so `setLane(8)` on the three-lane boot returns
+`E_OUT_OF_RANGE` rather than creating a lane. The legacy read-only `window.BitWave`
 (`state/bindings/geometry/frames`, schema 1) is unchanged.
 
 **Headless state extraction without a driver.** The page exposes
@@ -200,7 +212,9 @@ Rules:
 4. Pure tools are read-only; UI changes only through bridge setters.
 5. Additive changes only; the default instrument's visual/behavioral contract stays
    unless a reviewed UI slice explicitly changes it (the external-routing slice added the
-   Record control and expression editors by design).
+   Record control and expression editors by design; the dynamic-lanes slice replaced the
+   stage-bar lane buttons with a lane dropdown and added the frames-view lane-management
+   controls by design).
 
 Acceptance checks:
 
@@ -220,13 +234,14 @@ node agent/verify-browser.mjs
 | `docs/AGENT-INTERFACE.md` | contract: tools, envelope, deeplink, state, bridge, CLI, MCP |
 | `docs/AGENT-SCREENSHOTS.md` | reproducible states + headless Chrome recipes |
 | `docs/BITWAVE-ECOSYSTEM-MAP.md` | sibling tools and what a handoff would carry |
-| `docs/DYNAMIC-LANES.md` | design note: lane-count ceiling (13/8), `+` menu, share budget; schema 4 + migration shipped (D44), compact codec (D45) shipped, UI pending |
+| `docs/DYNAMIC-LANES.md` | design note (shipped): lane-count ceiling (13/8), the live 1–8 lane set, `+`/dup/del, compact share budget; D43–D46 |
 | `docs/EXTERNAL-ROUTING.md` | shipped slice: Record/log and expression operands (schema 3, toolset 1.1.0) |
 | `agent/manifest.json` | generated capability manifest (tools, selectors, errors) |
 | `agent/examples/` | generated example envelopes, one per tool |
 | `agent/README.md` | transports guide: CLI commands, MCP server, selftest, generator |
 | `agent/verify-browser.mjs` | independent CDP checklist for the agent layer |
-| `docs/agent/*.png` | reproducible screenshots of the four documented states |
+| `examples/eight-lanes.bitwave.json` | committed eight-lane schema-4 fixture (used by the tests, verifier and screenshot recipe) |
+| `docs/agent/*.png` | reproducible screenshots of the documented states (six now, including eight-lanes) |
 | `llms.txt` | compact machine onboarding |
 | `spike/` | design spikes (not shipped) |
 
@@ -244,7 +259,8 @@ profile:
 ```
 
 Useful states: default 64-bit lane 1; an A·B pair (`8ADE… ⊕ FFFF…`); a width change; the
-agent tab. Prefer a deeplink + state JSON pair over prose for teaching material.
+agent tab; and an eight-lane document (`examples/eight-lanes.bitwave.json`, lane 8
+focused). Prefer a deeplink + state JSON pair over prose for teaching material.
 
 ## Troubleshooting
 

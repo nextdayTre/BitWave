@@ -18,9 +18,11 @@
  * patch key `expression`), the transient recorded take (`record(on)`,
  * `getLog({limit?})`) and `recording` / per-lane `expressions` in `getState()`.
  * Toolset 1.2.0 (D44) moved the shared `.bitwave` document to schema 4 (lane map
- * keyed by stable lane key); toolset 1.3.0 (D45) changes the canonical `#bw=`
- * link to the compact codec (legacy links still load). The bridge surface itself
- * is unchanged.
+ * keyed by stable lane key); toolset 1.3.0 (D45) changed the canonical `#bw=`
+ * link to the compact codec (legacy links still load). Toolset 1.4.0 (D43/D46)
+ * widens the closed lane/frame enums to the shipped 1–8 range (frames `A`–`P`,
+ * `Z1`–`Z8`): setters accept only lanes the live tree carries, so focusing an
+ * absent lane is a truthful `E_OUT_OF_RANGE`, never a silent lane creation.
  */
 
 import {
@@ -165,17 +167,45 @@ export function createAgentBridge(deps) {
   /**
    * Bridge-only checks that need live routes/dataset (the pure patch validator
    * cannot know them). Runs before any mutation.
+   *
+   * Since toolset 1.4.0 the pure lane/frame enums are the shipped 1–8 range, so
+   * this is also where a well-formed reference to a lane the live tree does not
+   * carry is refused: the agent may focus/manage live lanes only, never create a
+   * lane by naming it.
    */
+  function liveLaneKeys() {
+    return Object.keys(S.lanes).sort((a, b) => Number(a) - Number(b));
+  }
+
+  function notLive(lane) {
+    const live = liveLaneKeys();
+    return {
+      code: "E_OUT_OF_RANGE",
+      message: `lane ${lane} is not live; this instrument has lane${live.length === 1 ? "" : "s"} ${live.join(", ")}`,
+      hint: "add the lane in the frames view first, then retry",
+    };
+  }
+
   function preflight(patch) {
+    if (patch.lane !== undefined && !S.lanes[String(patch.lane)]) {
+      return notLive(patch.lane);
+    }
+
+    if (patch.frame !== undefined) {
+      const ref = frameRefFromName(patch.frame);
+      if (ref && !S.lanes[ref.lane]) return notLive(ref.lane);
+    }
+
     if (patch.register) {
       const ref = frameRefFromName(patch.register.frame);
-      if (!ref) return { code: "E_BAD_ENUM", message: "register.frame must be an operand frame (A–F)" };
+      if (!ref) return { code: "E_BAD_ENUM", message: "register.frame must be an operand frame (A–P)" };
       if (ref.frame === "z") {
         return {
           code: "E_BAD_ENUM",
           message: "Z is derived and cannot be written; choose an operand frame",
         };
       }
+      if (!S.lanes[ref.lane]) return notLive(ref.lane);
       const sl = S.lanes[ref.lane];
       if (isInputDriven(sl, ref.frame)) {
         const driver = driverName(sl, ref.frame) || "a route";
@@ -187,7 +217,18 @@ export function createAgentBridge(deps) {
       }
     }
 
+    if (patch.expression) {
+      const ref = frameRefFromName(patch.expression.frame);
+      if (ref && !S.lanes[ref.lane]) return notLive(ref.lane);
+    }
+
     if (patch.source) {
+      const ref = frameRefFromName(patch.source.frame);
+      if (ref && !S.lanes[ref.lane]) return notLive(ref.lane);
+      if (patch.source.kind === "frame") {
+        const fromLane = patch.source.from.split(".")[0];
+        if (!S.lanes[fromLane]) return notLive(fromLane);
+      }
       if (patch.source.kind === "data" && !DEMO.cols[patch.source.column]) {
         return {
           code: "E_BAD_STATE",
@@ -304,7 +345,8 @@ export function createAgentBridge(deps) {
   function applyNormalized(patch) {
     if (patch.reset) resetInstrument();
     if (patch.lane !== undefined) {
-      /* The agent surface stays numeric lane 1..3; the lane key is its identity. */
+      /* The agent surface accepts the closed 1–8 range; preflight proved the
+         lane is live, so this focuses it through the instrument's own command. */
       const lane = laneKeyFromNumber(patch.lane);
       if (lane !== null) selectLane(lane);
     }

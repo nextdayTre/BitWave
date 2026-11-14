@@ -8,6 +8,7 @@
 import { SIZES, type RegisterSize } from "./registers.ts";
 import type { BinOp, FrameKey, LaneKey } from "./types.ts";
 import {
+  APP_LANE_CAP,
   DEFAULT_LANE_COUNT,
   laneDef,
   laneDefs,
@@ -22,7 +23,7 @@ import { serializeProject, type ProjectDoc, type ProjectViewState } from "./proj
 
 export const TOOL_ID = "bitwave";
 export const TOOL_TITLE = "BitWave";
-export const TOOLSET_VERSION = "1.3.0";
+export const TOOLSET_VERSION = "1.4.0";
 export const SCHEMA_VERSION = 1;
 export const DEFAULT_WIDTH: RegisterSize = 64;
 
@@ -37,32 +38,52 @@ export const LFO_MODES = ["rotcw", "rotccw", "slide", "csvStep"] as const;
 export const LFO_RATES = [1, 2, 4, 8] as const;
 
 /**
- * The lane names this build ships: the default three-lane table from
- * `lanedefs.ts`. Later dynamic-lane slices widen this; the agent surface stays a
- * closed enum until that reviewed slice bumps the toolset.
+ * The lane names this build ships: the default three-lane boot instrument from
+ * `lanedefs.ts`. The *agent surface* accepts the whole shipped app cap
+ * (`APP_LANE_CAP`, 8 lanes) since toolset 1.4.0; the boot/default document still
+ * carries three.
  */
-const SHIPPED_LANE_DEFS = laneDefs(DEFAULT_LANE_COUNT);
-const SHIPPED_LANES: readonly LaneKey[] = SHIPPED_LANE_DEFS.map((def) => def.key as LaneKey);
-const SLOT_KEY_OF_LANE: readonly string[] = SHIPPED_LANE_DEFS.map((def) =>
+const BOOT_LANE_DEFS = laneDefs(DEFAULT_LANE_COUNT);
+const SLOT_KEY_OF_LANE: readonly string[] = BOOT_LANE_DEFS.map((def) =>
   String.fromCharCode(65 + def.index),
 );
 
-/** Global frame names: lane 1 A/B/Z1, lane 2 C/D/Z2, lane 3 E/F/Z3. */
+/** The closed agent lane range: every key from 1 to `APP_LANE_CAP` (1–8). */
+export const AGENT_LANE_KEYS: readonly LaneKey[] = laneDefs(APP_LANE_CAP).map(
+  (def) => def.key as LaneKey,
+);
+
+/**
+ * Global frame names for the whole shipped lane cap: lane 1 `A/B/Z1`, …
+ * lane 8 `O/P/Z8`. A live document only reports its own lanes; this is the
+ * closed name vocabulary the agent layer accepts.
+ */
 export const FRAME_NAMES: Record<LaneKey, Record<FrameKey, string>> = frameNamesFor(
-  DEFAULT_LANE_COUNT,
+  APP_LANE_CAP,
 ) as Record<LaneKey, Record<FrameKey, string>>;
 
-export const SLOT_OF_LANE: Record<LaneKey, "A" | "B" | "C"> = Object.fromEntries(
-  SHIPPED_LANES.map((lane, index) => [lane, SLOT_KEY_OF_LANE[index]]),
-) as Record<LaneKey, "A" | "B" | "C">;
+/**
+ * Legacy three-lane slot map (lanes 1–3 only). The app stopped using schema-1
+ * A/B/C slots when lane keys became the identity (D43); kept for the historic
+ * `FrameRef.slotKey` spelling on old A–F/Z1–Z3 refs.
+ */
+export const SLOT_OF_LANE: { readonly [lane: string]: "A" | "B" | "C" | undefined } =
+  Object.fromEntries(
+    BOOT_LANE_DEFS.map((lane, index) => [lane.key, SLOT_KEY_OF_LANE[index]]),
+  ) as { readonly [lane: string]: "A" | "B" | "C" | undefined };
 export const LANE_OF_SLOT: Record<"A" | "B" | "C", LaneKey> = Object.fromEntries(
-  SHIPPED_LANES.map((lane, index) => [SLOT_KEY_OF_LANE[index], lane]),
+  BOOT_LANE_DEFS.map((lane, index) => [SLOT_KEY_OF_LANE[index], lane.key]),
 ) as Record<"A" | "B" | "C", LaneKey>;
 
 export interface FrameRef {
   lane: LaneKey;
   frame: FrameKey;
-  slotKey: "A" | "B" | "C";
+  /**
+   * Legacy schema-1 slot key, present only for lanes 1–3 (frames `A`–`F`,
+   * `Z1`–`Z3`). Lanes 4–8 have no historic slot letter, so the field is
+   * omitted from their refs (D43/D46).
+   */
+  slotKey?: "A" | "B" | "C";
   /** Canonical uppercase display name, e.g. "Z1". */
   name: string;
 }
@@ -77,18 +98,23 @@ export function frameName(lane: LaneKey, frame: FrameKey): string {
   return frame.toUpperCase();
 }
 
-/** Resolve a global frame name of the shipped three lanes (`A`–`F`, `Z1`–`Z3`); case-insensitive. */
+/**
+ * Resolve a global frame name of the shipped agent range (`A`–`P`, `Z1`–`Z8`);
+ * case-insensitive, and null for any name outside the 1–8 lane cap.
+ */
 export function frameRefFromName(value: unknown): FrameRef | null {
-  const ref = lanedefsFrameRefFromName(value, DEFAULT_LANE_COUNT);
+  const ref = lanedefsFrameRefFromName(value, APP_LANE_CAP);
   if (ref === null) return null;
   const lane = ref.lane as LaneKey;
-  return { lane, frame: ref.frame, slotKey: SLOT_OF_LANE[lane], name: ref.name };
+  const slotKey = SLOT_OF_LANE[lane];
+  const base = { lane, frame: ref.frame, name: ref.name };
+  return slotKey === undefined ? base : { ...base, slotKey };
 }
 
-/** The shipped lane key ("1"–"3") for the numeric lane selector; null for any other value. */
+/** The shipped agent lane key ("1"–"8") for the numeric lane selector; null for any other value. */
 export function laneKeyFromNumber(value: unknown): LaneKey | null {
   const key = lanedefsLaneKeyFromNumber(value);
-  if (key === null || !(SHIPPED_LANES as readonly string[]).includes(key)) return null;
+  if (key === null || !(AGENT_LANE_KEYS as readonly string[]).includes(key)) return null;
   return key as LaneKey;
 }
 

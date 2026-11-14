@@ -1,4 +1,4 @@
-# Agent Interface Contract — bitwave v1 (toolset 1.3.0)
+# Agent Interface Contract — bitwave v1 (toolset 1.4.0)
 
 Normative contract for BitWave's agent layer. The human-facing onboarding is
 [`AGENTS.md`](../AGENTS.md); this file is the precise spec the browser bridge, CLI and
@@ -24,12 +24,14 @@ Design rules:
 |---|---|
 | tool id | `bitwave` |
 | title | `BitWave` |
-| toolset version | `1.3.0` |
+| toolset version | `1.4.0` |
 | `schemaVersion` | `1` |
 | browser bridge | `window.bitwave` |
 | legacy surface | `window.BitWave` (schema 1, read-only, unchanged) |
 | app artifact | `bitwave-v2.html` (single file, no external references) |
 | project document | `.bitwave` schema 4 (`src/core/project.ts`; schemas 1/2/3 still load and upgrade) |
+| lane range (agent) | **1–8** — the shipped app cap; the default instrument boots with 3 |
+| frame names | **`A`–`P`** (two operands per lane) and **`Z1`–`Z8`** (derived), lanes 1–8 |
 
 Keep the id stable across the manifest, CLI, MCP `serverInfo.name`, the bridge global and
 the hidden state node.
@@ -40,7 +42,7 @@ Exports:
 
 ```ts
 export const SCHEMA_VERSION: 1
-export const TOOLSET_VERSION: "1.3.0"
+export const TOOLSET_VERSION: "1.4.0"
 export const TOOL_ID: "bitwave"
 export class AgentToolError extends Error { code; hint? }
 export const TOOLS: ToolDef[]              // definition order is canonical
@@ -262,7 +264,9 @@ The canonical compact payload (D45, `src/core/share.ts`):
   `node tools/share-budget.mjs`. The builder drops the dataset first
   (`datasetDropped`) and expression sources second (`expressionsDropped`) only when the
   link would still overflow; `withinBudget:false` is reported rather than silently
-  truncating.
+  truncating. Share length is a **measured metric, never a lane constraint**: the live
+  lane set is bounded by `APP_LANE_CAP` (8), the app adds no budget UI or component, and
+  an overflowing link is a reported drop-policy outcome (D46).
 - A link is portable only when the app file is available; the CLI/MCP path needs no URL.
 
 ## 6. UI state — `getState()` and `#bitwave-state`
@@ -299,17 +303,21 @@ once mounted and contains `JSON.stringify(getState())`. `getState()` returns:
   "editing": { "copyArmed": false, "enabled": true },
   "recording": { "on": false, "rows": 0 },
   "deeplink": "file:///…/bitwave-v2.html#bw=…",
-  "bridge": { "schemaVersion": 1, "version": "1.3.0" }
+  "bridge": { "schemaVersion": 1, "version": "1.4.0" }
 }
 ```
 
 - Keys `schemaVersion, ready, width, lane, frame, view, lanes, lfo, dataset, editing,
   recording, deeplink, bridge` are always present; `dataset` is `null` when empty.
-- Frame names are global: lane 1 `A/B/Z1`, lane 2 `C/D/Z2`, lane 3 `E/F/Z3`.
+- Frame names are global and derived from the lane key: lane 1 `A/B/Z1`, lane 2
+  `C/D/Z2`, lane 3 `E/F/Z3`, lane 4 `G/H/Z4`, … lane 8 `O/P/Z8`. The closed agent
+  vocabulary is `A`–`P` plus `Z1`–`Z8`.
 - `lanes` reports exactly the lanes the document carries: the shipped three for a
-  schema 1–3 document and the boot state; a schema-4 document with a wider or gapped lane
-  map is reported by stable key with names derived from `lanedefs.ts` (D44). Lane-count
-  and selector enums stay three-lane until the agent-surface slice (D43).
+  schema 1–3 document and the boot state, and the document's own map for schema 4
+  (1–8 lanes, gaps allowed — `"1"`,`"3"`,`"4"` reports those three keys, in ascending
+  numeric order, with names derived from each stable key). The agent surface accepts the
+  whole 1–8 range regardless of the live tree; lane numbers are always the stable lane
+  key, never an array position (D43/D44/D46).
 - `derived` is computed from the shared core (`computeZ`, `truthCounts`, `popcountZ`),
   never copied from the DOM.
 - `frame` is the focused frame's global name; `lane` is the focused lane.
@@ -326,7 +334,7 @@ once mounted and contains `JSON.stringify(getState())`. `getState()` returns:
 
 ```js
 window.bitwave = {
-  schemaVersion: 1, version: "1.3.0", ready: true,
+  schemaVersion: 1, version: "1.4.0", ready: true,
   getState(), getManifest(), tools(), call(name, args),
   getDeeplink(),
   setState(patch), setLane(n), setFrame(name), setView(mode), setWidth(bits),
@@ -356,18 +364,26 @@ unknown key → `E_BAD_ARGS`; all validation happens before any mutation):
 
 | key | value | effect |
 |---|---|---|
-| `lane` | `1 \| 2 \| 3` | focus that lane (same as the stage bar) |
-| `frame` | `A`–`F`, `Z1`–`Z3` | focus lens; derived frames are allowed (read-only) |
+| `lane` | `1 \| 2 \| 3 \| 4 \| 5 \| 6 \| 7 \| 8` | focus that lane (same as the stage bar); the lane **must be live** — a non-live lane returns `E_OUT_OF_RANGE` and the bridge never creates a lane |
+| `frame` | `A`–`P`, `Z1`–`Z8` | focus lens; derived frames are allowed (read-only); the lane must be live (`E_OUT_OF_RANGE` otherwise) |
 | `view` | `"2d" \| "3d" \| "split"` | view mode (`split` implies 3-D) |
 | `width` | `8 \| 16 \| 32 \| 64 \| 128 \| 256` | centre-pinned resize |
-| `register` | `{ frame: A–F, hex: string }` | writes an operand; `E_DRIVEN_INPUT` when routed; `E_BAD_ENUM` for derived frames |
+| `register` | `{ frame: A–P, hex: string }` | writes an operand; `E_DRIVEN_INPUT` when routed; `E_BAD_ENUM` for derived frames |
 | `binop` | `and \| or \| xor \| add \| sub` | lane operator |
 | `lfo` | `{ on?: boolean, mode?: "rotcw"\|"rotccw"\|"slide"\|"csvStep", rate?: 1\|2\|4\|8 }` | start/stop keeps the snapshot/restore discipline; mode/rate restart the shape |
 | `dataset` | `{ csv?: string, index?: integer }` | load CSV/TSV text and/or step to a row; `index` requires a dataset |
-| `expression` | `{ frame: A–F, text: string }` | bind/clear a deterministic expression source (`""` clears; `E_INVALID_EXPRESSION` on bad text; clears any route/data on that operand) |
-| `source` | `{ frame: A–F, kind: "none" }` or `{ frame, kind: "data", column }` or `{ frame, kind: "frame", from: "<lane>.<a\|b\|z>" }` | bind/unbind one input to a dataset column or frame route; `E_BAD_STATE` for a column outside the current dataset, `E_BAD_ARGS` for a self-route; clears any expression on that operand |
+| `expression` | `{ frame: A–P, text: string }` | bind/clear a deterministic expression source (`""` clears; `E_INVALID_EXPRESSION` on bad text; clears any route/data on that operand) |
+| `source` | `{ frame: A–P, kind: "none" }` or `{ frame, kind: "data", column }` or `{ frame, kind: "frame", from: "<lane>.<a\|b\|z>" }` | bind/unbind one input to a dataset column or frame route (lanes 1–8); `E_BAD_STATE` for a column outside the current dataset, `E_BAD_ARGS` for a self-route; clears any expression on that operand |
 | `record` | `boolean` | `true` arms a fresh transient take, `false` freezes; rows are read via `getLog()` |
 | `reset` | `true` | boot state, same as `reset instrument` |
+
+Frame references: `frameRefFromName(name)` (used by the patch validator) resolves the
+global names case-insensitively to `{ lane, frame, name }`. Lanes 1–3 refs also carry the
+legacy schema-1 slot letter as `slotKey` (`A`/`B`/`C`); lanes 4–8 refs **omit**
+`slotKey`, because those frames (`G`–`P`, `Z4`–`Z8`) never had a schema-1 slot. Consumers
+must treat `slotKey` as optional and key on `lane`/`frame`. The pure lane range is the
+shipped 1–8 cap regardless of what the live tree carries; the *bridge* additionally
+requires the referenced lane to be live.
 
 Individual setters are thin wrappers: `setLane(n)` = `setState({lane:n})`, etc.
 `setSource(frame, source)` and `setRoute(frame, from)` build the same patch; `setRoute` is
@@ -382,23 +398,29 @@ Automation hooks (additive attributes only):
 - `window` events `bitwave:ready` and `bitwave:change` (`detail` = state, exactly one
   change on install);
 - help panel tabs carry `data-agent-tab="keys|agent"`; their panels carry
-  `data-agent-panel="keys|agent"`; lane buttons carry `data-agent-lane="1|2|3"`; frames-view
-  cards carry `data-agent-frame="A|B|Z1"` (one per global frame, 9 total);
+  `data-agent-panel="keys|agent"`; the **active (visible) stage-bar lane dropdown**
+  carries `data-agent-lane="<lane key>"` (the native `<select class="op lane-select">`,
+  one per visible pane, kept synchronous with the value; hidden panes and the frames-view
+  stage carry no attribute); frames-view cards carry `data-agent-frame="A|B|Z1|…|Z8"`
+  (one per global frame — 9 at boot, 24 with eight live lanes);
 - agent panel status text: `[data-agent-status="bridge-active"]`.
 
 ## 8. Manifest (`getManifest()` / `agent/manifest.json`)
 
 ```json
 {
-  "id": "bitwave", "title": "BitWave", "version": "1.3.0", "schemaVersion": 1,
-  "description": "…",
+  "id": "bitwave", "title": "BitWave", "version": "1.4.0", "schemaVersion": 1,
+  "description": "…compute Z = A op B for any lane (the shipped range is 1–8; the
+                  default instrument boots with 3)…",
   "urls": { "app": "bitwave-v2.html", "manifest": "agent/manifest.json",
             "agents": "AGENTS.md", "interface": "docs/AGENT-INTERFACE.md" },
   "deeplink": { "template": "bitwave-v2.html#bw={payload}", "prefix": "#bw=",
                 "budgetChars": 2000, "defaults": { "lane": 1, "view": "2d" } },
   "ui": { "bridge": "window.bitwave", "ready": "body[data-agent-ready='true']",
           "stateSelector": "#bitwave-state", "panelSelector": "[data-agent-panel]",
-          "tabSelector": "[data-agent-tab]", "laneSelector": "[data-agent-lane]",
+          "tabSelector": "[data-agent-tab]",
+          "laneSelect": "#stageBar .lane-select",
+          "laneSelector": "[data-agent-lane]",
           "frameSelector": "[data-agent-frame]" },
   "tools": [ /* ToolDefs without run functions, canonical order */ ],
   "errorCodes": [ /* closed set */ ],
@@ -447,7 +469,7 @@ Commands: `manifest`, `analyze_register`, `evaluate_lane`, `compare_operands`,
 Newline-delimited JSON-RPC 2.0 over stdio, zero dependencies.
 
 - `initialize` → `{ protocolVersion: "2025-06-18", capabilities: { tools: {} },
-  serverInfo: { name: "bitwave", version: "1.3.0" } }`
+  serverInfo: { name: "bitwave", version: "1.4.0" } }`
 - `notifications/initialized` → no response.
 - `ping` → `{}`.
 - `tools/list` → `{ tools: [{ name, description, inputSchema }] }` (pure tools only).
@@ -494,10 +516,16 @@ slice intentionally adds the Record control, so pre-slice parity no longer appli
 Browser checks must include: readiness marker, hidden state === `getState()`, one
 `bitwave:change` on mount, no event for a no-op setter, synchronous setter reads,
 invalid setter errors, a deeplink reload reproducing state twice, the agent panel
-status, no horizontal overflow at 360/720/1440, and for the external-routing slice:
-expression text in `lanes[*].expressions`, `setExpression` changing D/Z2 with one event,
+status, no horizontal overflow at 360/720/1440; for the external-routing slice: expression
+text in `lanes[*].expressions`, `setExpression` changing D/Z2 with one event,
 `E_INVALID_EXPRESSION` on bad text with no mutation, `record`/`getLog` rows and
-`recording.rows` in state, and the source-table expression editor + Record toggle.
+`recording.rows` in state, and the source-table expression editor + Record toggle; and
+for the dynamic-lanes slice (1.4.0): the stage-bar lane dropdown is the documented
+selector (the active select carries `[data-agent-lane]`), a non-live `lane`/`frame` setter
+is a truthful `E_OUT_OF_RANGE` with no state change and no event, and an eight-lane
+schema-4 document loads from its canonical compact deeplink reporting eight stable lane
+keys with frames `A`–`P`/`Z1`–`Z8`, `setLane(8)` working, and the frames view rendering
+one card per global frame.
 
 ## 13. File ownership (when multiple agents build this)
 

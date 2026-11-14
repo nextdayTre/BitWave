@@ -13,7 +13,9 @@
  * brings its own declared keyboard path (arrows/Home/End/type-ahead) and cannot
  * grow the bar sideways as lanes are added; split has two selects and the
  * second is named "Lane (second pane)". Selection writes only through the
- * instrument's own lane commands.
+ * instrument's own lane commands. The visible select also carries the agent
+ * selector hook `[data-agent-lane="<active lane key>"]` (contract §7), kept in
+ * step synchronously with the value and cleared on hidden panes.
  */
 
 import { S, curLane, liveLaneKeys } from "../state/instrument.ts";
@@ -124,6 +126,14 @@ export function createStageBar(deps) {
     }
     if (select.value !== active) select.value = active;
     if (select.dataset.lane !== active) select.dataset.lane = active;
+    /* The active (visible) select is the documented lane selector; keep the
+       hook synchronous with the value so selector-driven tooling never sees a
+       stale lane between a setter and the next render. */
+    if (select.getAttribute("data-agent-lane") !== active) select.setAttribute("data-agent-lane", active);
+  }
+
+  function clearAgentLane(select) {
+    if (select.hasAttribute("data-agent-lane")) select.removeAttribute("data-agent-lane");
   }
 
   function setSplitEnabled(btn, enabled) {
@@ -138,6 +148,10 @@ export function createStageBar(deps) {
 
     const { p0, p1 } = stageDom;
     const laneKeys = liveLaneKeys();
+    /* Only the panes actually on screen advertise a lane; the hidden mirror and
+       the frames-view stage must not carry a stale [data-agent-lane]. */
+    clearAgentLane(p0.select);
+    clearAgentLane(p1.select);
     element.classList.toggle("is-split", S.split3d);
     element.dataset.view = S.view3d ? (S.split3d ? "split" : "3d") : "2d";
 

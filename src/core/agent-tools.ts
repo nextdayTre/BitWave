@@ -498,7 +498,7 @@ export function getManifest(): Manifest {
     version: TOOLSET_VERSION,
     schemaVersion: SCHEMA_VERSION,
     description:
-      "BitWave renders a bit register as a wavetable. Compute Z = A op B for any lane, compare operators, parse CSV/TSV datasets and build canonical #bw= deeplinks from one shared, deterministic core.",
+      "BitWave renders a bit register as a wavetable: compute Z = A op B for any lane (the shipped range is 1–8; the default instrument boots with 3), compare operators, parse CSV/TSV datasets and build canonical #bw= deeplinks from one shared, deterministic core.",
     urls: {
       app: "bitwave-v2.html",
       manifest: "agent/manifest.json",
@@ -517,6 +517,8 @@ export function getManifest(): Manifest {
       stateSelector: "#bitwave-state",
       panelSelector: "[data-agent-panel]",
       tabSelector: "[data-agent-tab]",
+      /** The active stage-bar lane dropdown (a native `<select>`), valued by lane key. */
+      laneSelect: "#stageBar .lane-select",
       laneSelector: "[data-agent-lane]",
       frameSelector: "[data-agent-frame]",
     },
@@ -579,13 +581,13 @@ export function normalizeAgentPatch(value: unknown): PatchResult {
 
     if (input.lane !== undefined) {
       const lane = laneKeyFromNumber(input.lane);
-      if (!lane) bad("E_BAD_ENUM", "lane must be 1, 2 or 3");
+      if (!lane) bad("E_BAD_ENUM", "lane must be an integer 1–8");
       patch.lane = Number(lane);
     }
 
     if (input.frame !== undefined) {
       const frame = frameRefFromName(input.frame);
-      if (!frame) bad("E_BAD_ENUM", "frame must be A–F or Z1–Z3");
+      if (!frame) bad("E_BAD_ENUM", "frame must be A–P or Z1–Z8");
       patch.frame = frame.name;
     }
 
@@ -604,7 +606,7 @@ export function normalizeAgentPatch(value: unknown): PatchResult {
       const register = objectValue(input.register, "register");
       onlyKeys(register, ["frame", "hex"], "register");
       const frame = frameRefFromName(register.frame);
-      if (!frame) bad("E_BAD_ENUM", "register.frame must be an operand frame (A–F)");
+      if (!frame) bad("E_BAD_ENUM", "register.frame must be an operand frame (A–P)");
       if (frame.frame === "z") bad("E_BAD_ENUM", "Z is derived and cannot be written; choose an operand frame");
       patch.register = { frame: frame.name, hex: hexText(register.hex, "register.hex") };
     }
@@ -660,7 +662,7 @@ export function normalizeAgentPatch(value: unknown): PatchResult {
       const expression = objectValue(input.expression, "expression");
       onlyKeys(expression, ["frame", "text"], "expression");
       const frame = frameRefFromName(expression.frame);
-      if (!frame) bad("E_BAD_ENUM", "expression.frame must be an operand frame (A–F)");
+      if (!frame) bad("E_BAD_ENUM", "expression.frame must be an operand frame (A–P)");
       if (frame.frame === "z") bad("E_BAD_ENUM", "Z is derived and cannot carry an expression");
       if (typeof expression.text !== "string") bad("E_BAD_ARGS", "expression.text must be a string");
       const text = expression.text.trim();
@@ -689,7 +691,7 @@ export function normalizeAgentPatch(value: unknown): PatchResult {
       const source = objectValue(input.source, "source");
       onlyKeys(source, ["frame", "kind", "column", "from"], "source");
       const frame = frameRefFromName(source.frame);
-      if (!frame) bad("E_BAD_ENUM", "source.frame must be an operand frame (A–F)");
+      if (!frame) bad("E_BAD_ENUM", "source.frame must be an operand frame (A–P)");
       if (frame.frame === "z") bad("E_BAD_ENUM", "Z is derived and cannot carry a source");
       if (source.kind === "none") {
         patch.source = { frame: frame.name, kind: "none" };
@@ -699,8 +701,8 @@ export function normalizeAgentPatch(value: unknown): PatchResult {
         patch.source = { frame: frame.name, kind: "data", column };
       } else if (source.kind === "frame") {
         if (typeof source.from !== "string") bad("E_BAD_ARGS", "source.from must be a port string");
-        const match = /^([123])\.([abz])$/.exec(source.from);
-        if (!match) bad("E_BAD_ENUM", "source.from must be a port such as 3.z or 2.a");
+        const match = /^([1-8])\.([abz])$/.exec(source.from);
+        if (!match) bad("E_BAD_ENUM", "source.from must be a port such as 3.z or 2.a (lanes 1–8)");
         if (match[1] === frame.lane && match[2] === frame.frame) {
           bad("E_BAD_ARGS", `${frame.name} cannot be driven by itself`);
         }

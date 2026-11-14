@@ -17,10 +17,13 @@ rewrites the bits and reshapes the wave. Bitwise operations are DSP operations �
 `ROL` is a phase shift, `XOR` is a wavefolder, `NOT` is polarity inversion, `BSWAP` is an
 endianness swap.
 
-Two operands feed a derived result in each of three lanes — lane 1 frames A/B → Z1,
-lane 2 C/D → Z2, lane 3 E/F → Z3 — so binary logic is *watched* rather than computed
-on paper. Frame names are global: the six operand frames A–F are the only routing
-destinations, and the nine frame outputs A–F + Z1–Z3 are the routing sources.
+Two operands feed a derived result in each lane — lane 1 frames A/B → Z1,
+lane 2 C/D → Z2, lane 3 E/F → Z3 at the default — so binary logic is *watched* rather
+than computed on paper. The default instrument boots with three lanes; the shipped build
+scales the live set to eight (`A/B` … `O/P`, `Z1`–`Z8`, D43–D46). Frame names are global
+and derive from the stable lane key: with three live lanes the six operand frames A–F are
+the routing destinations and the nine frame outputs A–F + Z1–Z3 are the sources; with `L`
+live lanes there are `2L` destinations and `3L` sources.
 
 **Non-goals.** Not a game. Not a dashboard. Not a marketing surface. There is no
 onboarding, no trophy, no confetti. The reward is watching the number and the shape be
@@ -922,6 +925,15 @@ The visual contract is measurable, so measure it rather than eyeballing:
   external-routing slice intentionally adds the Record control, and the dynamic-lanes slice
   intentionally changes the stage-bar lane control and the frames-view lane heads (D46),
   so those states are expected to differ from the pre-slice artifact.
+- **Agent lane surface (toolset 1.4.0):** the lane enum is the shipped 1–8 range and the
+  frame vocabulary is `A`–`P`/`Z1`–`Z8`; the stage-bar dropdown is the documented lane
+  selector (`ui.laneSelect`, active select carries `[data-agent-lane]`) and names the
+  focused lane after `setLane`; `setLane`/`setFrame` for a lane the live tree does not
+  carry return `E_OUT_OF_RANGE` with no state change and no event; an eight-lane schema-4
+  document loads through its canonical compact `#bw=` link reporting eight stable lane
+  keys, `setLane(8)` works, and the frames view renders 24 cards (`A`–`P`/`Z1`–`Z8`).
+  `node agent/verify-browser.mjs` is **34/34** and the rebuild stays **6/6 states
+  pixel-identical** to the D46 UI artifact (`browser-check --compare`).
 - **External routing (schema 3; schema 4 additive):** the source table offers `expr` rows; a valid expression
   changes the operand and Z on the next evaluation, an invalid one restores the previous
   text and leaves the registers alone (`E_INVALID_EXPRESSION` from the bridge); Record
@@ -1025,8 +1037,10 @@ them.
   `2L` grouped rows; Record rows and the copy menu follow the live set. Lane management is
   no-renumber, min 1 / max 8; delete clears routes and restores surviving parked bases;
   duplicate excludes route edges. Accessible names and 24 px targets cover the new
-  controls; axe stays clean in single- and eight-lane frames views. The agent
-  manifest/toolset enums intentionally stay three-lane for the final docs slice.
+  controls; axe stays clean in single- and eight-lane frames views. The final slice
+  widens the agent surface to the same live 1–8 range (toolset 1.4.0: frames
+  `A`–`P`/`Z1`–`Z8`, the stage-bar dropdown as the documented lane selector, non-live
+  lane setters refused, an eight-lane state verified and screenshotted).
 
 ### Next
 

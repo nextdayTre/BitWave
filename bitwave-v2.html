@@ -2635,7 +2635,9 @@ function createFrameNavigator(deps) {
 * brings its own declared keyboard path (arrows/Home/End/type-ahead) and cannot
 * grow the bar sideways as lanes are added; split has two selects and the
 * second is named "Lane (second pane)". Selection writes only through the
-* instrument's own lane commands.
+* instrument's own lane commands. The visible select also carries the agent
+* selector hook `[data-agent-lane="<active lane key>"]` (contract §7), kept in
+* step synchronously with the value and cleared on hidden panes.
 */
 function createStageBar(deps) {
 	const { element, framesBtn, selectLane, selectLaneInPane, setSplitMode, focusSplitPane, laneExprText, closeFrames } = deps;
@@ -2733,6 +2735,10 @@ function createStageBar(deps) {
 		}
 		if (select.value !== active) select.value = active;
 		if (select.dataset.lane !== active) select.dataset.lane = active;
+		if (select.getAttribute("data-agent-lane") !== active) select.setAttribute("data-agent-lane", active);
+	}
+	function clearAgentLane(select) {
+		if (select.hasAttribute("data-agent-lane")) select.removeAttribute("data-agent-lane");
 	}
 	function setSplitEnabled(btn, enabled) {
 		btn.setAttribute("aria-disabled", String(!enabled));
@@ -2742,6 +2748,8 @@ function createStageBar(deps) {
 		if (!stageDom) return;
 		const { p0, p1 } = stageDom;
 		const laneKeys = liveLaneKeys();
+		clearAgentLane(p0.select);
+		clearAgentLane(p1.select);
 		element.classList.toggle("is-split", S.split3d);
 		element.dataset.view = S.view3d ? S.split3d ? "split" : "3d" : "2d";
 		const framesOn = S.framesView === true;
@@ -4601,7 +4609,7 @@ var stringifyProject = (doc) => JSON.stringify(doc, null, 2);
 */
 var TOOL_ID = "bitwave";
 var TOOL_TITLE = "BitWave";
-var TOOLSET_VERSION = "1.3.0";
+var TOOLSET_VERSION = "1.4.0";
 /** Fixed timestamp for canonical share documents (links never carry `savedAt`). */
 var CANONICAL_SAVED_AT = "1970-01-01T00:00:00.000Z";
 var WIDTHS = SIZES$1;
@@ -4630,17 +4638,28 @@ var LFO_RATES = [
 	8
 ];
 /**
-* The lane names this build ships: the default three-lane table from
-* `lanedefs.ts`. Later dynamic-lane slices widen this; the agent surface stays a
-* closed enum until that reviewed slice bumps the toolset.
+* The lane names this build ships: the default three-lane boot instrument from
+* `lanedefs.ts`. The *agent surface* accepts the whole shipped app cap
+* (`APP_LANE_CAP`, 8 lanes) since toolset 1.4.0; the boot/default document still
+* carries three.
 */
-var SHIPPED_LANE_DEFS = laneDefs(3);
-var SHIPPED_LANES = SHIPPED_LANE_DEFS.map((def) => def.key);
-var SLOT_KEY_OF_LANE = SHIPPED_LANE_DEFS.map((def) => String.fromCharCode(65 + def.index));
-/** Global frame names: lane 1 A/B/Z1, lane 2 C/D/Z2, lane 3 E/F/Z3. */
-var FRAME_NAMES = frameNamesFor(3);
-var SLOT_OF_LANE = Object.fromEntries(SHIPPED_LANES.map((lane, index) => [lane, SLOT_KEY_OF_LANE[index]]));
-Object.fromEntries(SHIPPED_LANES.map((lane, index) => [SLOT_KEY_OF_LANE[index], lane]));
+var BOOT_LANE_DEFS = laneDefs(3);
+var SLOT_KEY_OF_LANE = BOOT_LANE_DEFS.map((def) => String.fromCharCode(65 + def.index));
+/** The closed agent lane range: every key from 1 to `APP_LANE_CAP` (1–8). */
+var AGENT_LANE_KEYS = laneDefs(8).map((def) => def.key);
+/**
+* Global frame names for the whole shipped lane cap: lane 1 `A/B/Z1`, …
+* lane 8 `O/P/Z8`. A live document only reports its own lanes; this is the
+* closed name vocabulary the agent layer accepts.
+*/
+var FRAME_NAMES = frameNamesFor(8);
+/**
+* Legacy three-lane slot map (lanes 1–3 only). The app stopped using schema-1
+* A/B/C slots when lane keys became the identity (D43); kept for the historic
+* `FrameRef.slotKey` spelling on old A–F/Z1–Z3 refs.
+*/
+var SLOT_OF_LANE = Object.fromEntries(BOOT_LANE_DEFS.map((lane, index) => [lane.key, SLOT_KEY_OF_LANE[index]]));
+Object.fromEntries(BOOT_LANE_DEFS.map((lane, index) => [SLOT_KEY_OF_LANE[index], lane.key]));
 function frameName(lane, frame) {
 	const names = FRAME_NAMES[lane];
 	if (names) return names[frame];
@@ -4648,22 +4667,29 @@ function frameName(lane, frame) {
 	if (index >= 0) return laneDef(index)[frame];
 	return frame.toUpperCase();
 }
-/** Resolve a global frame name of the shipped three lanes (`A`–`F`, `Z1`–`Z3`); case-insensitive. */
+/**
+* Resolve a global frame name of the shipped agent range (`A`–`P`, `Z1`–`Z8`);
+* case-insensitive, and null for any name outside the 1–8 lane cap.
+*/
 function frameRefFromName(value) {
-	const ref = frameRefFromName$1(value, 3);
+	const ref = frameRefFromName$1(value, 8);
 	if (ref === null) return null;
 	const lane = ref.lane;
-	return {
+	const slotKey = SLOT_OF_LANE[lane];
+	const base = {
 		lane,
 		frame: ref.frame,
-		slotKey: SLOT_OF_LANE[lane],
 		name: ref.name
 	};
+	return slotKey === void 0 ? base : {
+		...base,
+		slotKey
+	};
 }
-/** The shipped lane key ("1"–"3") for the numeric lane selector; null for any other value. */
+/** The shipped agent lane key ("1"–"8") for the numeric lane selector; null for any other value. */
 function laneKeyFromNumber(value) {
 	const key = laneKeyFromNumber$1(value);
-	if (key === null || !SHIPPED_LANES.includes(key)) return null;
+	if (key === null || !AGENT_LANE_KEYS.includes(key)) return null;
 	return key;
 }
 function baseProjectDoc(N) {
@@ -5724,7 +5750,7 @@ function getManifest() {
 		title: TOOL_TITLE,
 		version: TOOLSET_VERSION,
 		schemaVersion: 1,
-		description: "BitWave renders a bit register as a wavetable. Compute Z = A op B for any lane, compare operators, parse CSV/TSV datasets and build canonical #bw= deeplinks from one shared, deterministic core.",
+		description: "BitWave renders a bit register as a wavetable: compute Z = A op B for any lane (the shipped range is 1–8; the default instrument boots with 3), compare operators, parse CSV/TSV datasets and build canonical #bw= deeplinks from one shared, deterministic core.",
 		urls: {
 			app: "bitwave-v2.html",
 			manifest: "agent/manifest.json",
@@ -5747,6 +5773,8 @@ function getManifest() {
 			stateSelector: "#bitwave-state",
 			panelSelector: "[data-agent-panel]",
 			tabSelector: "[data-agent-tab]",
+			/** The active stage-bar lane dropdown (a native `<select>`), valued by lane key. */
+			laneSelect: "#stageBar .lane-select",
 			laneSelector: "[data-agent-lane]",
 			frameSelector: "[data-agent-frame]"
 		},
@@ -5790,12 +5818,12 @@ function normalizeAgentPatch(value) {
 		const patch = {};
 		if (input.lane !== void 0) {
 			const lane = laneKeyFromNumber(input.lane);
-			if (!lane) bad("E_BAD_ENUM", "lane must be 1, 2 or 3");
+			if (!lane) bad("E_BAD_ENUM", "lane must be an integer 1–8");
 			patch.lane = Number(lane);
 		}
 		if (input.frame !== void 0) {
 			const frame = frameRefFromName(input.frame);
-			if (!frame) bad("E_BAD_ENUM", "frame must be A–F or Z1–Z3");
+			if (!frame) bad("E_BAD_ENUM", "frame must be A–P or Z1–Z8");
 			patch.frame = frame.name;
 		}
 		if (input.view !== void 0) {
@@ -5807,7 +5835,7 @@ function normalizeAgentPatch(value) {
 			const register = objectValue(input.register, "register");
 			onlyKeys(register, ["frame", "hex"], "register");
 			const frame = frameRefFromName(register.frame);
-			if (!frame) bad("E_BAD_ENUM", "register.frame must be an operand frame (A–F)");
+			if (!frame) bad("E_BAD_ENUM", "register.frame must be an operand frame (A–P)");
 			if (frame.frame === "z") bad("E_BAD_ENUM", "Z is derived and cannot be written; choose an operand frame");
 			patch.register = {
 				frame: frame.name,
@@ -5860,7 +5888,7 @@ function normalizeAgentPatch(value) {
 			const expression = objectValue(input.expression, "expression");
 			onlyKeys(expression, ["frame", "text"], "expression");
 			const frame = frameRefFromName(expression.frame);
-			if (!frame) bad("E_BAD_ENUM", "expression.frame must be an operand frame (A–F)");
+			if (!frame) bad("E_BAD_ENUM", "expression.frame must be an operand frame (A–P)");
 			if (frame.frame === "z") bad("E_BAD_ENUM", "Z is derived and cannot carry an expression");
 			if (typeof expression.text !== "string") bad("E_BAD_ARGS", "expression.text must be a string");
 			const text = expression.text.trim();
@@ -5889,7 +5917,7 @@ function normalizeAgentPatch(value) {
 				"from"
 			], "source");
 			const frame = frameRefFromName(source.frame);
-			if (!frame) bad("E_BAD_ENUM", "source.frame must be an operand frame (A–F)");
+			if (!frame) bad("E_BAD_ENUM", "source.frame must be an operand frame (A–P)");
 			if (frame.frame === "z") bad("E_BAD_ENUM", "Z is derived and cannot carry a source");
 			if (source.kind === "none") patch.source = {
 				frame: frame.name,
@@ -5905,8 +5933,8 @@ function normalizeAgentPatch(value) {
 				};
 			} else if (source.kind === "frame") {
 				if (typeof source.from !== "string") bad("E_BAD_ARGS", "source.from must be a port string");
-				const match = /^([123])\.([abz])$/.exec(source.from);
-				if (!match) bad("E_BAD_ENUM", "source.from must be a port such as 3.z or 2.a");
+				const match = /^([1-8])\.([abz])$/.exec(source.from);
+				if (!match) bad("E_BAD_ENUM", "source.from must be a port such as 3.z or 2.a (lanes 1–8)");
 				if (match[1] === frame.lane && match[2] === frame.frame) bad("E_BAD_ARGS", `${frame.name} cannot be driven by itself`);
 				patch.source = {
 					frame: frame.name,
@@ -6472,9 +6500,11 @@ function applyProject(raw) {
 * patch key `expression`), the transient recorded take (`record(on)`,
 * `getLog({limit?})`) and `recording` / per-lane `expressions` in `getState()`.
 * Toolset 1.2.0 (D44) moved the shared `.bitwave` document to schema 4 (lane map
-* keyed by stable lane key); toolset 1.3.0 (D45) changes the canonical `#bw=`
-* link to the compact codec (legacy links still load). The bridge surface itself
-* is unchanged.
+* keyed by stable lane key); toolset 1.3.0 (D45) changed the canonical `#bw=`
+* link to the compact codec (legacy links still load). Toolset 1.4.0 (D43/D46)
+* widens the closed lane/frame enums to the shipped 1–8 range (frames `A`–`P`,
+* `Z1`–`Z8`): setters accept only lanes the live tree carries, so focusing an
+* absent lane is a truthful `E_OUT_OF_RANGE`, never a silent lane creation.
 */
 var STATE_NODE_ID = "bitwave-state";
 var READY_ATTR = "agent-ready";
@@ -6561,18 +6591,40 @@ function createAgentBridge(deps) {
 	/**
 	* Bridge-only checks that need live routes/dataset (the pure patch validator
 	* cannot know them). Runs before any mutation.
+	*
+	* Since toolset 1.4.0 the pure lane/frame enums are the shipped 1–8 range, so
+	* this is also where a well-formed reference to a lane the live tree does not
+	* carry is refused: the agent may focus/manage live lanes only, never create a
+	* lane by naming it.
 	*/
+	function liveLaneKeys() {
+		return Object.keys(S.lanes).sort((a, b) => Number(a) - Number(b));
+	}
+	function notLive(lane) {
+		const live = liveLaneKeys();
+		return {
+			code: "E_OUT_OF_RANGE",
+			message: `lane ${lane} is not live; this instrument has lane${live.length === 1 ? "" : "s"} ${live.join(", ")}`,
+			hint: "add the lane in the frames view first, then retry"
+		};
+	}
 	function preflight(patch) {
+		if (patch.lane !== void 0 && !S.lanes[String(patch.lane)]) return notLive(patch.lane);
+		if (patch.frame !== void 0) {
+			const ref = frameRefFromName(patch.frame);
+			if (ref && !S.lanes[ref.lane]) return notLive(ref.lane);
+		}
 		if (patch.register) {
 			const ref = frameRefFromName(patch.register.frame);
 			if (!ref) return {
 				code: "E_BAD_ENUM",
-				message: "register.frame must be an operand frame (A–F)"
+				message: "register.frame must be an operand frame (A–P)"
 			};
 			if (ref.frame === "z") return {
 				code: "E_BAD_ENUM",
 				message: "Z is derived and cannot be written; choose an operand frame"
 			};
+			if (!S.lanes[ref.lane]) return notLive(ref.lane);
 			const sl = S.lanes[ref.lane];
 			if (isInputDriven(sl, ref.frame)) {
 				const driver = driverName(sl, ref.frame) || "a route";
@@ -6583,7 +6635,17 @@ function createAgentBridge(deps) {
 				};
 			}
 		}
+		if (patch.expression) {
+			const ref = frameRefFromName(patch.expression.frame);
+			if (ref && !S.lanes[ref.lane]) return notLive(ref.lane);
+		}
 		if (patch.source) {
+			const ref = frameRefFromName(patch.source.frame);
+			if (ref && !S.lanes[ref.lane]) return notLive(ref.lane);
+			if (patch.source.kind === "frame") {
+				const fromLane = patch.source.from.split(".")[0];
+				if (!S.lanes[fromLane]) return notLive(fromLane);
+			}
 			if (patch.source.kind === "data" && !DEMO.cols[patch.source.column]) return {
 				code: "E_BAD_STATE",
 				message: `source.column ${patch.source.column} is outside the current dataset`,
@@ -8505,14 +8567,6 @@ var getPad = () => PAD;
 	}
 	(function setupAgentAttributes() {
 		const annotate = () => {
-			const stageEl = document.getElementById("stageBar");
-			if (stageEl) for (const btn of stageEl.querySelectorAll("[data-lane]")) {
-				const pane = btn.closest(".pane-head");
-				const value = pane && pane.hidden ? null : btn.dataset.lane;
-				if (value === null) {
-					if (btn.hasAttribute("data-agent-lane")) btn.removeAttribute("data-agent-lane");
-				} else if (btn.getAttribute("data-agent-lane") !== value) btn.setAttribute("data-agent-lane", value);
-			}
 			const gridEl = document.getElementById("framesGrid");
 			if (gridEl) for (const card of gridEl.querySelectorAll("[data-lane][data-frame]")) {
 				const value = frameName$1(card.dataset.lane, card.dataset.frame);
@@ -8527,7 +8581,6 @@ var getPad = () => PAD;
 				attributes: true
 			});
 		};
-		observe(document.getElementById("stageBar"));
 		observe(document.getElementById("framesGrid"));
 		annotate();
 	})();

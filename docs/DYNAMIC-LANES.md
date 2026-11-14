@@ -1,10 +1,13 @@
 # Dynamic lanes — design note
 
-**Status: building (author-approved 2026-11-14, D43).** The pass is staged and each slice
-lands on its own gates: 1) core lane/frame naming primitives (**landed**) → 2) state +
-schema 4 + migration (**landed**, D44) → 3) compact share codec + budget proof (**landed**,
-D45) → 4) shipped UI (cap 8, live `+`, lane sets, source table, keyboard) → 5) agent
-surface, manifest/docs. See §11 for the approved decisions and slice status.
+**Status: shipped (author-approved 2026-11-14, D43; all five slices landed, D43–D46).**
+Slice 1) core lane/frame naming primitives → 2) state + schema 4 + migration (D44) →
+3) compact share codec + budget proof (D45) → 4) shipped UI (cap 8, live `+`, lane sets,
+source table, keyboard; D46) → 5) agent surface, manifest/toolset 1.4.0, docs and
+screenshots. See §11 for the approved decisions and slice status. Two boundaries are
+deliberate: the 3-D **hinge** `fold` stays session-only (never persisted in `.bitwave` or
+the agent state), and the **observation logger** exports the focused lane's state, while
+the DAW-style **Record** take carries all `3L` live-lane frames.
 
 The author asked how many lanes the instrument could support, and whether the FRAMES
 panel should grow a `+` for new lanes. The answer depends on which ceiling is meant: the
@@ -134,6 +137,12 @@ budget raise is needed for the 8-lane cap; a later raw-bit/parked compression or
 documented subset remains the path if 13 lanes or fully routed 8-lane links must be
 portable.
 
+**Shipped policy (D46): share length is measured, not enforced.** The live set is capped at
+8 lanes by design; the link is never the lane constraint and the app adds no budget UI or
+component. An overflowing link stays an explicit drop-policy outcome
+(`datasetDropped`/`expressionsDropped`, then `withinBudget:false`) and is reported, never
+a reason to refuse a lane.
+
 ## 5. UI shape
 
 **Update 2026-11-14 (D46, UI shipped):** the plan below is kept as history; the landed
@@ -235,8 +244,11 @@ landed as **D45** (toolset **1.3.0**): canonical links are compact, legacy JSON 
 still load, and §4 records the measured payload table. The live lane UI landed as
 **D46** (see §5 update and §11): the app tree holds the document's whole lane set, the
 stage bar selects lanes with a native per-pane dropdown, and the frames view adds,
-duplicates and deletes lanes. Still deferred to the final slice: `fold` persistence, the
-agent lane-range/manifest/toolset bump, and the contract/docs sweep.
+duplicates and deletes lanes. The final slice merged the agent lane-range/manifest/toolset
+bump (toolset **1.4.0**: range 1–8, frames `A`–`P`/`Z1`–`Z8`, `ui.laneSelect`, non-live
+lane setters refused) with the contract/docs/screenshot sweep. Two boundaries remain by
+design: `fold` is session-only (never persisted), and the observation logger stays
+focused-lane while the Record take carries every live lane.
 
 Once lanes are dynamic, `.bitwave` cannot keep a closed three-key `lanes` object as the
 only shape. The pre-decision survey is kept here for the record; the shipped shape above
@@ -318,7 +330,8 @@ view `+` adds lanes and each lane head duplicates/deletes with an inline referen
 confirmation; the source table shows `2L` grouped rows; Record rows are `3L`; copy menu
 lists live lanes except the focused one; no budget UI — share length is measured, an
 8-lane 256-bit live link is 1252 characters), **5** agent surface + manifest/toolset bump
-+ docs + full `npm run verify`.
++ docs + full `npm run verify` (landed, toolset **1.4.0**; no visible change — the rebuild
+is 6/6 states pixel-identical to the D46 UI artifact).
 
 Slice 4 deliberately changes the rendered instrument: the stage-bar lane control (native
 `<select>` labelled `Lane 1`…`Lane 8` instead of `1 | 2 | 3`) and the frames-view lane

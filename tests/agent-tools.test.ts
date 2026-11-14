@@ -50,12 +50,20 @@ test("manifest is JSON-safe, versioned and strips run functions", () => {
   const manifest = getManifest();
   assert.equal(manifest.id, "bitwave");
   assert.equal(manifest.schemaVersion, SCHEMA_VERSION);
-  assert.equal(manifest.version, "1.3.0");
+  assert.equal(manifest.version, "1.4.0");
   assert.equal(manifest.tools.length, 6);
   assert.deepEqual(manifest.errorCodes, [...ERROR_CODES]);
   assert.ok(!("run" in manifest.tools[0]));
   assert.deepEqual(manifest.relatedTools, []);
   assert.equal(JSON.parse(JSON.stringify(manifest)).id, "bitwave");
+});
+
+test("manifest documents the stage-bar lane dropdown and the 1-8 range", () => {
+  const manifest = getManifest();
+  assert.equal(manifest.ui.laneSelect, "#stageBar .lane-select");
+  assert.equal(manifest.ui.laneSelector, "[data-agent-lane]");
+  assert.equal(manifest.ui.frameSelector, "[data-agent-frame]");
+  assert.match(manifest.description, /1–8/);
 });
 
 test("success envelope has the fixed key order", () => {
@@ -292,8 +300,11 @@ test("normalizeAgentPatch rejects invalid patches with a code", () => {
   };
   assert.equal(code({}), "E_BAD_ARGS");
   assert.equal(code({ nope: 1 }), "E_BAD_ARGS");
-  assert.equal(code({ lane: 4 }), "E_BAD_ENUM");
+  assert.equal(code({ lane: 9 }), "E_BAD_ENUM");
+  assert.equal(code({ lane: 0 }), "E_BAD_ENUM");
+  assert.equal(code({ lane: "2" }), "E_BAD_ENUM");
   assert.equal(code({ frame: "Q" }), "E_BAD_ENUM");
+  assert.equal(code({ frame: "Z9" }), "E_BAD_ENUM");
   assert.equal(code({ width: 24 }), "E_BAD_ENUM");
   assert.equal(code({ view: "4d" }), "E_BAD_ENUM");
   assert.equal(code({ binop: "nand" }), "E_BAD_ENUM");
@@ -346,10 +357,49 @@ test("normalizeAgentPatch accepts source and route controls", () => {
   assert.equal(normalizeAgentPatch({ source: { frame: "D", kind: "data", column: -1 } }).ok, false);
 });
 
-test("frame references resolve the global names", () => {
+test("frame references resolve the global names of the 1-8 range", () => {
   assert.deepEqual(frameRefFromName("Z2"), { lane: "2", frame: "z", slotKey: "B", name: "Z2" });
   assert.deepEqual(frameRefFromName("d"), { lane: "2", frame: "b", slotKey: "B", name: "D" });
+  /* Lanes 4–8 carry no legacy slot letter, so slotKey is omitted. */
+  assert.deepEqual(frameRefFromName("g"), { lane: "4", frame: "a", name: "G" });
+  assert.deepEqual(frameRefFromName("H"), { lane: "4", frame: "b", name: "H" });
+  assert.deepEqual(frameRefFromName("Z8"), { lane: "8", frame: "z", name: "Z8" });
+  assert.deepEqual(frameRefFromName("P"), { lane: "8", frame: "b", name: "P" });
   assert.equal(frameRefFromName("Q"), null);
+  assert.equal(frameRefFromName("Z9"), null);
+});
+
+test("normalizeAgentPatch accepts the shipped 1-8 lane range", () => {
+  for (const lane of [1, 2, 3, 4, 5, 6, 7, 8]) {
+    const result = normalizeAgentPatch({ lane });
+    assert.equal(result.ok, true, `lane ${lane}`);
+    if (result.ok) assert.equal(result.patch.lane, lane);
+  }
+  const frames: Record<string, string> = {
+    A: "A", p: "P", g: "G", Z8: "Z8", z4: "Z4",
+  };
+  for (const [input, name] of Object.entries(frames)) {
+    const result = normalizeAgentPatch({ frame: input });
+    assert.equal(result.ok, true, `frame ${input}`);
+    if (result.ok) assert.equal(result.patch.frame, name);
+  }
+  const register = normalizeAgentPatch({ register: { frame: "O", hex: "DEAD" } });
+  assert.equal(register.ok, true);
+  if (register.ok) assert.deepEqual(register.patch.register, { frame: "O", hex: "DEAD" });
+  assert.equal(normalizeAgentPatch({ register: { frame: "Z8", hex: "00" } }).ok, false);
+});
+
+test("normalizeAgentPatch accepts routes from the shipped 1-8 lane range", () => {
+  for (const from of ["1.z", "4.b", "8.z"]) {
+    const result = normalizeAgentPatch({ source: { frame: "A", kind: "frame", from } });
+    assert.equal(result.ok, true, `route from ${from}`);
+    if (result.ok) {
+      assert.deepEqual(result.patch.source, { frame: "A", kind: "frame", from });
+    }
+  }
+  assert.equal(normalizeAgentPatch({ source: { frame: "A", kind: "frame", from: "9.z" } }).ok, false);
+  assert.equal(normalizeAgentPatch({ source: { frame: "A", kind: "frame", from: "0.z" } }).ok, false);
+  assert.equal(normalizeAgentPatch({ source: { frame: "A", kind: "frame", from: "8.zz" } }).ok, false);
 });
 
 test("evaluate_lane uses the same engine as the UI core", () => {

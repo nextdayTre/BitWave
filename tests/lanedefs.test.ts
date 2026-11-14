@@ -5,8 +5,8 @@
  * Expected names are written out literally so this file pins the grammar
  * independently of the helper under test. The expression cases prove the
  * evaluator resolves names from the environment rather than a fixed 3-lane
- * whitelist, while the agent-defaults cases prove the shipped 3-lane surface is
- * unchanged.
+ * whitelist, while the agent-defaults cases prove the agent surface is the
+ * shipped 1–8 range with the legacy lanes-1–3 slot map beside it.
  */
 
 import { test } from "node:test";
@@ -189,23 +189,27 @@ test("name resolution is environment-driven, not a fixed whitelist", () => {
   assert.equal(expressionCode(() => evaluateExpression("N", empty)), undefined);
 });
 
-test("agent-defaults keeps the historic three-lane tables and API", () => {
-  assert.deepEqual(FRAME_NAMES, {
-    "1": { a: "A", b: "B", z: "Z1" },
-    "2": { a: "C", b: "D", z: "Z2" },
-    "3": { a: "E", b: "F", z: "Z3" },
-  });
+test("agent-defaults keeps the historic three-lane slot map and widens to the 1-8 cap", () => {
+  /* The frame-name vocabulary covers the whole shipped app cap (D46). */
+  assert.deepEqual(Object.keys(FRAME_NAMES), ["1", "2", "3", "4", "5", "6", "7", "8"]);
+  assert.deepEqual(FRAME_NAMES["1"], { a: "A", b: "B", z: "Z1" });
+  assert.deepEqual(FRAME_NAMES["8"], { a: "O", b: "P", z: "Z8" });
+  /* The legacy schema-1 slot letters exist for lanes 1–3 only. */
   assert.deepEqual(SLOT_OF_LANE, { "1": "A", "2": "B", "3": "C" });
   assert.deepEqual(LANE_OF_SLOT, { A: "1", B: "2", C: "3" });
   assert.equal(frameName("3", "z"), "Z3");
+  assert.equal(frameName("8", "z"), "Z8");
+  /* Old A–F/Z1–Z3 refs keep their slotKey; lanes 4–8 have no slot letter. */
   assert.deepEqual(agentFrameRefFromName("Z2"), { lane: "2", frame: "z", slotKey: "B", name: "Z2" });
   assert.deepEqual(agentFrameRefFromName("d"), { lane: "2", frame: "b", slotKey: "B", name: "D" });
-  // Wider dynamic names are not on the shipped agent surface yet.
-  assert.equal(agentFrameRefFromName("G"), null);
-  assert.equal(agentFrameRefFromName("Z8"), null);
+  assert.deepEqual(agentFrameRefFromName("G"), { lane: "4", frame: "a", name: "G" });
+  assert.deepEqual(agentFrameRefFromName("Z8"), { lane: "8", frame: "z", name: "Z8" });
+  assert.deepEqual(agentFrameRefFromName("p"), { lane: "8", frame: "b", name: "P" });
   assert.equal(agentFrameRefFromName("Q"), null);
+  assert.equal(agentFrameRefFromName("Z9"), null);
   assert.equal(agentLaneKeyFromNumber(1), "1");
-  assert.equal(agentLaneKeyFromNumber(3), "3");
-  assert.equal(agentLaneKeyFromNumber(4), null);
+  assert.equal(agentLaneKeyFromNumber(8), "8");
+  assert.equal(agentLaneKeyFromNumber(9), null);
   assert.equal(agentLaneKeyFromNumber(0), null);
+  assert.equal(agentLaneKeyFromNumber(4.5), null);
 });

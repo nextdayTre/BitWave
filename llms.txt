@@ -1,17 +1,25 @@
 # BitWave — agent index
 
-BitWave: a bit register rendered as a wavetable. Three lanes of `A op B -> Z`,
-CSV/TSV input, stepped LFO, single offline HTML file.
+BitWave: a bit register rendered as a wavetable. 1-8 lanes (default: three) of
+`A op B -> Z`, CSV/TSV input, stepped LFO, single offline HTML file.
 
 - Canonical app: `bitwave-v2.html` (open directly; no server, no network).
 - Contract: `docs/AGENT-INTERFACE.md` (tools, envelope, deeplink, bridge, CLI, MCP).
 - Onboarding: `AGENTS.md`; manifest: `agent/manifest.json`; examples: `agent/examples/`.
 - Browser bridge: `window.bitwave`; hidden state: `#bitwave-state`;
   ready: `body[data-agent-ready='true']`; events: `bitwave:ready`, `bitwave:change`.
-- Toolset 1.3.0; `.bitwave` schema 4 (schema 1/2/3 load and upgrade). Bridge additions:
+- Toolset 1.4.0; `.bitwave` schema 4 (schema 1/2/3 load and upgrade). Bridge additions:
   `setExpression(frame, text)`, `setSource(frame, source)`, `setRoute(frame, from)`,
   `record(on)`, `getLog({limit})`; state additions:
   `recording:{on,rows}`, `lanes[*].expressions`.
+- Lane range 1-8 (frames A-P and Z1-Z8), matching the shipped app cap; the default
+  instrument boots with lanes 1/2/3. `setLane`/`setFrame` accept only lanes the live tree
+  carries (a non-live lane is `E_OUT_OF_RANGE`, never a lane creation). The stage-bar lane
+  selector is the active `select.lane-select` carrying `[data-agent-lane]`
+  (`manifest.ui.laneSelect` = `#stageBar .lane-select`).
+- `getState().lanes` reports exactly the live lanes, keyed by the stable lane key
+  (`"1"`..`"8"`, gaps allowed, ascending numeric order); state `bridge.version` is
+  `1.4.0`.
 - `.bitwave` schema 4 keys `lanes` by the stable lane key (`"1"`..`"13"`; gaps allowed,
   at most 8 lanes per document, ascending numeric order); `build_deeplink` accepts
   schema 1-4 and always canonicalises to schema 4.
@@ -19,7 +27,8 @@ CSV/TSV input, stepped LFO, single offline HTML file.
   `[tag=4, N, view, lanes, routes, parked, dataset?, x?]` with lane tuples and omitted
   defaults; legacy JSON links still load. The 2000-char budget drops the dataset first
   (`datasetDropped`) and expressions second (`expressionsDropped`), never silently; an
-  8-lane 256-bit document measures 1260 chars (`node tools/share-budget.mjs`).
+  8-lane 256-bit document measures 1260 chars (`node tools/share-budget.mjs`). Share
+  length is a measured metric, not a lane constraint.
 - Expression sources are deterministic in the shared core: routes -> expressions -> Z;
   each expression sees the current frames plus the previous recorded row as `log.<frame>`.
   Record is a transient in-memory DAW take (not saved in `.bitwave`/links); float is a
@@ -27,4 +36,5 @@ CSV/TSV input, stepped LFO, single offline HTML file.
 - CLI: `node agent/cli.mjs help`; MCP: `node agent/mcp-server.mjs` (stdio, zero deps).
 - Tools: `manifest`, `analyze_register`, `evaluate_lane`, `compare_operands`,
   `parse_dataset`, `build_deeplink`.
+- Fixtures: `examples/eight-lanes.bitwave.json` (8-lane schema 4), `examples/demo.bitwave.json`.
 - Machine setup: Node >= 23.6; no browser needed for CLI/MCP.
