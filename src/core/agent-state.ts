@@ -12,6 +12,7 @@ import { computeZ, popcountZ, truthCounts } from "./derive.ts";
 import { fromHex, toHex } from "./registers.ts";
 import type { ProjectDoc } from "./project.ts";
 import type { BinOp, FrameKey, LaneKey } from "./types.ts";
+import { LANE_KEYS } from "./types.ts";
 
 export interface UiSource {
   kind: "data" | "frame" | "none";
@@ -101,7 +102,7 @@ export function buildUiState(doc: ProjectDoc, options: UiStateOptions = {}): UiS
   const width = doc.N;
   const lanes: Record<string, UiLaneState> = {};
 
-  for (const lane of ["1", "2", "3"] as LaneKey[]) {
+  for (const lane of LANE_KEYS) {
     const laneDoc = doc.lanes[lane];
     const names = FRAME_NAMES[lane];
     const aBits = fromHex(laneDoc.a, width);

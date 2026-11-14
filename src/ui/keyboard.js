@@ -2,11 +2,12 @@
  * Keyboard map and file drop — global shortcuts for the instrument.
  *
  * Moved out of main.js in F2. Escape closes the navigator or copy mode,
- * Alt+1/2/3 select a lane, Alt+S toggles split; arrows step the dataset.
+ * Alt+1/2/3 select a lane (by its stable lane key), Alt+S toggles split;
+ * arrows step the dataset.
  */
 
 export function attachKeyboard(deps) {
-  const { frameNav, syncViewUi, selectSlot, setSplitMode, applyExample, loadCSV, copyMenu, onDropError, S, DEMO } = deps;
+  const { frameNav, syncViewUi, selectLane, setSplitMode, applyExample, loadCSV, copyMenu, onDropError, S, DEMO } = deps;
 
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape" && frameNav.isOpen()) {
@@ -20,9 +21,9 @@ export function attachKeyboard(deps) {
       return;
     }
     if (e.altKey && !e.ctrlKey && !e.metaKey) {
-      if (e.key === "1" || e.code === "Digit1") { selectSlot("A"); if (frameNav.isOpen()) frameNav.render(); e.preventDefault(); return; }
-      if (e.key === "2" || e.code === "Digit2") { selectSlot("B"); if (frameNav.isOpen()) frameNav.render(); e.preventDefault(); return; }
-      if (e.key === "3" || e.code === "Digit3") { selectSlot("C"); if (frameNav.isOpen()) frameNav.render(); e.preventDefault(); return; }
+      if (e.key === "1" || e.code === "Digit1") { selectLane("1"); if (frameNav.isOpen()) frameNav.render(); e.preventDefault(); return; }
+      if (e.key === "2" || e.code === "Digit2") { selectLane("2"); if (frameNav.isOpen()) frameNav.render(); e.preventDefault(); return; }
+      if (e.key === "3" || e.code === "Digit3") { selectLane("3"); if (frameNav.isOpen()) frameNav.render(); e.preventDefault(); return; }
       if (e.key === "s" || e.key === "S" || e.code === "KeyS") {
         /* Split is 3-D only; the stage-bar button is disabled in 2-D too. */
         if (S.view3d) setSplitMode(!S.split3d);

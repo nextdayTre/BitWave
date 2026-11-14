@@ -74,16 +74,16 @@ test("applyProject maps a v2 document onto the live instrument tree", () => {
   const result = applyProject(doc());
   assert.equal(result.ok, true, result.message);
   assert.equal(S.N, 16);
-  assert.equal(S.slot, "B");                    // view.lane "2"
+  assert.equal(S.laneKey, "2");                    // view.lane "2"
   assert.equal(S.view3d, true);
   assert.equal(S.split3d, true);
-  assert.deepEqual(S.splitPair, ["A", "C"]);
+  assert.deepEqual(S.splitPair, ["1", "3"]);
   assert.equal(S.activePane, 1);
   assert.equal(S.lfo.mode, "slide");
   assert.equal(S.lfo.rate, 8);
   assert.equal(S.lfo.on, false);
 
-  const lane1 = S.slots.A;
+  const lane1 = S.lanes["1"];
   assert.equal(lane1.showB, true);
   assert.equal(lane1.binop, "and");
   assert.equal(lane1.edit, "b");
@@ -106,10 +106,10 @@ test("captureProject round-trips the mapped state", () => {
   applyProject(doc());
   const before = {
     N: S.N,
-    slot: S.slot,
+    laneKey: S.laneKey,
     view3d: S.view3d,
     splitPair: S.splitPair.slice(),
-    lane1: { ...S.slots.A, A: null, B: null, Z: null, frameVis: { ...S.slots.A.frameVis } },
+    lane1: { ...S.lanes["1"], A: null, B: null, Z: null, frameVis: { ...S.lanes["1"].frameVis } },
     routes: routing.routes.length,
     parked: routing.parked.size,
     dataset: { cols: DEMO.cols.slice(), rows: DEMO.rows.map((r) => r.slice()), i: DEMO.i },
@@ -129,10 +129,10 @@ test("captureProject round-trips the mapped state", () => {
   const result = applyProject(captured);
   assert.equal(result.ok, true, result.message);
   assert.equal(S.N, before.N);
-  assert.equal(S.slot, before.slot);
+  assert.equal(S.laneKey, before.laneKey);
   assert.equal(S.view3d, before.view3d);
   assert.deepEqual(S.splitPair, before.splitPair);
-  assert.equal(S.slots.A.frameVis.a, false);
+  assert.equal(S.lanes["1"].frameVis.a, false);
   assert.deepEqual(DEMO.cols, before.dataset.cols);
   assert.equal(DEMO.i, before.dataset.i);
 });
@@ -178,7 +178,7 @@ test("a document without a dataset clears the board", () => {
 
 test("expressions evaluate through the clocked pass and the Record log", () => {
   assert.equal(applyProject(doc()).ok, true);
-  const lane2 = S.slots.B;
+  const lane2 = S.lanes["2"];
   setHexWord(lane2.A, "0005");
   lane2.expressions.b = "C + 1";
   evaluate();

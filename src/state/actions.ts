@@ -20,8 +20,8 @@ import {
   shiftRight,
 } from "../core/ops.ts";
 import { nibblesToBits, setNibAt } from "../core/registers.ts";
-import type { BinOp } from "../core/types.ts";
-import { S, nibValue, type FrameKey, type Reg, type Slot, type SlotKey } from "./instrument.ts";
+import type { BinOp, LaneKey } from "../core/types.ts";
+import { S, nibValue, type FrameKey, type LaneState, type Reg } from "./instrument.ts";
 
 export type UnaryOp = "rol" | "ror" | "shl" | "shr" | "not" | "fold" | "bswap";
 
@@ -48,28 +48,29 @@ export function applyPreset(reg: Reg, name: TableName): void {
   reg.bits = nibblesToBits(values, S.N);
 }
 
-export function setBinop(sl: Slot, op: BinOp): void {
+export function setBinop(sl: LaneState, op: BinOp): void {
   sl.binop = op;
 }
 
 /** Focus and edit travel together for operands; a derived frame is a lens. */
-export function setFocus(sl: Slot, frame: FrameKey): void {
+export function setFocus(sl: LaneState, frame: FrameKey): void {
   sl.focus = frame;
   if (frame !== "z") sl.edit = frame;
 }
 
-export function setShowB(sl: Slot, show: boolean): void {
+export function setShowB(sl: LaneState, show: boolean): void {
   sl.showB = show;
   if (!show && sl.focus === "z") sl.focus = "a";
 }
 
-export function toggleFrameVisibility(sl: Slot, frame: FrameKey): boolean {
+export function toggleFrameVisibility(sl: LaneState, frame: FrameKey): boolean {
   sl.frameVis[frame] = !sl.frameVis[frame];
   return sl.frameVis[frame];
 }
 
-export function selectLane(lane: SlotKey): void {
-  S.slot = lane;
+/** Focus a lane by its stable lane key (the lane's identity, not its position). */
+export function selectLane(lane: LaneKey): void {
+  S.laneKey = lane;
 }
 
 /** Flips one bit and returns its nibble index (for the strip's fast patch). */
@@ -107,7 +108,7 @@ export function setHexWord(reg: Reg, hex: string): void {
 }
 
 /** Copies a lane's model state (not its parked route bases). */
-export function copyLane(src: Slot, dst: Slot): void {
+export function copyLane(src: LaneState, dst: LaneState): void {
   dst.A.bits = src.A.bits.slice();
   dst.B.bits = src.B.bits.slice();
   dst.Z.bits = src.Z.bits.slice();
@@ -125,7 +126,7 @@ export function copyLane(src: Slot, dst: Slot): void {
 }
 
 /** Removes the second operand from a lane (the old unpair-B action). */
-export function unpair(sl: Slot): void {
+export function unpair(sl: LaneState): void {
   sl.showB = false;
   sl.edit = "a";
   sl.focus = "a";

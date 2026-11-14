@@ -41,7 +41,7 @@ export function createSourceTable(deps) {
 
   let rowIndex = -1;
   /* Rows that are showing the expression editor while the (still empty) draft
-     is not a bound source yet: `${slot}:${operand}` -> draft text. */
+     is not a bound source yet: `${lane}:${operand}` -> draft text. */
   const drafts = new Map();
   let committing = false;
   let suppressBlur = false;
@@ -82,7 +82,7 @@ export function createSourceTable(deps) {
 
   function commitExpression(binding, index, input) {
     if (committing) return;
-    const sl = S.slots[binding.lane];
+    const sl = S.lanes[binding.lane];
     const key = draftKey(binding);
     const text = input.value.trim();
     const previous = expressionOf(sl, binding.operand);
@@ -164,7 +164,7 @@ export function createSourceTable(deps) {
       } else if (event.key === "Escape") {
         event.preventDefault();
         event.stopPropagation();
-        input.value = expressionOf(S.slots[binding.lane], binding.operand);
+        input.value = expressionOf(S.lanes[binding.lane], binding.operand);
         input.classList.remove("invalid");
         input.removeAttribute("aria-invalid");
       }
@@ -183,7 +183,7 @@ export function createSourceTable(deps) {
   /* ── rows ───────────────────────────────────────────────────────────── */
 
   function buildRow(binding, index) {
-    const sl = S.slots[binding.lane];
+    const sl = S.lanes[binding.lane];
     const key = draftKey(binding);
     const tr = document.createElement("tr");
 

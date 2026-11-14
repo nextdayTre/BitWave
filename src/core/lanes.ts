@@ -7,7 +7,8 @@
  * tests compare against the same source of truth.
  *
  * Rename note (2026-11-06): lanes were A/B/C; they are now 1/2/3 so that letters
- * refer only to frames/operands.
+ * refer only to frames/operands. D43 keys every lane by its stable lane key from
+ * `lanedefs.ts` ("1".."13"), so a map is never indexed by array position.
  */
 
 import type { BinOp, Lane, LaneKey, LaneMap } from "./types.ts";
@@ -20,7 +21,7 @@ import {
   remapNibbles,
   syncTarget,
 } from "./registers.ts";
-import { tableValues } from "./ops.ts";
+import { tableValues, type TableName } from "./ops.ts";
 import { computeZ } from "./derive.ts";
 
 export function makeLane(key: LaneKey, N: number, binop: BinOp = "xor"): Lane {
@@ -53,23 +54,33 @@ function seed(lane: Lane, N: number, a: number[], b: number[]): void {
   syncTarget(lane.Z, N);
 }
 
+/** Boot wavetables per shipped lane, in lane order (DESIGN §2 / index.html). */
+const BOOT_SEEDS: readonly {
+  a: TableName;
+  b: TableName;
+  binop: BinOp;
+  seededB: boolean;
+}[] = [
+  { a: "sine", b: "square", binop: "xor", seededB: false },
+  { a: "cosine", b: "triangle", binop: "xor", seededB: true },
+  { a: "sawUp", b: "sine", binop: "and", seededB: true },
+];
+
 /**
  * Boot values, matching index.html: Lane 1 sine + square, Lane 2 cosine +
- * triangle, Lane 3 saw-up + sine (AND). Pinned by the golden vectors.
+ * triangle, Lane 3 saw-up + sine (AND). Pinned by the golden vectors. Keys come
+ * from `LANE_KEYS` (the default three from `lanedefs.ts`), not a literal map.
  */
 export function makeBootLanes(N: number = DEFAULT_N): LaneMap {
-  const one = makeLane("1", N, "xor");
-  seed(one, N, tableValues("sine", N), tableValues("square", N));
-
-  const two = makeLane("2", N, "xor");
-  seed(two, N, tableValues("cosine", N), tableValues("triangle", N));
-  two.seededB = true;
-
-  const three = makeLane("3", N, "and");
-  seed(three, N, tableValues("sawUp", N), tableValues("sine", N));
-  three.seededB = true;
-
-  return { "1": one, "2": two, "3": three };
+  const lanes: LaneMap = {};
+  LANE_KEYS.forEach((key, index) => {
+    const boot = BOOT_SEEDS[index];
+    const lane = makeLane(key, N, boot.binop);
+    seed(lane, N, tableValues(boot.a, N), tableValues(boot.b, N));
+    lane.seededB = boot.seededB;
+    lanes[key] = lane;
+  });
+  return lanes;
 }
 
 /**
@@ -80,16 +91,14 @@ export function makeBootLanes(N: number = DEFAULT_N): LaneMap {
  */
 export function resizeLanes(lanes: LaneMap, oldN: number, newN: number): void {
   if (oldN === newN) return;
-  const mapped: Record<LaneKey, { a: number[]; b: number[] }> = {
-    "1": { a: [], b: [] },
-    "2": { a: [], b: [] },
-    "3": { a: [], b: [] },
-  };
+  const mapped = {} as Record<LaneKey, { a: number[]; b: number[] }>;
 
   for (const key of LANE_KEYS) {
     const lane = lanes[key];
-    mapped[key].a = remapNibbles(bitsToNibbles(lane.A.bits, oldN), oldN, newN);
-    mapped[key].b = remapNibbles(bitsToNibbles(lane.B.bits, oldN), oldN, newN);
+    mapped[key] = {
+      a: remapNibbles(bitsToNibbles(lane.A.bits, oldN), oldN, newN),
+      b: remapNibbles(bitsToNibbles(lane.B.bits, oldN), oldN, newN),
+    };
   }
 
   for (const key of LANE_KEYS) {

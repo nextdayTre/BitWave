@@ -11,7 +11,7 @@
  */
 
 import { fromHex, regToBig, toHex } from "../core/registers.ts";
-import { FRAME_NAMES, S, SLOT_KEYS } from "./instrument.ts";
+import { FRAME_NAMES, LANE_KEYS, S } from "./instrument.ts";
 
 export const RECORD_CAP = 2048;
 
@@ -54,8 +54,8 @@ export function recordSnapshot(): boolean {
   if (!S.record.on || S.drag >= 0) return false;
 
   const frames: Record<string, string> = {};
-  for (const key of SLOT_KEYS) {
-    const sl = S.slots[key];
+  for (const key of LANE_KEYS) {
+    const sl = S.lanes[key];
     const names = FRAME_NAMES[key];
     frames[names.a] = toHex(sl.A.bits, S.N);
     frames[names.b] = toHex(sl.B.bits, S.N);

@@ -13,8 +13,8 @@ import { DEMO } from "../state/dataset.ts";
 import {
   S,
   SIZES,
-  SLOT_KEYS,
-  curSlot,
+  LANE_KEYS,
+  curLane,
   editReg,
   focusEditable,
   focusKey,
@@ -49,7 +49,7 @@ export function createControls(deps) {
   const editTarget = document.getElementById("editTarget");
   const bState = document.getElementById("bState");
 
-  function lfoBConfig(v = curSlot().lfoB) {
+  function lfoBConfig(v = curLane().lfoB) {
     const frac = v === "q" ? 0.25 : v === "h" ? 0.5 : 0;
     return { opp: v === "opp", off: Math.round(S.N * frac) };
   }
@@ -59,8 +59,8 @@ export function createControls(deps) {
     if (S.lfo.mode === "csvStep" && (!DEMO.rows || !DEMO.rows.length)) return;
     store.patch(() => {
       const base = {};
-      for (const k of SLOT_KEYS) {
-        const sl = S.slots[k];
+      for (const k of LANE_KEYS) {
+        const sl = S.lanes[k];
         base[k] = { a: sl.A.bits.slice(), b: sl.B.bits.slice() };
       }
       S.lfo.base = base;
@@ -79,8 +79,8 @@ export function createControls(deps) {
       const snap = S.lfo.base;
       if (snap) {
         if (S.lfo.mode !== "csvStep") {
-          for (const k of SLOT_KEYS) {
-            const sl = S.slots[k];
+          for (const k of LANE_KEYS) {
+            const sl = S.lanes[k];
             if (snap[k]) {
               if (!isInputDriven(sl, "a")) sl.A.bits = snap[k].a.slice();
               if (!isInputDriven(sl, "b")) sl.B.bits = snap[k].b.slice();
@@ -139,8 +139,8 @@ export function createControls(deps) {
         shift = (p <= maxSteps ? p : 2 * maxSteps - p) * k;
       }
 
-      for (const sk of SLOT_KEYS) {
-        const sl = S.slots[sk];
+      for (const sk of LANE_KEYS) {
+        const sl = S.lanes[sk];
         const sb = base[sk];
         if (!sb) continue;
         if (!isInputDriven(sl, "a")) sweepInto(sl.A, sb.a, shift, rotate);
@@ -179,7 +179,7 @@ export function createControls(deps) {
 
   lfoBSel.addEventListener("change", () => {
     store.patch(() => {
-      curSlot().lfoB = lfoBSel.value;
+      curLane().lfoB = lfoBSel.value;
     });
   });
 
@@ -253,10 +253,10 @@ export function createControls(deps) {
       hintEl.textContent = !focusEditable()
         ? `${frameLabel()} is derived — read-only`
         : driven
-          ? `${frameLabel()} is driven by ${driverName(curSlot(), focusKey())} — unplug in sources`
+          ? `${frameLabel()} is driven by ${driverName(curLane(), focusKey())} — unplug in sources`
           : "drag a nibble · click a bit · Tab to edit";
     }
-    lfoBSel.value = curSlot().lfoB;
+    lfoBSel.value = curLane().lfoB;
     lfoBSel.hidden = S.lfo.mode === "csvStep" || (!S.view3d && !S.showB);
   }
 

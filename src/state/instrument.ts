@@ -6,6 +6,13 @@
  * rendering and input out of that module and put every write behind the store
  * transaction in `store.ts`.
  *
+ * D43: lane identity is the stable lane key from `src/core/lanedefs.ts`
+ * ("1".."13"), never an A/B/C slot letter or an array position. A lane key is
+ * also the displayed lane number, so `S.laneKey` is "1" and frame names derive
+ * from it (lane "1" is A/B/Z1). The defaults are the first
+ * `DEFAULT_LANE_COUNT` (three) lane definitions, generated rather than written
+ * out, so the dynamic-lanes pass can widen the tree without touching consumers.
+ *
  * Registers hold `bits` (truth), `target` (settled nibbles) and `anim` (eased
  * nibbles) — the last two are presentation, the first is data. `N` is stored
  * once on the tree (DESIGN §10.10) and every helper here reads it.
@@ -22,35 +29,45 @@ import {
   setNibAt as coreSetNibAt,
   syncTarget as coreSyncTarget,
 } from "../core/registers.ts";
-import type { BinOp } from "../core/types.ts";
+import type { BinOp, LaneKey } from "../core/types.ts";
+import { LANE_KEYS } from "../core/types.ts";
+import {
+  DEFAULT_LANE_COUNT,
+  frameNamesFor,
+  laneDef,
+  laneIndex,
+} from "../core/lanedefs.ts";
 
 export type FrameKey = "a" | "b" | "z";
 export type EditKey = "a" | "b";
 /** 3-D presentation only: which operand plate is far (frame 1) vs near (frame 256). */
 export type Fold = "a-far" | "b-far";
 
-export const SLOT_KEYS = ["A", "B", "C"] as const;
-export type SlotKey = (typeof SLOT_KEYS)[number];
+/** The shipped lane keys in display order ("1", "2", "3"), from `lanedefs.ts`. */
+export { LANE_KEYS };
 
 /** One register size domain for the whole instrument (DESIGN §10.10). */
 export const SIZES: readonly RegisterSize[] = CORE_SIZES;
 
-/* Internal slot keys stay A/B/C for the existing settings and shortcuts;
-   on screen lanes are numbered. Letters therefore mean frames/operands only. */
-export const LANE_LABEL: Record<SlotKey, string> = { A: "1", B: "2", C: "3" };
-export const laneLabel = (key: string): string => LANE_LABEL[key as SlotKey] ?? key;
-
 /* Global frame names (author, 2026-11-06): operands A/B, C/D, E/F and derived
-   Z1/Z2/Z3. Frames are unique across lanes, so the source matrix can list six
-   operand rows (A–F) and nine frame outputs. */
-export const FRAME_NAMES: Record<SlotKey, Record<FrameKey, string>> = {
-  A: { a: "A", b: "B", z: "Z1" },
-  B: { a: "C", b: "D", z: "Z2" },
-  C: { a: "E", b: "F", z: "Z3" },
-};
+   Z1/Z2/Z3, keyed by stable lane key. Frames are unique across lanes, so the
+   source matrix can list six operand rows (A–F) and nine frame outputs. */
+export const FRAME_NAMES: Record<LaneKey, Record<FrameKey, string>> = frameNamesFor(
+  DEFAULT_LANE_COUNT,
+) as Record<LaneKey, Record<FrameKey, string>>;
 
-export const frameName = (laneKey: string, frame: FrameKey): string =>
-  (FRAME_NAMES[laneKey as SlotKey] ?? FRAME_NAMES.A)[frame] ?? frame.toUpperCase();
+/**
+ * The global display name of a lane/frame pair. Names derive from the lane key,
+ * so a widened tree (lane "4") still names its frames G/H/Z4 even before its
+ * entry reaches `FRAME_NAMES`; unknown keys fall back to the bare frame letter.
+ */
+export const frameName = (laneKey: LaneKey, frame: FrameKey): string => {
+  const names = FRAME_NAMES[laneKey];
+  if (names) return names[frame];
+  const index = laneIndex(laneKey);
+  if (index >= 0) return laneDef(index)[frame];
+  return frame.toUpperCase();
+};
 
 export interface Reg {
   /** bits[0] is the LSB (hardware convention); length === N. */
@@ -61,8 +78,9 @@ export interface Reg {
   target: number[];
 }
 
-export interface Slot {
-  key: SlotKey;
+/** One lane's mutable state, keyed in `S.lanes` by its stable lane key. */
+export interface LaneState {
+  key: LaneKey;
   A: Reg;
   B: Reg;
   Z: Reg;
@@ -108,10 +126,12 @@ export interface LfoState {
 
 export interface Instrument {
   N: number;
-  slots: Record<SlotKey, Slot>;
-  slot: SlotKey;
+  /** Lane map keyed by the stable lane key ("1".."13"), never by position. */
+  lanes: Record<LaneKey, LaneState>;
+  /** The focused lane key; also its displayed lane number. */
+  laneKey: LaneKey;
   split3d: boolean;
-  splitPair: [SlotKey, SlotKey];
+  splitPair: [LaneKey, LaneKey];
   activePane: number;
   copyArmed: boolean;
   compact: boolean;
@@ -139,7 +159,7 @@ export const makeReg = (N: number): Reg => ({
   target: new Array<number>(N >> 2).fill(0),
 });
 
-export const makeSlot = (key: SlotKey, N: number, binop: BinOp = "xor"): Slot => ({
+export const makeLaneState = (key: LaneKey, N: number, binop: BinOp = "xor"): LaneState => ({
   key,
   A: makeReg(N),
   B: makeReg(N),
@@ -157,16 +177,19 @@ export const makeSlot = (key: SlotKey, N: number, binop: BinOp = "xor"): Slot =>
   colB: -1,
 });
 
+/* Boot defaults per shipped lane, in lane-key order (lane 3 starts on AND). */
+const BOOT_BINOPS: readonly BinOp[] = ["xor", "xor", "and"];
+const initialLanes = {} as Record<LaneKey, LaneState>;
+LANE_KEYS.forEach((key, index) => {
+  initialLanes[key] = makeLaneState(key, 64, BOOT_BINOPS[index] ?? "xor");
+});
+
 export const S: Instrument = {
   N: 64,
-  slots: {
-    A: makeSlot("A", 64, "xor"),
-    B: makeSlot("B", 64, "xor"),
-    C: makeSlot("C", 64, "and"),
-  },
-  slot: "A",
+  lanes: initialLanes,
+  laneKey: LANE_KEYS[0],
   split3d: false,
-  splitPair: ["A", "B"],
+  splitPair: [LANE_KEYS[0], LANE_KEYS[1]],
   activePane: 0,
   copyArmed: false,
   compact: false,
@@ -178,44 +201,45 @@ export const S: Instrument = {
   drag: -1,
   hoverReg: null,
   hoverJ: -1,
-  get A(): Reg { return this.slots[this.slot].A; },
-  get B(): Reg { return this.slots[this.slot].B; },
-  get Z(): Reg { return this.slots[this.slot].Z; },
-  get showB(): boolean { return this.slots[this.slot].showB; },
-  set showB(value: boolean) { this.slots[this.slot].showB = value; },
-  get binop(): BinOp { return this.slots[this.slot].binop; },
-  set binop(value: BinOp) { this.slots[this.slot].binop = value; },
-  get edit(): EditKey { return this.slots[this.slot].edit; },
-  set edit(value: EditKey) { this.slots[this.slot].edit = value; },
-  get seededB(): boolean { return this.slots[this.slot].seededB; },
-  set seededB(value: boolean) { this.slots[this.slot].seededB = value; },
+  get A(): Reg { return this.lanes[this.laneKey].A; },
+  get B(): Reg { return this.lanes[this.laneKey].B; },
+  get Z(): Reg { return this.lanes[this.laneKey].Z; },
+  get showB(): boolean { return this.lanes[this.laneKey].showB; },
+  set showB(value: boolean) { this.lanes[this.laneKey].showB = value; },
+  get binop(): BinOp { return this.lanes[this.laneKey].binop; },
+  set binop(value: BinOp) { this.lanes[this.laneKey].binop = value; },
+  get edit(): EditKey { return this.lanes[this.laneKey].edit; },
+  set edit(value: EditKey) { this.lanes[this.laneKey].edit = value; },
+  get seededB(): boolean { return this.lanes[this.laneKey].seededB; },
+  set seededB(value: boolean) { this.lanes[this.laneKey].seededB = value; },
 };
 
-export const curSlot = (): Slot => S.slots[S.slot];
+/** The focused lane's state, keyed by `S.laneKey`. */
+export const curLane = (): LaneState => S.lanes[S.laneKey];
 
 export const nibCount = (): number => S.N >> 2;
 
 /** Place value of nibble j (0 = MSB): exponent of two its LSB is worth. */
 export const nibWeightPow = (j: number): number => coreNibWeightPow(S.N, j);
 
-export const regOf = (k: FrameKey, sl: Slot = curSlot()): Reg =>
+export const regOf = (k: FrameKey, sl: LaneState = curLane()): Reg =>
   k === "b" ? sl.B : k === "z" ? sl.Z : sl.A;
 
-export const editKey = (sl: Slot = curSlot()): EditKey =>
+export const editKey = (sl: LaneState = curLane()): EditKey =>
   sl.showB && sl.edit === "b" ? "b" : "a";
 
-export const editReg = (sl: Slot = curSlot()): Reg => regOf(editKey(sl), sl);
+export const editReg = (sl: LaneState = curLane()): Reg => regOf(editKey(sl), sl);
 
 /** Focus is what the strip and readouts show; edit is what a write targets.
  *  Z can be focused but never edited (DESIGN §10.8), so its strip is read-only. */
-export const focusKey = (sl: Slot = curSlot()): FrameKey => {
+export const focusKey = (sl: LaneState = curLane()): FrameKey => {
   if (sl.focus === "z") return "z";
   return sl.showB && sl.focus === "b" ? "b" : "a";
 };
 
-export const focusReg = (sl: Slot = curSlot()): Reg => regOf(focusKey(sl), sl);
-export const focusEditable = (sl: Slot = curSlot()): boolean => focusKey(sl) !== "z";
-export const frameLabel = (sl: Slot = curSlot(), frame: FrameKey = focusKey(sl)): string =>
+export const focusReg = (sl: LaneState = curLane()): Reg => regOf(focusKey(sl), sl);
+export const focusEditable = (sl: LaneState = curLane()): boolean => focusKey(sl) !== "z";
+export const frameLabel = (sl: LaneState = curLane(), frame: FrameKey = focusKey(sl)): string =>
   frameName(sl.key, frame);
 
 export const nibAt = (bits: Uint8Array, j: number): number => coreNibAt(bits, S.N, j);
@@ -231,13 +255,13 @@ export function syncTarget(r: Reg, instant = false): void {
   if (instant) r.anim = r.target.slice();
 }
 
-export const isArith = (sl: Slot = curSlot()): boolean => isArithOp(sl.binop);
+export const isArith = (sl: LaneState = curLane()): boolean => isArithOp(sl.binop);
 
 export const regToBig = (r: Reg): bigint => coreRegToBig(r.bits, S.N);
 export const bigToReg = (v: bigint, r: Reg): void => coreBigToReg(v, r.bits, S.N);
 
 /** Z is always A <op> B; delegates to the core derivation (mod 2^N wrap). */
-export function recomputeZ(instant = false, sl: Slot = curSlot()): void {
+export function recomputeZ(instant = false, sl: LaneState = curLane()): void {
   computeZInto(sl.Z, sl.A.bits, sl.B.bits, S.N, sl.binop);
   syncTarget(sl.Z, instant);
 }

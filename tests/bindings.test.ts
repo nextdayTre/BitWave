@@ -31,7 +31,7 @@ test("bindings: six inputs, one per lane/operand, default unbound", () => {
   assert.equal(inputs.length, 6);
   assert.deepEqual(
     inputs.map((row) => `${row.lane}${row.operand}`),
-    ["Aa", "Ab", "Ba", "Bb", "Ca", "Cb"]
+    ["1a", "1b", "2a", "2b", "3a", "3b"]
   );
   assert.deepEqual(
     inputs.map((row) => row.frame),
@@ -42,8 +42,8 @@ test("bindings: six inputs, one per lane/operand, default unbound", () => {
 
 test("bindings: a CSV column names the frame label (B)", () => {
   setup();
-  bindData(S.slots.A, "a", 1);
-  const row = describeInput(S.slots.A, "a");
+  bindData(S.lanes["1"], "a", 1);
+  const row = describeInput(S.lanes["1"], "a");
   assert.equal(row.state, "data");
   assert.equal(row.source.kind, "data");
   assert.equal(inputLabel(row), "A · sine");
@@ -52,53 +52,53 @@ test("bindings: a CSV column names the frame label (B)", () => {
 
 test("bindings: frame sources report 1:1 and z⁻¹", () => {
   setup();
-  bindFrame(S.slots.A, "a", { lane: "3", frame: "z" });
-  const feed = describeInput(S.slots.A, "a");
+  bindFrame(S.lanes["1"], "a", { lane: "3", frame: "z" });
+  const feed = describeInput(S.lanes["1"], "a");
   assert.equal(feed.state, "1:1");
   assert.equal(feed.driven, true);
-  assert.equal(driverName(S.slots.A, "a"), "Z3");
+  assert.equal(driverName(S.lanes["1"], "a"), "Z3");
   assert.equal(inputLabel(feed), "A · Z3");
 
-  bindFrame(S.slots.B, "a", { lane: "2", frame: "z" });
-  const feedback = describeInput(S.slots.B, "a");
+  bindFrame(S.lanes["2"], "a", { lane: "2", frame: "z" });
+  const feedback = describeInput(S.lanes["2"], "a");
   assert.equal(feedback.state, "z⁻¹", "same-lane Z is one evaluation late");
 });
 
 test("bindings: switching source kinds clears the other", () => {
   setup();
-  bindData(S.slots.A, "b", 2);
-  assert.equal(S.slots.A.colB, 2);
-  bindFrame(S.slots.A, "b", { lane: "3", frame: "b" });
-  assert.equal(S.slots.A.colB, -1);
-  assert.equal(isInputDriven(S.slots.A, "b"), true);
+  bindData(S.lanes["1"], "b", 2);
+  assert.equal(S.lanes["1"].colB, 2);
+  bindFrame(S.lanes["1"], "b", { lane: "3", frame: "b" });
+  assert.equal(S.lanes["1"].colB, -1);
+  assert.equal(isInputDriven(S.lanes["1"], "b"), true);
 
-  bindData(S.slots.A, "b", 0);
-  assert.equal(isInputDriven(S.slots.A, "b"), false, "data binding drops the route");
-  assert.equal(S.slots.A.colB, 0);
+  bindData(S.lanes["1"], "b", 0);
+  assert.equal(isInputDriven(S.lanes["1"], "b"), false, "data binding drops the route");
+  assert.equal(S.lanes["1"].colB, 0);
 });
 
 test("bindings: frame driving and unroute restore the parked base", () => {
   setup();
-  bigToReg(0x5n, S.slots.A.A);
-  bigToReg(0x7n, S.slots.C.A);
-  bigToReg(0x9n, S.slots.C.B);
+  bigToReg(0x5n, S.lanes["1"].A);
+  bigToReg(0x7n, S.lanes["3"].A);
+  bigToReg(0x9n, S.lanes["3"].B);
   evaluate(true);
-  const z3 = regToBig(S.slots.C.Z);
+  const z3 = regToBig(S.lanes["3"].Z);
 
-  bindFrame(S.slots.A, "a", { lane: "3", frame: "z" });
-  assert.equal(isFocusDriven(S.slots.A), true, "focused A is driven");
+  bindFrame(S.lanes["1"], "a", { lane: "3", frame: "z" });
+  assert.equal(isFocusDriven(S.lanes["1"]), true, "focused A is driven");
   evaluate(true);
-  assert.equal(regToBig(S.slots.A.A), z3, "Z3 drives lane 1 A");
+  assert.equal(regToBig(S.lanes["1"].A), z3, "Z3 drives lane 1 A");
 
-  bindNone(S.slots.A, "a");
+  bindNone(S.lanes["1"], "a");
   evaluate(true);
-  assert.equal(regToBig(S.slots.A.A), 0x5n, "unroute restores the parked base");
-  assert.equal(isInputDriven(S.slots.A, "a"), false);
+  assert.equal(regToBig(S.lanes["1"].A), 0x5n, "unroute restores the parked base");
+  assert.equal(isInputDriven(S.lanes["1"], "a"), false);
 });
 
 test("bindings: source options exclude the input's own frame", () => {
   setup();
-  const options = availableSources(S.slots.A, "a");
+  const options = availableSources(S.lanes["1"], "a");
   assert.equal(options.length, 9);
   assert.equal(options.filter((option) => option.disabled).length, 1);
   assert.equal(options.find((option) => option.disabled)?.name, "A");

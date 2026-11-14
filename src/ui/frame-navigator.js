@@ -16,14 +16,14 @@
 
 import { buildSpline, evalSpline } from "../core/spline.ts";
 import { setFocus, toggleFrameVisibility } from "../state/actions.ts";
-import { S, SLOT_KEYS, curSlot, focusKey, frameName, laneLabel } from "../state/instrument.ts";
+import { LANE_KEYS, S, curLane, focusKey, frameName } from "../state/instrument.ts";
 import { toHexOf } from "../render/readouts.js";
 
 export function createFrameNavigator(deps) {
   const {
     store,
-    selectSlot,
-    enableBOnSlot,
+    selectLane,
+    enableBOnLane,
     syncEditUi,
     syncViewUi,
     renderStrip,
@@ -85,12 +85,12 @@ export function createFrameNavigator(deps) {
   /* ── visibility eyes ──────────────────────────────────────────────────── */
 
   function frameVisLabel(laneKey, frame) {
-    const visible = S.slots[laneKey].frameVis[frame];
+    const visible = S.lanes[laneKey].frameVis[frame];
     return `${visible ? "Hide" : "Show"} frame ${frameName(laneKey, frame)} in the 2D view`;
   }
 
   function makeEyeButton(laneKey, frame) {
-    const sl = S.slots[laneKey];
+    const sl = S.lanes[laneKey];
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className = "eye-btn" + (sl.frameVis[frame] ? "" : " is-hidden");
@@ -120,8 +120,8 @@ export function createFrameNavigator(deps) {
 
     btn.addEventListener("click", (ev) => {
       ev.stopPropagation();
-      const next = !S.slots[laneKey].frameVis[frame];
-      store.patch(() => toggleFrameVisibility(S.slots[laneKey], frame));
+      const next = !S.lanes[laneKey].frameVis[frame];
+      store.patch(() => toggleFrameVisibility(S.lanes[laneKey], frame));
       btn.setAttribute("aria-pressed", String(next));
       btn.classList.toggle("is-hidden", !next);
       btn.setAttribute("aria-label", frameVisLabel(laneKey, frame));
@@ -134,10 +134,10 @@ export function createFrameNavigator(deps) {
   /* ── cards ────────────────────────────────────────────────────────────── */
 
   function buildCard(laneKey, frame) {
-    const sl = S.slots[laneKey];
+    const sl = S.lanes[laneKey];
     const reg = frameReg(sl, frame);
     const name = frameName(laneKey, frame);
-    const active = laneKey === S.slot && focusKey(sl) === frame;
+    const active = laneKey === S.laneKey && focusKey(sl) === frame;
     const visible = sl.frameVis[frame];
     const hex = toHexOf(reg);
 
@@ -150,8 +150,8 @@ export function createFrameNavigator(deps) {
     btn.type = "button";
     btn.className = "frame-card";
     btn.setAttribute("aria-pressed", String(active));
-    btn.setAttribute("aria-label", `Lane ${laneLabel(laneKey)} · ${name} ${frameSub(frame)} · ${hex}`);
-    btn.title = `Lane ${laneLabel(laneKey)} · ${name} (${frameSub(frame)}) · ${hex}`;
+    btn.setAttribute("aria-label", `Lane ${laneKey} · ${name} ${frameSub(frame)} · ${hex}`);
+    btn.title = `Lane ${laneKey} · ${name} (${frameSub(frame)}) · ${hex}`;
 
     const glyph = document.createElement("span");
     glyph.className = "frame-glyph";
@@ -175,14 +175,14 @@ export function createFrameNavigator(deps) {
     btn.type = "button";
     btn.className = "lane-btn";
     btn.dataset.lane = laneKey;
-    const active = laneKey === S.slot;
+    const active = laneKey === S.laneKey;
     btn.setAttribute("aria-pressed", String(active));
-    btn.textContent = `LANE ${laneLabel(laneKey)}`;
-    btn.title = `Focus lane ${laneLabel(laneKey)}`;
+    btn.textContent = `LANE ${laneKey}`;
+    btn.title = `Focus lane ${laneKey}`;
     btn.addEventListener("click", () => {
       S.copyArmed = false;
       store.patch(() => {
-        if (S.slot !== laneKey) selectSlot(laneKey);
+        if (S.laneKey !== laneKey) selectLane(laneKey);
         syncViewUi();
         syncEditUi();
         renderStrip();
@@ -192,7 +192,7 @@ export function createFrameNavigator(deps) {
     });
     head.appendChild(btn);
 
-    const sl = S.slots[laneKey];
+    const sl = S.lanes[laneKey];
     if (active && sl.showB && !S.view3d) {
       const unpairBtn = document.createElement("button");
       unpairBtn.type = "button";
@@ -210,7 +210,7 @@ export function createFrameNavigator(deps) {
     col.className = "lane-col";
     col.dataset.lane = laneKey;
     col.setAttribute("role", "group");
-    col.setAttribute("aria-label", `Lane ${laneLabel(laneKey)}`);
+    col.setAttribute("aria-label", `Lane ${laneKey}`);
     col.appendChild(buildLaneHead(laneKey));
     for (const frame of FRAME_ORDER) col.appendChild(buildCard(laneKey, frame));
     return col;
@@ -255,12 +255,12 @@ export function createFrameNavigator(deps) {
       : null;
 
     framesGrid.textContent = "";
-    for (const laneKey of SLOT_KEYS) framesGrid.appendChild(buildLaneColumn(laneKey));
+    for (const laneKey of LANE_KEYS) framesGrid.appendChild(buildLaneColumn(laneKey));
     framesGrid.appendChild(buildAddColumn());
 
-    const fa = frameName(curSlot().key, "a");
-    const fb = frameName(curSlot().key, "b");
-    const fz = frameName(curSlot().key, "z");
+    const fa = frameName(curLane().key, "a");
+    const fb = frameName(curLane().key, "b");
+    const fz = frameName(curLane().key, "z");
     framesLegend.textContent = `${fa} solid · ${fz} glow · ${fb} dashed`;
 
     updateScrollbar();
@@ -301,9 +301,9 @@ export function createFrameNavigator(deps) {
   }
 
   function focusActiveCard() {
-    const selector = `[data-lane="${S.slot}"] .frame-card`;
+    const selector = `[data-lane="${S.laneKey}"] .frame-card`;
     const active = framesGrid.querySelector(
-      `[data-lane="${S.slot}"][data-frame="${focusKey(curSlot())}"] .frame-card`
+      `[data-lane="${S.laneKey}"][data-frame="${focusKey(curLane())}"] .frame-card`
     );
     const target = active || framesGrid.querySelector(selector);
     if (target) target.focus({ preventScroll: true });
@@ -348,10 +348,10 @@ export function createFrameNavigator(deps) {
   function selectFrame(laneKey, frame) {
     S.copyArmed = false;
     store.patch(() => {
-      if (!S.slots[laneKey].frameVis[frame]) toggleFrameVisibility(S.slots[laneKey], frame);
-      if (S.slot !== laneKey) selectSlot(laneKey);
-      const sl = curSlot();
-      if (frame !== "a" && !sl.showB) enableBOnSlot(sl);
+      if (!S.lanes[laneKey].frameVis[frame]) toggleFrameVisibility(S.lanes[laneKey], frame);
+      if (S.laneKey !== laneKey) selectLane(laneKey);
+      const sl = curLane();
+      if (frame !== "a" && !sl.showB) enableBOnLane(sl);
       setFocus(sl, frame);
       S.hoverReg = null;
       S.hoverJ = -1;
@@ -369,10 +369,10 @@ export function createFrameNavigator(deps) {
     S.copyArmed = false;
     store.patch(() => {
       S.framesView = false;
-      if (!S.slots[laneKey].frameVis[frame]) toggleFrameVisibility(S.slots[laneKey], frame);
-      if (S.slot !== laneKey) selectSlot(laneKey);
-      const sl = curSlot();
-      if (frame !== "a" && !sl.showB) enableBOnSlot(sl);
+      if (!S.lanes[laneKey].frameVis[frame]) toggleFrameVisibility(S.lanes[laneKey], frame);
+      if (S.laneKey !== laneKey) selectLane(laneKey);
+      const sl = curLane();
+      if (frame !== "a" && !sl.showB) enableBOnLane(sl);
       setFocus(sl, frame);
       S.hoverReg = null;
       S.hoverJ = -1;
@@ -415,6 +415,15 @@ export function createFrameNavigator(deps) {
     if (S.framesView) renderGrid();
   });
 
+  /* 2-D canvas legend eye: toggle one frame's visibility by lane key. The rAF
+     render loop redraws the wave/legend; the frames view, if open, re-renders
+     through the store subscription. */
+  function setFrameVis(laneKey, frame, visible) {
+    const sl = S.lanes[laneKey];
+    if (!sl || sl.frameVis[frame] === visible) return;
+    store.patch(() => toggleFrameVisibility(sl, frame));
+  }
+
   return {
     framesBtn,
     isOpen,
@@ -422,6 +431,7 @@ export function createFrameNavigator(deps) {
     render: () => renderGrid(),
     selectFrame,
     chooseCard,
+    setFrameVis,
     focusButton: () => (S.framesView ? document.getElementById("lanesBtn")?.focus() : framesBtn.focus()),
   };
 }

@@ -7,12 +7,27 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import { buildUiState } from "../src/core/agent-state.ts";
+import { DEFAULT_LANE_COUNT, laneDefs } from "../src/core/lanedefs.ts";
 import { exampleProjectDoc } from "../src/core/agent-defaults.ts";
 import { computeZ } from "../src/core/derive.ts";
 import { fromHex, toHex } from "../src/core/registers.ts";
 
 const state = (doc = exampleProjectDoc()) =>
   buildUiState(doc, { deeplink: "file:///bitwave-v2.html#bw=abc" });
+
+test("the shipped three-lane state is keyed by the stable lane keys", () => {
+  const s = state();
+  assert.deepEqual(Object.keys(s.lanes), ["1", "2", "3"]);
+  /* Lane identity is the name index; the frame names derive from that key. */
+  for (const def of laneDefs(DEFAULT_LANE_COUNT)) {
+    const lane = s.lanes[def.key];
+    assert.equal(lane.lane, def.index + 1, `lane number for key ${def.key}`);
+    assert.deepEqual(Object.keys(lane.frames), [def.a, def.b, def.z]);
+    assert.deepEqual(Object.keys(lane.visibility), [def.a, def.b, def.z]);
+  }
+  assert.deepEqual(s.view.splitPair, [1, 2]);
+  assert.equal(s.lane, 1);
+});
 
 test("state has the contract keys and the focused defaults", () => {
   const s = state();

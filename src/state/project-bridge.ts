@@ -6,6 +6,9 @@
  * `ProjectDoc`. It is DOM-free so the round trip is testable in Node and the
  * desktop shell can reuse it.
  *
+ * D43: the live tree is keyed by stable lane keys ("1".."13"), exactly like the
+ * schema-3 document, so the mapping is the identity for the shipped three lanes.
+ *
  * Unknown top-level fields from a loaded document are remembered and merged
  * back on the next capture, so a file written by a newer build survives a
  * load/save cycle in this one.
@@ -21,11 +24,14 @@ import {
 } from "../core/project.ts";
 import type { FrameKey, LaneKey } from "../core/types.ts";
 import { DEMO } from "./dataset.ts";
-import { makeReg, S, SIZES, SLOT_KEYS, syncTarget, type SlotKey } from "./instrument.ts";
+import {
+  LANE_KEYS,
+  S,
+  SIZES,
+  makeReg,
+  syncTarget,
+} from "./instrument.ts";
 import { coreLanes, evaluate, routing } from "./routing.ts";
-
-const SLOT_OF: Record<LaneKey, SlotKey> = { "1": "A", "2": "B", "3": "C" };
-const LANE_OF: Record<SlotKey, LaneKey> = { A: "1", B: "2", C: "3" };
 
 const KNOWN_TOP_LEVEL = new Set([
   "schema", "app", "savedAt", "N", "view", "lanes", "routes", "parked", "dataset",
@@ -45,19 +51,18 @@ export function rememberUnknownFields(raw: unknown): void {
 /** Snapshot the live instrument as a versioned project document. */
 export function captureProject(now = new Date().toISOString()): ProjectDoc {
   const view: ProjectViewState = {
-    lane: LANE_OF[S.slot],
+    lane: S.laneKey,
     view3d: S.view3d,
     split3d: S.split3d,
-    splitPair: [LANE_OF[S.splitPair[0]], LANE_OF[S.splitPair[1]]],
+    splitPair: [S.splitPair[0], S.splitPair[1]],
     activePane: S.activePane === 1 ? 1 : 0,
   };
 
   const focus: NonNullable<ProjectExtras["focus"]> = {};
   const frameVis: NonNullable<ProjectExtras["frameVis"]> = {};
   const expressions: NonNullable<ProjectExtras["expressions"]> = {};
-  for (const key of SLOT_KEYS) {
-    const lane = LANE_OF[key];
-    const sl = S.slots[key];
+  for (const lane of LANE_KEYS) {
+    const sl = S.lanes[lane];
     focus[lane] = sl.focus;
     frameVis[lane] = { ...sl.frameVis };
     const expr: { a?: string; b?: string } = {};
@@ -129,8 +134,8 @@ export function applyProject(raw: unknown): ApplyResult {
   const { lanes, routing: loadedRouting, N, view, dataset, extras } = loaded;
   S.N = N;
 
-  for (const laneKey of ["1", "2", "3"] as LaneKey[]) {
-    const sl = S.slots[SLOT_OF[laneKey]];
+  for (const laneKey of LANE_KEYS) {
+    const sl = S.lanes[laneKey];
     const src = lanes[laneKey];
     sl.A = makeReg(N);
     sl.B = makeReg(N);
@@ -158,10 +163,10 @@ export function applyProject(raw: unknown): ApplyResult {
   routing.routes = loadedRouting.routes;
   routing.parked = loadedRouting.parked;
 
-  S.slot = SLOT_OF[view.lane];
+  S.laneKey = view.lane;
   S.view3d = view.view3d;
   S.split3d = view.split3d;
-  S.splitPair = [SLOT_OF[view.splitPair[0]], SLOT_OF[view.splitPair[1]]];
+  S.splitPair = [view.splitPair[0], view.splitPair[1]] as [LaneKey, LaneKey];
   S.activePane = view.activePane === 1 ? 1 : 0;
 
   /* Transient interaction state never comes from a document. */

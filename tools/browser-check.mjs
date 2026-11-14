@@ -343,8 +343,19 @@ async function openFramesView() {
   await sleep(120);
 }
 
+/* `--compare` also drives the reference artifact, which may predate the D43
+   lane-key rename (cards still carry A/B/C in `data-lane`). Prefer the lane
+   key and fall back to the legacy slot letter for three-lane references. */
+const LEGACY_SLOT = { "1": "A", "2": "B", "3": "C" };
 async function pickFrameCard(lane, frame) {
-  await click(`#framesGrid [data-lane="${lane}"][data-frame="${frame}"] .frame-card`);
+  const modern = `#framesGrid [data-lane="${lane}"][data-frame="${frame}"] .frame-card`;
+  const hasModern = await evaluate(`Boolean(document.querySelector(${JSON.stringify(modern)}))`);
+  const legacyLane = LEGACY_SLOT[lane];
+  const selector =
+    hasModern || !legacyLane
+      ? modern
+      : `#framesGrid [data-lane="${legacyLane}"][data-frame="${frame}"] .frame-card`;
+  await click(selector);
   await sleep(180);
 }
 
@@ -709,12 +720,12 @@ try {
   await runCheck('frames · eye toggle flips aria-pressed and dims the card', async () => {
     await loadApp();
     await openFramesView();
-    await click('#framesGrid [data-lane="A"][data-frame="a"] .eye-btn');
+    await click('#framesGrid [data-lane="1"][data-frame="a"] .eye-btn');
     await sleep(150);
     const hidden = JSON.parse(await evaluate(`JSON.stringify({
-      pressed: document.querySelector('#framesGrid [data-lane="A"][data-frame="a"] .eye-btn').getAttribute('aria-pressed'),
-      hidden: document.querySelector('#framesGrid [data-lane="A"][data-frame="a"]').classList.contains('is-hidden'),
-      label: document.querySelector('#framesGrid [data-lane="A"][data-frame="a"] .eye-btn').getAttribute('aria-label')
+      pressed: document.querySelector('#framesGrid [data-lane="1"][data-frame="a"] .eye-btn').getAttribute('aria-pressed'),
+      hidden: document.querySelector('#framesGrid [data-lane="1"][data-frame="a"]').classList.contains('is-hidden'),
+      label: document.querySelector('#framesGrid [data-lane="1"][data-frame="a"] .eye-btn').getAttribute('aria-label')
     })`));
     assert(hidden.pressed === 'false', `aria-pressed: ${hidden.pressed}`);
     assert(hidden.hidden === true, 'card did not gain .is-hidden');
@@ -722,8 +733,8 @@ try {
     return 'A hidden · aria-pressed=false · label now "Show frame A"';
   });
 
-  const clickSlot = async (key) => {
-    await click(`#stageBar .pane-head:not([hidden]) [data-slot="${key}"]`);
+  const clickLane = async (key) => {
+    await click(`#stageBar .pane-head:not([hidden]) [data-lane="${key}"]`);
     await sleep(120);
   };
 
@@ -732,16 +743,16 @@ try {
     await loadApp();
     const labels = {};
     labels['1'] = await evaluate(`document.getElementById('strip').dataset.edit`);
-    await clickSlot('B');
+    await clickLane('2');
     labels['2'] = await evaluate(`document.getElementById('strip').dataset.edit`);
-    await clickSlot('C');
+    await clickLane('3');
     labels['3'] = await evaluate(`document.getElementById('strip').dataset.edit`);
     assert(
       JSON.stringify(labels) === JSON.stringify({ 1: 'A', 2: 'C', 3: 'E' }),
       `strip labels per lane: ${JSON.stringify(labels)}`
     );
 
-    await clickSlot('A');
+    await clickLane('1');
     await openFramesView();
     const columns = JSON.parse(await evaluate(`JSON.stringify(
       [...document.querySelectorAll('#framesGrid .lane-col:not(.is-add)')].map(
@@ -758,17 +769,56 @@ try {
   await runCheck('visibility · eye toggles are per lane', async () => {
     await loadApp();
     await openFramesView();
-    await click('#framesGrid [data-lane="A"][data-frame="a"] .eye-btn');
+    await click('#framesGrid [data-lane="1"][data-frame="a"] .eye-btn');
     await sleep(150);
     const lane1Hidden = await evaluate(
-      `document.querySelector('#framesGrid [data-lane="A"][data-frame="a"] .eye-btn').getAttribute('aria-pressed')`
+      `document.querySelector('#framesGrid [data-lane="1"][data-frame="a"] .eye-btn').getAttribute('aria-pressed')`
     );
     const lane2Visible = await evaluate(
-      `document.querySelector('#framesGrid [data-lane="B"][data-frame="a"] .eye-btn').getAttribute('aria-pressed')`
+      `document.querySelector('#framesGrid [data-lane="2"][data-frame="a"] .eye-btn').getAttribute('aria-pressed')`
     );
     assert(lane1Hidden === 'false', `lane 1 A after hide: ${lane1Hidden}`);
     assert(lane2Visible === 'true', `lane 2 C should be unaffected: ${lane2Visible}`);
-    return 'hiding A leaves C visible (per-lane visibility)';
+
+    /* The 2-D canvas legend entries use the same visibility path. This guards
+       the D42 regression where the legend click called a removed setter.
+       `?fresh` boots A focused; choosing the B card enables A·B mode, which is
+       the only 2-D state that draws the legend. */
+    await loadApp({ query: 'fresh' });
+    await openFramesView();
+    await pickFrameCard('1', 'b');
+    await waitFor(`typeof window.bitwave === 'object'`, 'agent bridge');
+    const before = JSON.parse(await evaluate(`JSON.stringify(window.bitwave.getState().lanes["1"].visibility)`));
+    const geo = JSON.parse(await evaluate(`JSON.stringify(window.BitWave.geometry())`));
+    const box = JSON.parse(await evaluate(`JSON.stringify((() => {
+      const r = document.getElementById('wave').getBoundingClientRect();
+      return { left: r.left, top: r.top };
+    })())`));
+    const legendX = box.left + geo.plot.x1 - 12;
+    const legendY = box.top + geo.plot.y0 + 8;
+    const clickLegend = async () => {
+      await cdp.send('Input.dispatchMouseEvent', {
+        type: 'mousePressed', x: legendX, y: legendY, button: 'left', clickCount: 1,
+      });
+      await cdp.send('Input.dispatchMouseEvent', {
+        type: 'mouseReleased', x: legendX, y: legendY, button: 'left', clickCount: 1,
+      });
+      await sleep(250);
+    };
+    await clickLegend();
+    const after = JSON.parse(await evaluate(`JSON.stringify(window.bitwave.getState().lanes["1"].visibility)`));
+    const changed = Object.keys(before).filter((frame) => before[frame] !== after[frame]);
+    assert(
+      changed.length === 1 && after[changed[0]] === false,
+      `legend click did not hide one frame: ${JSON.stringify({ before, after })}`
+    );
+    await clickLegend();
+    const restored = JSON.parse(await evaluate(`JSON.stringify(window.bitwave.getState().lanes["1"].visibility)`));
+    assert(
+      JSON.stringify(restored) === JSON.stringify(before),
+      `second legend click did not restore visibility: ${JSON.stringify(restored)}`
+    );
+    return 'hiding A leaves C visible (per-lane) · 2-D legend click toggles and restores';
   });
 
   /* 3c. focus: a card is navigation, the lens on the readouts stays a lens */
@@ -787,7 +837,7 @@ try {
     assert(entered.readonly === false, '3-D should leave A editable');
 
     await openFramesView();
-    await pickFrameCard('A', 'a');
+    await pickFrameCard('1', 'a');
     let state = JSON.parse(await evaluate(`JSON.stringify({
       view3d: document.getElementById('depthBtn').getAttribute('aria-pressed'),
       viewHidden: document.getElementById('framesView').hidden,
@@ -806,7 +856,7 @@ try {
       z: document.getElementById('hexZ').textContent
     })`));
     await openFramesView();
-    await pickFrameCard('A', 'z');
+    await pickFrameCard('1', 'z');
     state = JSON.parse(await evaluate(`JSON.stringify({
       view3d: document.getElementById('depthBtn').getAttribute('aria-pressed'),
       viewHidden: document.getElementById('framesView').hidden,
@@ -834,7 +884,7 @@ try {
     );
 
     await openFramesView();
-    await pickFrameCard('A', 'b');
+    await pickFrameCard('1', 'b');
     const b = JSON.parse(await evaluate(`JSON.stringify({
       viewHidden: document.getElementById('framesView').hidden,
       strip: document.getElementById('strip').dataset.edit,
@@ -850,7 +900,7 @@ try {
     /* 3-D brings the second operand live, so the A/B/Z readout row exists. */
     await click('#depthBtn');
     await sleep(200);
-    await clickSlot('B');
+    await clickLane('2');
     await sleep(120);
     const lane2 = JSON.parse(await evaluate(`JSON.stringify({
       strip: document.getElementById('strip').dataset.edit,
@@ -865,7 +915,7 @@ try {
     assert(lane2.a === 'C' && lane2.b === 'D' && lane2.z === 'Z2', `lane 2 readout labels: ${JSON.stringify(lane2)}`);
     assert(/C.*D.*→ Z2/.test(lane2.truth), `lane 2 truth header: ${JSON.stringify(lane2.truth)}`);
 
-    await clickSlot('C');
+    await clickLane('3');
     const lane3 = JSON.parse(await evaluate(`JSON.stringify({
       strip: document.getElementById('strip').dataset.edit,
       stage: document.getElementById('stageBar').textContent
@@ -1221,7 +1271,7 @@ try {
     assert(focused === '2', `bit click left focus on ${focused}`);
 
     await openFramesView();
-    await pickFrameCard('A', 'z');
+    await pickFrameCard('1', 'z');
     const z = JSON.parse(await evaluate(`JSON.stringify({
       readonly: [...document.querySelectorAll('#nibs .nib')].every((n) => n.getAttribute('aria-readonly') === 'true'),
       tabStops: document.querySelectorAll('#nibs .nib[tabindex]').length,
@@ -1301,7 +1351,7 @@ try {
       const seg = document.querySelector('#stageBar .pane-head:not([hidden]) .seg[role="radiogroup"]');
       return {
         role: seg.getAttribute('role'),
-        radios: [...seg.querySelectorAll('[data-slot]')].map((b) => ({
+        radios: [...seg.querySelectorAll('[data-lane]')].map((b) => ({
           role: b.getAttribute('role'),
           checked: b.getAttribute('aria-checked'),
           tab: b.getAttribute('tabindex')
@@ -1313,16 +1363,16 @@ try {
     assert(before.radios.filter((r) => r.checked === 'true').length === 1, 'exactly one lane checked');
     assert(before.radios.filter((r) => r.tab === '0').length === 1, 'roving tab stop on the lane set');
 
-    await evaluate(`document.querySelector('#stageBar .pane-head:not([hidden]) [data-slot="A"]').focus()`);
+    await evaluate(`document.querySelector('#stageBar .pane-head:not([hidden]) [data-lane="1"]').focus()`);
     await keydown('ArrowRight');
     const after = JSON.parse(await evaluate(`JSON.stringify({
       lane: window.BitWave.state().lane,
-      checked: [...document.querySelectorAll('#stageBar .pane-head:not([hidden]) [data-slot]')].map((b) => b.getAttribute('aria-checked')),
-      focused: document.activeElement.dataset.slot
+      checked: [...document.querySelectorAll('#stageBar .pane-head:not([hidden]) [data-lane]')].map((b) => b.getAttribute('aria-checked')),
+      focused: document.activeElement.dataset.lane
     })`));
     assert(after.lane === 2, `arrow-right selected lane ${after.lane}`);
     assert(JSON.stringify(after.checked) === JSON.stringify(['false', 'true', 'false']), `aria-checked: ${JSON.stringify(after.checked)}`);
-    assert(after.focused === 'B', `focus follows selection: ${after.focused}`);
+    assert(after.focused === '2', `focus follows selection: ${after.focused}`);
     return 'radiogroup · one checked · arrows move selection, focus follows';
   });
 
@@ -1379,10 +1429,10 @@ try {
     let bar = JSON.parse(await evaluate(`JSON.stringify({
       visible: document.getElementById('stageBar').offsetParent !== null,
       hasFrames: document.getElementById('stageBar').contains(document.getElementById('framesBtn')),
-      laneRadios: document.querySelectorAll('#stageBar .pane-head:not([hidden]) [data-slot]').length,
+      laneRadios: document.querySelectorAll('#stageBar .pane-head:not([hidden]) [data-lane]').length,
       splitDisabled: document.querySelector('#stageBar .op.mini').getAttribute('aria-disabled'),
       expr: document.querySelector('#stageBar .stage-expr').textContent,
-      controlsHasLane: document.querySelectorAll('.controls [data-slot]').length,
+      controlsHasLane: document.querySelectorAll('.controls [data-lane]').length,
       controlsHasSplit: document.querySelectorAll('.controls .op.mini').length
     })`));
     assert(bar.visible, 'stage bar is hidden in 2-D');
@@ -1503,7 +1553,7 @@ try {
       a: window.BitWave.state().lanes['1'].frames.A,
       b: window.BitWave.state().lanes['1'].frames.B
     })`));
-    await click('.copy-menu [data-lane="B"]');
+    await click('.copy-menu [data-lane="2"]');
     await sleep(300);
     const copied = JSON.parse(await evaluate(`JSON.stringify({
       c: window.BitWave.state().lanes['2'].frames.C,
@@ -1555,7 +1605,7 @@ try {
     assert(reverted === '00000000DEADBEEF', `Esc did not revert the hex entry: ${reverted}`);
 
     await openFramesView();
-    await pickFrameCard('A', 'z');
+    await pickFrameCard('1', 'z');
     const derived = JSON.parse(await evaluate(`JSON.stringify({
       disabled: document.getElementById('hexEntry').disabled,
       value: document.getElementById('hexEntry').value,
@@ -2049,7 +2099,7 @@ try {
   await runCheck('agent · state() follows focus, view and dataset', async () => {
     await click('#depthBtn');
     await openFramesView();
-    await pickFrameCard('A', 'z');
+    await pickFrameCard('1', 'z');
     let snapshot = JSON.parse(await evaluate(`JSON.stringify(window.BitWave.state())`));
     assert(snapshot.view.mode === '3d', `view: ${snapshot.view.mode}`);
     assert(snapshot.frame === 'Z1', `focused frame: ${snapshot.frame}`);
@@ -2093,7 +2143,7 @@ try {
             prepare: async () => {
               await click('#depthBtn');
               await openFramesView();
-              await pickFrameCard('A', 'z');
+              await pickFrameCard('1', 'z');
             },
           },
           {
@@ -2199,7 +2249,7 @@ try {
           await loadApp();
           await click('#depthBtn');
           await openFramesView();
-          await pickFrameCard('A', 'z');
+          await pickFrameCard('1', 'z');
         },
         settle: 800,
       });
@@ -2207,7 +2257,7 @@ try {
         prepare: async () => {
           await loadApp();
           await openFramesView();
-          await pickFrameCard('A', 'z');
+          await pickFrameCard('1', 'z');
         },
         settle: 600,
       });

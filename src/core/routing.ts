@@ -55,6 +55,13 @@ const sameDest = (a: DestinationPort, b: DestinationPort): boolean =>
 
 const operandReg = (lane: Lane, frame: "a" | "b") => (frame === "a" ? lane.A : lane.B);
 
+/** A per-lane table keyed by the stable lane keys in display order. */
+function laneTable<T>(make: () => T): Record<LaneKey, T> {
+  const out = {} as Record<LaneKey, T>;
+  for (const key of LANE_KEYS) out[key] = make();
+  return out;
+}
+
 function readPort(lanes: LaneMap, laneKey: LaneKey, frame: FrameKey): Uint8Array {
   const lane = lanes[laneKey];
   return frame === "z" ? lane.Z.bits : frame === "b" ? lane.B.bits : lane.A.bits;
@@ -159,8 +166,8 @@ export function clearRoutes(routing: RoutingState, lanes: LaneMap): void {
  * and route insertion order. A self-lane route (3·Z -> 3·A) is always delayed.
  */
 export function markDelays(routing: RoutingState): void {
-  const color: Record<LaneKey, 0 | 1 | 2> = { "1": 0, "2": 0, "3": 0 };
-  const edges: Record<LaneKey, Route[]> = { "1": [], "2": [], "3": [] };
+  const color = laneTable<0 | 1 | 2>(() => 0);
+  const edges = laneTable<Route[]>(() => []);
   for (const route of routing.routes) edges[route.from.lane].push(route);
 
   const visit = (laneKey: LaneKey): void => {
@@ -186,8 +193,8 @@ export function markDelays(routing: RoutingState): void {
  * markDelays() first (evaluateAll does).
  */
 export function topoOrder(routing: RoutingState): LaneKey[] {
-  const color: Record<LaneKey, 0 | 1 | 2> = { "1": 0, "2": 0, "3": 0 };
-  const edges: Record<LaneKey, LaneKey[]> = { "1": [], "2": [], "3": [] };
+  const color = laneTable<0 | 1 | 2>(() => 0);
+  const edges = laneTable<LaneKey[]>(() => []);
   for (const route of routing.routes) {
     if (!route.delay) edges[route.from.lane].push(route.to.lane);
   }

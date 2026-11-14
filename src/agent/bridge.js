@@ -28,7 +28,7 @@ import {
   normalizeAgentPatch,
 } from "../core/agent-tools.ts";
 import { buildUiState } from "../core/agent-state.ts";
-import { SLOT_OF_LANE, frameRefFromName, laneKeyFromNumber } from "../core/agent-defaults.ts";
+import { frameRefFromName, laneKeyFromNumber } from "../core/agent-defaults.ts";
 import { columnWidth, parseDataset } from "../core/csv.ts";
 import { SIZES } from "../core/registers.ts";
 import { captureProject } from "../state/project-bridge.ts";
@@ -61,7 +61,7 @@ export function createAgentBridge(deps) {
   const {
     store,
     share,
-    selectSlot,
+    selectLane,
     selectFrame,
     setView: applyView,
     resizeRegister,
@@ -172,7 +172,7 @@ export function createAgentBridge(deps) {
           message: "Z is derived and cannot be written; choose an operand frame",
         };
       }
-      const sl = S.slots[ref.slotKey];
+      const sl = S.lanes[ref.lane];
       if (isInputDriven(sl, ref.frame)) {
         const driver = driverName(sl, ref.frame) || "a route";
         return {
@@ -233,7 +233,7 @@ export function createAgentBridge(deps) {
   function applyRegister(register) {
     const ref = frameRefFromName(register.frame);
     if (!ref) return; // normalizeAgentPatch already rejects this
-    const sl = S.slots[ref.slotKey];
+    const sl = S.lanes[ref.lane];
     const reg = regOf(ref.frame, sl);
     /* DESIGN §10.19: the LFO yields to a manual edit. Stop it (restoring its
        pre-LFO snapshot) inside the same transaction, then write, so the next
@@ -299,10 +299,14 @@ export function createAgentBridge(deps) {
   /** Apply a validated patch in the instrument's canonical key order. */
   function applyNormalized(patch) {
     if (patch.reset) resetInstrument();
-    if (patch.lane !== undefined) selectSlot(SLOT_OF_LANE[laneKeyFromNumber(patch.lane)]);
+    if (patch.lane !== undefined) {
+      /* The agent surface stays numeric lane 1..3; the lane key is its identity. */
+      const lane = laneKeyFromNumber(patch.lane);
+      if (lane !== null) selectLane(lane);
+    }
     if (patch.frame !== undefined) {
       const ref = frameRefFromName(patch.frame);
-      if (ref) selectFrame(ref.slotKey, ref.frame);
+      if (ref) selectFrame(ref.lane, ref.frame);
     }
     if (patch.view !== undefined) applyView(patch.view);
     if (patch.width !== undefined) {

@@ -4,17 +4,16 @@ import assert from "node:assert/strict";
 import { createStore } from "../src/state/store.ts";
 import {
   FRAME_NAMES,
+  LANE_KEYS,
   S,
   SIZES,
-  SLOT_KEYS,
   bigToReg,
-  curSlot,
+  curLane,
   editKey,
   focusKey,
   frameName,
-  laneLabel,
+  makeLaneState,
   makeReg,
-  makeSlot,
   nibAt,
   nibValue,
   recomputeZ,
@@ -24,6 +23,8 @@ import {
   setNibValue,
   syncTarget,
 } from "../src/state/instrument.ts";
+import { laneDefs } from "../src/core/lanedefs.ts";
+import { LANE_KEYS as CORE_LANE_KEYS } from "../src/core/types.ts";
 
 /* ── store ─────────────────────────────────────────────────────────────── */
 
@@ -86,48 +87,51 @@ test("store: a throwing mutator still completes the transaction boundary", () =>
 
 /* ── instrument ────────────────────────────────────────────────────────── */
 
-test("instrument: frame names are global", () => {
-  assert.deepEqual(FRAME_NAMES.A, { a: "A", b: "B", z: "Z1" });
-  assert.equal(frameName("A", "z"), "Z1");
-  assert.equal(frameName("B", "a"), "C");
-  assert.equal(frameName("B", "z"), "Z2");
-  assert.equal(frameName("C", "b"), "F");
-  assert.equal(frameName("C", "z"), "Z3");
-  assert.equal(laneLabel("A"), "1");
-  assert.equal(laneLabel("C"), "3");
+test("instrument: frame names are global, derived from the stable lane key", () => {
+  assert.deepEqual(FRAME_NAMES["1"], { a: "A", b: "B", z: "Z1" });
+  assert.equal(frameName("1", "z"), "Z1");
+  assert.equal(frameName("2", "a"), "C");
+  assert.equal(frameName("2", "z"), "Z2");
+  assert.equal(frameName("3", "b"), "F");
+  assert.equal(frameName("3", "z"), "Z3");
 });
 
-test("instrument: boot tree shape and per-lane frame state", () => {
+test("instrument: state lanes are keyed by the lane key, not by slot letter", () => {
   assert.equal(S.N, 64);
-  assert.deepEqual(SLOT_KEYS, ["A", "B", "C"]);
   assert.deepEqual(SIZES, [8, 16, 32, 64, 128, 256]);
-  assert.equal(S.slot, "A");
-  assert.deepEqual(Object.keys(S.slots), ["A", "B", "C"]);
+  assert.deepEqual(LANE_KEYS, ["1", "2", "3"]);
+  assert.deepEqual(CORE_LANE_KEYS, laneDefs().map((def) => def.key));
+  assert.equal(S.laneKey, "1");
+  assert.deepEqual(Object.keys(S.lanes), ["1", "2", "3"]);
+  assert.deepEqual(Object.keys(FRAME_NAMES), ["1", "2", "3"]);
+  for (const key of LANE_KEYS) {
+    assert.equal(S.lanes[key].key, key, `lane ${key} carries its own key`);
+  }
 
-  const slot = makeSlot("B", 64, "and");
-  assert.equal(slot.key, "B");
-  assert.equal(slot.binop, "and");
-  assert.equal(slot.edit, "a");
-  assert.equal(slot.focus, "a");
-  assert.deepEqual(slot.frameVis, { a: true, b: true, z: true });
-  assert.equal(slot.colA, -1);
+  const lane = makeLaneState("2", 64, "and");
+  assert.equal(lane.key, "2");
+  assert.equal(lane.binop, "and");
+  assert.equal(lane.edit, "a");
+  assert.equal(lane.focus, "a");
+  assert.deepEqual(lane.frameVis, { a: true, b: true, z: true });
+  assert.equal(lane.colA, -1);
 });
 
 test("instrument: selection helpers follow focus and edit", () => {
-  const slot = makeSlot("A", 64, "xor");
-  assert.equal(editKey(slot), "a");
-  assert.equal(regOf("z", slot), slot.Z);
-  assert.equal(focusKey(slot), "a");
+  const lane = makeLaneState("1", 64, "xor");
+  assert.equal(editKey(lane), "a");
+  assert.equal(regOf("z", lane), lane.Z);
+  assert.equal(focusKey(lane), "a");
 
-  slot.showB = true;
-  slot.edit = "b";
-  assert.equal(editKey(slot), "b");
-  assert.equal(focusKey(slot), "a", "edit does not move focus");
+  lane.showB = true;
+  lane.edit = "b";
+  assert.equal(editKey(lane), "b");
+  assert.equal(focusKey(lane), "a", "edit does not move focus");
 
-  slot.focus = "b";
-  assert.equal(focusKey(slot), "b");
-  slot.focus = "z";
-  assert.equal(focusKey(slot), "z");
+  lane.focus = "b";
+  assert.equal(focusKey(lane), "b");
+  lane.focus = "z";
+  assert.equal(focusKey(lane), "z");
 });
 
 test("instrument: nibble helpers delegate to the core register math", () => {
@@ -145,24 +149,24 @@ test("instrument: nibble helpers delegate to the core register math", () => {
 });
 
 test("instrument: recomputeZ delegates to the core derive", () => {
-  const slot = makeSlot("A", 64, "xor");
-  setNibValue(slot.A, 15, 0x3);
-  setNibValue(slot.B, 15, 0x5);
-  recomputeZ(true, slot);
+  const lane = makeLaneState("1", 64, "xor");
+  setNibValue(lane.A, 15, 0x3);
+  setNibValue(lane.B, 15, 0x5);
+  recomputeZ(true, lane);
 
-  assert.equal(regToBig(slot.Z), 0x6n);
-  assert.equal(slot.Z.target[15], 0x6);
-  assert.equal(slot.Z.anim[15], 0x6);
+  assert.equal(regToBig(lane.Z), 0x6n);
+  assert.equal(lane.Z.target[15], 0x6);
+  assert.equal(lane.Z.anim[15], 0x6);
 
-  slot.binop = "add";
-  setNibValue(slot.A, 15, 0xf);
-  setNibValue(slot.B, 15, 0x1);
-  recomputeZ(true, slot);
-  assert.equal(regToBig(slot.Z), 0x10n);
+  lane.binop = "add";
+  setNibValue(lane.A, 15, 0xf);
+  setNibValue(lane.B, 15, 0x1);
+  recomputeZ(true, lane);
+  assert.equal(regToBig(lane.Z), 0x10n);
 });
 
 test("instrument: the live tree is shared with the app singleton", () => {
-  assert.equal(curSlot(), S.slots[S.slot]);
-  assert.equal(curSlot().A, S.A);
-  assert.equal(curSlot().Z, S.Z);
+  assert.equal(curLane(), S.lanes[S.laneKey]);
+  assert.equal(curLane().A, S.A);
+  assert.equal(curLane().Z, S.Z);
 });

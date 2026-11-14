@@ -10,11 +10,10 @@
 
 import {
   S,
-  curSlot,
+  curLane,
   focusReg,
   frameLabel,
   frameName,
-  laneLabel,
   nibCount,
   nibValue,
 } from "../state/instrument.ts";
@@ -32,10 +31,10 @@ export function createLiveStatus(store) {
     const n = nibCount();
     let hex = "";
     for (let j = 0; j < n; j++) hex += nibValue(r, j).toString(16).toUpperCase();
-    const sl = curSlot();
+    const sl = curLane();
     let pop = 0;
     for (let i = 0; i < S.N; i++) pop += sl.Z.bits[i];
-    return `lane ${laneLabel(S.slot)} · ${frameLabel()} = ${hex} · ${frameName(S.slot, "z")} popcount ${pop}`;
+    return `lane ${S.laneKey} · ${frameLabel()} = ${hex} · ${frameName(S.laneKey, "z")} popcount ${pop}`;
   }
 
   function flush() {

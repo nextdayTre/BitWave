@@ -12,7 +12,6 @@ import {
   frameLabel,
   frameName,
   isArith,
-  laneLabel,
   nibCount,
   nibValue,
   regToBig,
@@ -56,9 +55,9 @@ import { stripEl } from "./strip.js";
      positions in A and B actually hold each input pair, so the four
      counts always sum to the register width. */
   function renderTruth() {
-    const fa = frameName(S.slot, "a");
-    const fb = frameName(S.slot, "b");
-    const fz = frameName(S.slot, "z");
+    const fa = frameName(S.laneKey, "a");
+    const fb = frameName(S.laneKey, "b");
+    const fz = frameName(S.laneKey, "z");
     /* Arithmetic has no four-row truth table: the result depends on the
        whole word through the carry/borrow, not on the bit pair. */
     if (isArith()) {
@@ -112,7 +111,7 @@ import { stripEl } from "./strip.js";
     const focused = focusKey();
     for (const [frame, el] of frames) {
       if (!el) continue;
-      const name = frameName(S.slot, frame);
+      const name = frameName(S.laneKey, frame);
       el.textContent = name;
       el.setAttribute("aria-pressed", String(frame === focused));
       if (frame === "z") {
@@ -131,13 +130,13 @@ import { stripEl } from "./strip.js";
     stripEl.dataset.edit = frameLabel();
 
     if (slotBadgeEl) {
-      slotBadgeEl.hidden = !S.view3d && S.slot === "A";
-      slotBadgeEl.textContent = `lane ${laneLabel(S.slot)}`;
+      slotBadgeEl.hidden = !S.view3d && S.laneKey === "1";
+      slotBadgeEl.textContent = `lane ${S.laneKey}`;
     }
 
     if (S.showB) {
       renderFrameLens();
-      popEl.previousElementSibling.textContent = `pop ${frameName(S.slot, "z")}`;
+      popEl.previousElementSibling.textContent = `pop ${frameName(S.laneKey, "z")}`;
       hexAEl.textContent = toHexOf(S.A);
       hexBEl.textContent = toHexOf(S.B);
       hexZEl.textContent = toHexOf(S.Z);
@@ -168,12 +167,12 @@ import { stripEl } from "./strip.js";
     for (let i = 0; i < S.N; i++) pop += S.Z.bits[i];
     const alt = [
       S.view3d ? "3-D depth field" : "2-D waveform",
-      `lane ${laneLabel(S.slot)}`,
-      `${frameName(S.slot, "a")} ${toHexOf(S.A)}`,
+      `lane ${S.laneKey}`,
+      `${frameName(S.laneKey, "a")} ${toHexOf(S.A)}`,
     ];
     if (S.showB) {
-      alt.push(`${frameName(S.slot, "b")} ${toHexOf(S.B)}`);
-      alt.push(`${frameName(S.slot, "z")} ${toHexOf(S.Z)}`);
+      alt.push(`${frameName(S.laneKey, "b")} ${toHexOf(S.B)}`);
+      alt.push(`${frameName(S.laneKey, "z")} ${toHexOf(S.Z)}`);
       alt.push(`popcount ${pop}`);
     }
     alt.push(`editing ${frameLabel()}`);

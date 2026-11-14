@@ -6,7 +6,7 @@
  */
 
 import { DEMO } from "../state/dataset.ts";
-import { S, laneLabel } from "../state/instrument.ts";
+import { S } from "../state/instrument.ts";
 import { toHexOf } from "../render/readouts.js";
 
 const obsCount = document.getElementById("obsCount");
@@ -44,7 +44,7 @@ export function setObservationStatus(fn) {
 
     const obs = {
       timestamp: new Date().toISOString(),
-      view: laneLabel(S.slot),
+      view: S.laneKey,
       index: DEMO.i + 1,
       name: exName,
       width_bits: S.N,

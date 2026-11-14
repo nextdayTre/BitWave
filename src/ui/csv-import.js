@@ -15,7 +15,7 @@ import {
   normCell,
   parseDelimited,
 } from "../core/csv.ts";
-import { S, SLOT_KEYS, SIZES, syncTarget } from "../state/instrument.ts";
+import { LANE_KEYS, S, SIZES, syncTarget } from "../state/instrument.ts";
 import { DEMO } from "../state/dataset.ts";
 import { DEMO_CSV, DEMO_NAME } from "../state/demo-data.ts";
 import { isInputDriven, resetBindings } from "../state/bindings.ts";
@@ -56,8 +56,8 @@ export function createCsvImport(deps) {
 
   function fitToMappedColumns() {
     let maxBits = 8;
-    for (const k of SLOT_KEYS) {
-      const sl = S.slots[k];
+    for (const k of LANE_KEYS) {
+      const sl = S.lanes[k];
       if (sl.colA >= 0) maxBits = Math.max(maxBits, columnWidth(DEMO.rows, sl.colA));
       if (sl.colB >= 0) maxBits = Math.max(maxBits, columnWidth(DEMO.rows, sl.colB));
     }
@@ -78,8 +78,8 @@ export function createCsvImport(deps) {
       DEMO.i = ((idx % n) + n) % n;
       const row = DEMO.rows[DEMO.i];
 
-      for (const k of SLOT_KEYS) {
-        const sl = S.slots[k];
+      for (const k of LANE_KEYS) {
+        const sl = S.lanes[k];
         if (sl.colA >= 0 && !isInputDriven(sl, "a")) {
           const a = cellToBits(row[sl.colA], columnMode(DEMO.rows, sl.colA));
           if (a) writeBitsInto(sl.A, a);
@@ -177,7 +177,7 @@ export function createCsvImport(deps) {
     const rest = payload.filter((c) => c !== primary);
     const ordered = [primary, ...rest];
 
-    const slA = S.slots.A, slB = S.slots.B, slC = S.slots.C;
+    const slA = S.lanes["1"], slB = S.lanes["2"], slC = S.lanes["3"];
     slA.colA = primary;
     slA.colB = (S.view3d || slA.showB) && ordered.length >= 2 ? ordered[1] : -1;
 

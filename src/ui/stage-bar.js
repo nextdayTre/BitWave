@@ -6,12 +6,15 @@
  * and `LANE 1 · A ⊕ B → Z1`; in 3-D it adds the per-pane focus dots and, in
  * split mode, a second pane head. While the frames view is open it shrinks to
  * `Lanes` (D42). Reads the state tree; writes only this DOM.
+ *
+ * D43: each lane button carries its stable lane key (`data-lane="1"`), which is
+ * also its displayed number.
  */
 
-import { S, SLOT_KEYS, curSlot, laneLabel } from "../state/instrument.ts";
+import { LANE_KEYS, S, curLane } from "../state/instrument.ts";
 
 export function createStageBar(deps) {
-  const { element, framesBtn, selectSlot, selectSlotInPane, setSplitMode, focusSplitPane, slotExprText, closeFrames } = deps;
+  const { element, framesBtn, selectLane, selectLaneInPane, setSplitMode, focusSplitPane, laneExprText, closeFrames } = deps;
   let stageDom = null;
 
   function buildStageBar() {
@@ -35,21 +38,21 @@ export function createStageBar(deps) {
       seg.setAttribute("role", "radiogroup");
       seg.setAttribute("aria-label", `Lane${paneIdx === 1 ? " (second pane)" : ""}`);
       const btns = {};
-      for (const k of SLOT_KEYS) {
+      for (const k of LANE_KEYS) {
         const b = document.createElement("button");
         b.type = "button";
         b.className = "op";
-        b.dataset.slot = k;
+        b.dataset.lane = k;
         b.setAttribute("role", "radio");
         b.setAttribute("aria-checked", "false");
         b.setAttribute("tabindex", "-1");
-        b.textContent = laneLabel(k);
-        b.title = `Lane ${laneLabel(k)}`;
-        b.setAttribute("aria-label", `Lane ${laneLabel(k)}`);
+        b.textContent = k;
+        b.title = `Lane ${k}`;
+        b.setAttribute("aria-label", `Lane ${k}`);
         b.addEventListener("click", (ev) => {
           ev.stopPropagation();
-          if (S.split3d) selectSlotInPane(paneIdx, k);
-          else selectSlot(k);
+          if (S.split3d) selectLaneInPane(paneIdx, k);
+          else selectLane(k);
         });
         seg.appendChild(b);
         btns[k] = b;
@@ -59,19 +62,19 @@ export function createStageBar(deps) {
       seg.addEventListener("keydown", (e) => {
         const current = S.split3d
           ? (paneIdx === 0 ? S.splitPair[0] : S.splitPair[1])
-          : S.slot;
-        let next = SLOT_KEYS.indexOf(current);
-        if (e.key === "ArrowLeft" || e.key === "ArrowUp") next = (next + SLOT_KEYS.length - 1) % SLOT_KEYS.length;
-        else if (e.key === "ArrowRight" || e.key === "ArrowDown") next = (next + 1) % SLOT_KEYS.length;
+          : S.laneKey;
+        let next = LANE_KEYS.indexOf(current);
+        if (e.key === "ArrowLeft" || e.key === "ArrowUp") next = (next + LANE_KEYS.length - 1) % LANE_KEYS.length;
+        else if (e.key === "ArrowRight" || e.key === "ArrowDown") next = (next + 1) % LANE_KEYS.length;
         else if (e.key === "Home") next = 0;
-        else if (e.key === "End") next = SLOT_KEYS.length - 1;
+        else if (e.key === "End") next = LANE_KEYS.length - 1;
         else return;
         e.preventDefault();
         e.stopPropagation();
-        const chosen = SLOT_KEYS[next];
-        if (S.split3d) selectSlotInPane(paneIdx, chosen);
-        else selectSlot(chosen);
-        seg.querySelector(`[data-slot="${chosen}"]`)?.focus();
+        const chosen = LANE_KEYS[next];
+        if (S.split3d) selectLaneInPane(paneIdx, chosen);
+        else selectLane(chosen);
+        seg.querySelector(`[data-lane="${chosen}"]`)?.focus();
       });
       wrap.appendChild(seg);
 
@@ -125,7 +128,7 @@ export function createStageBar(deps) {
   }
 
   function syncRadio(btns, active) {
-    for (const k of SLOT_KEYS) {
+    for (const k of LANE_KEYS) {
       const on = k === active;
       btns[k].classList.toggle("on", on);
       btns[k].setAttribute("aria-checked", String(on));
@@ -166,14 +169,14 @@ export function createStageBar(deps) {
       p0.spBtn.setAttribute("aria-pressed", "false");
       p0.spBtn.classList.remove("on");
       setSplitEnabled(p0.spBtn, false);
-      syncRadio(p0.btns, S.slot);
-      p0.expr.textContent = slotExprText(curSlot(), true);
+      syncRadio(p0.btns, S.laneKey);
+      p0.expr.textContent = laneExprText(curLane(), true);
       p1.wrap.hidden = true;
       return;
     }
 
     if (!S.split3d) {
-      const sl = curSlot();
+      const sl = curLane();
       p0.dot.hidden = true;
       p0.wrap.classList.add("focused");
       p0.wrap.hidden = false;
@@ -181,8 +184,8 @@ export function createStageBar(deps) {
       p0.spBtn.setAttribute("aria-pressed", "false");
       p0.spBtn.classList.remove("on");
       setSplitEnabled(p0.spBtn, true);
-      syncRadio(p0.btns, S.slot);
-      p0.expr.textContent = slotExprText(sl, true);
+      syncRadio(p0.btns, S.laneKey);
+      p0.expr.textContent = laneExprText(sl, true);
       p1.wrap.hidden = true;
     } else {
       const k0 = S.splitPair[0], k1 = S.splitPair[1];
@@ -191,7 +194,7 @@ export function createStageBar(deps) {
       p0.spBtn.hidden = true;
       p0.wrap.classList.toggle("focused", S.activePane === 0);
       syncRadio(p0.btns, k0);
-      p0.expr.textContent = slotExprText(S.slots[k0], false);
+      p0.expr.textContent = laneExprText(S.lanes[k0], false);
 
       p1.wrap.hidden = false;
       p1.dot.hidden = false;
@@ -201,7 +204,7 @@ export function createStageBar(deps) {
       setSplitEnabled(p1.spBtn, true);
       p1.wrap.classList.toggle("focused", S.activePane === 1);
       syncRadio(p1.btns, k1);
-      p1.expr.textContent = slotExprText(S.slots[k1], false);
+      p1.expr.textContent = laneExprText(S.lanes[k1], false);
     }
   }
 

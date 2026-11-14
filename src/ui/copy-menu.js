@@ -5,9 +5,11 @@
  * an outside click closes it and returns focus, arrows move between the lane
  * items, and the copy itself is one `copyLane` transaction (the live region
  * reports the destination state). The copy belongs to the rack, not the lane.
+ *
+ * D43: an item is labelled and identified by its stable lane key.
  */
 
-import { S, SLOT_KEYS, laneLabel } from "../state/instrument.ts";
+import { LANE_KEYS, S } from "../state/instrument.ts";
 
 export function createCopyMenu(deps) {
   const { store, button, onCopy } = deps;
@@ -18,15 +20,15 @@ export function createCopyMenu(deps) {
   menu.setAttribute("role", "menu");
   menu.setAttribute("aria-label", "copy the focused lane to");
 
-  const items = SLOT_KEYS.map((key) => {
+  const items = LANE_KEYS.map((key) => {
     const item = document.createElement("button");
     item.type = "button";
     item.className = "op";
     item.setAttribute("role", "menuitem");
     item.setAttribute("tabindex", "-1");
     item.dataset.lane = key;
-    item.textContent = `lane ${laneLabel(key)}`;
-    item.title = `Copy lane ${laneLabel(S.slot)} into lane ${laneLabel(key)}`;
+    item.textContent = `lane ${key}`;
+    item.title = `Copy lane ${S.laneKey} into lane ${key}`;
     item.addEventListener("click", () => activate(key));
     menu.appendChild(item);
     return item;
@@ -56,7 +58,7 @@ export function createCopyMenu(deps) {
     if (open) return;
     open = true;
     items.forEach((item, i) => {
-      item.title = `Copy lane ${laneLabel(S.slot)} into lane ${laneLabel(SLOT_KEYS[i])}`;
+      item.title = `Copy lane ${S.laneKey} into lane ${LANE_KEYS[i]}`;
     });
     store.patch(() => { S.copyArmed = true; });
     position();
@@ -80,7 +82,7 @@ export function createCopyMenu(deps) {
   }
 
   function activate(key) {
-    const src = S.slot;
+    const src = S.laneKey;
     closeMenu(false);
     if (key !== src) onCopy(src, key);
     button.focus();

@@ -12,7 +12,7 @@ import { DEMO } from "../state/dataset.ts";
 import {
   OPSYM,
   S,
-  curSlot,
+  curLane,
   focusKey,
   frameName,
   nibCount,
@@ -127,9 +127,9 @@ import { nibsEl, renderStrip, stripEl } from "./strip.js";
 
   function drawLegend(x1, ly) {
     const items = [
-      { key: "a", t: frameName(S.slot, "a"), w: 1.8, dash: null, a: 0.82 },
-      { key: "b", t: frameName(S.slot, "b"), w: 1.8, dash: [6, 4], a: 0.82 },
-      { key: "z", t: frameName(S.slot, "z"), w: 2.5, dash: null, a: 1 },
+      { key: "a", t: frameName(S.laneKey, "a"), w: 1.8, dash: null, a: 0.82 },
+      { key: "b", t: frameName(S.laneKey, "b"), w: 1.8, dash: [6, 4], a: 0.82 },
+      { key: "z", t: frameName(S.laneKey, "z"), w: 2.5, dash: null, a: 1 },
     ];
     ctx.font = `10px ${MONO}`;
     ctx.textBaseline = "middle";
@@ -147,7 +147,7 @@ import { nibsEl, renderStrip, stripEl } from "./strip.js";
     let lx = x1 - total;
     const hits = [];
     for (const it of items) {
-      const vis = curSlot().frameVis[it.key];
+      const vis = curLane().frameVis[it.key];
       drawEyeGlyph(lx + 7, ly, vis);
       ctx.save();
       ctx.setLineDash(it.dash || []);
@@ -177,7 +177,7 @@ import { nibsEl, renderStrip, stripEl } from "./strip.js";
      between the inputs and the result, not to imply morphing.
      ══════════════════════════════════════════════════════════ */
 
-  function drawField3d(n, sl = curSlot(), rect = G) {
+  function drawField3d(n, sl = curLane(), rect = G) {
     const AX = rect.x0, BX = rect.x1, AY = rect.y0, BY = rect.y1;
     const paneW = Math.max(20, BX - AX);
     const ph = Math.max(20, BY - AY);
@@ -391,7 +391,7 @@ import { nibsEl, renderStrip, stripEl } from "./strip.js";
         ctx.beginPath();
         ctx.rect(0, 0, mid, VH);
         ctx.clip();
-        drawField3d(n, S.slots[S.splitPair[0]], {
+        drawField3d(n, S.lanes[S.splitPair[0]], {
           x0: splitPad,
           x1: Math.max(splitPad + 20, mid - splitPad),
           y0: fieldY0,
@@ -403,7 +403,7 @@ import { nibsEl, renderStrip, stripEl } from "./strip.js";
         ctx.beginPath();
         ctx.rect(mid + 1, 0, VW - mid - 1, VH);
         ctx.clip();
-        drawField3d(n, S.slots[S.splitPair[1]], {
+        drawField3d(n, S.lanes[S.splitPair[1]], {
           x0: mid + 1 + splitPad,
           x1: Math.max(mid + 21 + splitPad, VW - splitPad),
           y0: fieldY0,
@@ -418,7 +418,7 @@ import { nibsEl, renderStrip, stripEl } from "./strip.js";
         ctx.lineTo(mid + 0.5, VH);
         ctx.stroke();
       } else {
-        drawField3d(n, curSlot(), { x0, x1, y0: fieldY0, y1 });
+        drawField3d(n, curLane(), { x0, x1, y0: fieldY0, y1 });
       }
       G.spA = null;
       G.spB = null;
@@ -430,41 +430,41 @@ import { nibsEl, renderStrip, stripEl } from "./strip.js";
       /* nothing further — the field is complete */
     } else if (!S.showB) {
       const spA = spFor(S.A);
-      G.spA = curSlot().frameVis.a ? spA : null;
+      G.spA = curLane().frameVis.a ? spA : null;
       G.spB = null;
-      if (curSlot().frameVis.a) paintCurve(spA, { width: 2.2, grad: true, glow: true });
-      handleSp = ek !== "z" && curSlot().frameVis.a ? spA : null;
+      if (curLane().frameVis.a) paintCurve(spA, { width: 2.2, grad: true, glow: true });
+      handleSp = ek !== "z" && curLane().frameVis.a ? spA : null;
     } else {
       const spA = spFor(S.A);
       const spB = spFor(S.B);
       const spZ = spFor(S.Z);
-      G.spA = curSlot().frameVis.a ? spA : null;
-      G.spB = curSlot().frameVis.b ? spB : null;
+      G.spA = curLane().frameVis.a ? spA : null;
+      G.spB = curLane().frameVis.b ? spB : null;
 
       /* The operand you can edit outweighs its mode-mate, so the
          instrument always shows you where your hands are. */
-      if (curSlot().frameVis.a) {
+      if (curLane().frameVis.a) {
         paintCurve(spA, {
           width: ek === "a" ? 1.8 : 1.3,
           dash: null,
           color: `rgba(52,211,153,${ek === "a" ? 0.82 : 0.3})`,
         });
       }
-      if (curSlot().frameVis.b) {
+      if (curLane().frameVis.b) {
         paintCurve(spB, {
           width: ek === "b" ? 1.8 : 1.3,
           dash: [6, 4],
           color: `rgba(52,211,153,${ek === "b" ? 0.82 : 0.3})`,
         });
       }
-      if (curSlot().frameVis.z) paintCurve(spZ, { width: 2.5, grad: true, glow: true });
+      if (curLane().frameVis.z) paintCurve(spZ, { width: 2.5, grad: true, glow: true });
 
       drawLegend(x1, y0 + 8);
       handleSp = ek === "z"
         ? null
         : ek === "b"
-          ? (curSlot().frameVis.b ? spB : null)
-          : (curSlot().frameVis.a ? spA : null);
+          ? (curLane().frameVis.b ? spB : null)
+          : (curLane().frameVis.a ? spA : null);
     }
 
     /* handles — only on the operand you can actually edit */

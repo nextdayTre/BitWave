@@ -7,17 +7,21 @@
  * Node tests. Enforced by tsconfig.core.json (`lib: ["ES2022"]`, `types: []`)
  * and by the review rule in PLAN.md §6.2.
  *
- * TERMINOLOGY (author decision, 2026-11-06)
+ * TERMINOLOGY (author decision, 2026-11-06; keyed by lane in D43)
  *   lane 1 / 2 / 3   the three parallel instruments (formerly slots A/B/C)
  *   frame A / Z / B  within a lane: operand A, derived Z, operand B
  * The old collision — lanes A/B/C vs operand frames A/B — is gone: lanes are
- * numbers, letters belong only to frames and operands.
+ * numbers, letters belong only to frames and operands. A lane's identity is its
+ * stable lane key ("1".."13" from `lanedefs.ts`), never its array position.
  */
 
-export type LaneKey = "1" | "2" | "3";
+import { DEFAULT_LANE_COUNT, laneDefs } from "./lanedefs.ts";
 
-/** Display order of the lanes. */
-export const LANE_KEYS: readonly LaneKey[] = ["1", "2", "3"];
+/** Stable lane identity: the name index as a string ("1".."13"). */
+export type LaneKey = string;
+
+/** Display order of the shipped lanes: the default three from `lanedefs.ts`. */
+export const LANE_KEYS: readonly LaneKey[] = laneDefs(DEFAULT_LANE_COUNT).map((def) => def.key);
 
 export type OperandKey = "a" | "b";
 export type FrameKey = OperandKey | "z";
@@ -31,7 +35,7 @@ export interface Register {
   bits: Uint8Array;
   /** Rendered nibble values (eased floats), MSB-first. Presentation only. */
   anim: number[];
-  /** Settled nibble values (integers), MSB-first. */
+  /** Settled nibble values (integers, MSB-first). */
   target: number[];
 }
 
@@ -51,6 +55,7 @@ export interface Lane {
   colB: number;
 }
 
+/** Lane map keyed by the stable lane key (never by array position). */
 export type LaneMap = Record<LaneKey, Lane>;
 
 export interface SourcePort {

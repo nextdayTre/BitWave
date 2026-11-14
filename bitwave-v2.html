@@ -220,6 +220,96 @@ function carryOrBorrow(aBits, bBits, N, op) {
 	const b = regToBig$1(bBits, N);
 	return op === "add" ? a + b >= 1n << BigInt(N) : a < b;
 }
+function checkIndex(index) {
+	if (!Number.isInteger(index) || index < 0 || index >= 13) throw new RangeError(`lane index must be an integer in [0, 12]; got ${String(index)}`);
+}
+function checkCount(count) {
+	if (!Number.isInteger(count) || count < 1 || count > 13) throw new RangeError(`lane count must be an integer in [1, 13]; got ${String(count)}`);
+}
+/** One lane's names, derived from its 0-based name index. Gaps are fine: `laneDef(3)` is G/H/Z4. */
+function laneDef(index) {
+	checkIndex(index);
+	return {
+		key: String(index + 1),
+		index,
+		a: String.fromCharCode(65 + 2 * index),
+		b: String.fromCharCode(66 + 2 * index),
+		z: `Z${index + 1}`
+	};
+}
+/** The first `count` lanes, in name order (names derive from the index, not array position). */
+function laneDefs(count = 3) {
+	checkCount(count);
+	const out = [];
+	for (let index = 0; index < count; index += 1) out.push(laneDef(index));
+	return out;
+}
+/** The 0-based name index for a lane key ("1".."13"); -1 when the key is not a valid name index. */
+function laneIndex(value) {
+	if (typeof value !== "string" || !/^(?:[1-9]|1[0-3])$/.test(value)) return -1;
+	return Number(value) - 1;
+}
+/** A lane key ("1".."13") from the numeric 1-based name index; null otherwise. */
+function laneKeyFromNumber$1(value) {
+	if (typeof value !== "number" || !Number.isInteger(value) || value < 1 || value > 13) return null;
+	return String(value);
+}
+/** Frame name table keyed by lane key, in lane order: `{ "1": {a:"A", b:"B", z:"Z1"}, … }`. */
+function frameNamesFor(count = 3) {
+	const out = {};
+	for (const def of laneDefs(count)) out[def.key] = {
+		a: def.a,
+		b: def.b,
+		z: def.z
+	};
+	return out;
+}
+/**
+* Resolve a global frame name (`A`–`Z`, `Z1`–`Z13`) to its lane/frame pair;
+* case-insensitive, and null for names outside the supplied lane count. The
+* returned `name` is the canonical uppercase form.
+*/
+function frameRefFromName$1(value, count = 3) {
+	if (typeof value !== "string" || value === "") return null;
+	const upper = value.toUpperCase();
+	for (const def of laneDefs(count)) {
+		if (upper === def.a) return {
+			lane: def.key,
+			frame: "a",
+			name: def.a
+		};
+		if (upper === def.b) return {
+			lane: def.key,
+			frame: "b",
+			name: def.b
+		};
+		if (upper === def.z) return {
+			lane: def.key,
+			frame: "z",
+			name: def.z
+		};
+	}
+	return null;
+}
+// src/core/types.ts
+/**
+* BitWave core types.
+*
+* This directory is intentionally DOM-free: nothing under src/core may import
+* `document`, `window`, `localStorage`, `requestAnimationFrame` or any browser
+* type. The engine must run in the browser, in a desktop shell and in plain
+* Node tests. Enforced by tsconfig.core.json (`lib: ["ES2022"]`, `types: []`)
+* and by the review rule in PLAN.md §6.2.
+*
+* TERMINOLOGY (author decision, 2026-11-06; keyed by lane in D43)
+*   lane 1 / 2 / 3   the three parallel instruments (formerly slots A/B/C)
+*   frame A / Z / B  within a lane: operand A, derived Z, operand B
+* The old collision — lanes A/B/C vs operand frames A/B — is gone: lanes are
+* numbers, letters belong only to frames and operands. A lane's identity is its
+* stable lane key ("1".."13" from `lanedefs.ts`), never its array position.
+*/
+/** Display order of the shipped lanes: the default three from `lanedefs.ts`. */
+var LANE_KEYS = laneDefs(3).map((def) => def.key);
 // src/state/instrument.ts
 /**
 * Instrument state — the single mutable tree every renderer reads.
@@ -229,47 +319,38 @@ function carryOrBorrow(aBits, bBits, N, op) {
 * rendering and input out of that module and put every write behind the store
 * transaction in `store.ts`.
 *
+* D43: lane identity is the stable lane key from `src/core/lanedefs.ts`
+* ("1".."13"), never an A/B/C slot letter or an array position. A lane key is
+* also the displayed lane number, so `S.laneKey` is "1" and frame names derive
+* from it (lane "1" is A/B/Z1). The defaults are the first
+* `DEFAULT_LANE_COUNT` (three) lane definitions, generated rather than written
+* out, so the dynamic-lanes pass can widen the tree without touching consumers.
+*
 * Registers hold `bits` (truth), `target` (settled nibbles) and `anim` (eased
 * nibbles) — the last two are presentation, the first is data. `N` is stored
 * once on the tree (DESIGN §10.10) and every helper here reads it.
 */
-var SLOT_KEYS = [
-	"A",
-	"B",
-	"C"
-];
 /** One register size domain for the whole instrument (DESIGN §10.10). */
 var SIZES = SIZES$1;
-var LANE_LABEL = {
-	A: "1",
-	B: "2",
-	C: "3"
+var FRAME_NAMES$1 = frameNamesFor(3);
+/**
+* The global display name of a lane/frame pair. Names derive from the lane key,
+* so a widened tree (lane "4") still names its frames G/H/Z4 even before its
+* entry reaches `FRAME_NAMES`; unknown keys fall back to the bare frame letter.
+*/
+var frameName$1 = (laneKey, frame) => {
+	const names = FRAME_NAMES$1[laneKey];
+	if (names) return names[frame];
+	const index = laneIndex(laneKey);
+	if (index >= 0) return laneDef(index)[frame];
+	return frame.toUpperCase();
 };
-var laneLabel = (key) => LANE_LABEL[key] ?? key;
-var FRAME_NAMES$1 = {
-	A: {
-		a: "A",
-		b: "B",
-		z: "Z1"
-	},
-	B: {
-		a: "C",
-		b: "D",
-		z: "Z2"
-	},
-	C: {
-		a: "E",
-		b: "F",
-		z: "Z3"
-	}
-};
-var frameName$1 = (laneKey, frame) => (FRAME_NAMES$1[laneKey] ?? FRAME_NAMES$1.A)[frame] ?? frame.toUpperCase();
 var makeReg = (N) => ({
 	bits: new Uint8Array(N),
 	anim: new Array(N >> 2).fill(0),
 	target: new Array(N >> 2).fill(0)
 });
-var makeSlot = (key, N, binop = "xor") => ({
+var makeLaneState = (key, N, binop = "xor") => ({
 	key,
 	A: makeReg(N),
 	B: makeReg(N),
@@ -293,16 +374,21 @@ var makeSlot = (key, N, binop = "xor") => ({
 	colA: -1,
 	colB: -1
 });
+var BOOT_BINOPS = [
+	"xor",
+	"xor",
+	"and"
+];
+var initialLanes = {};
+LANE_KEYS.forEach((key, index) => {
+	initialLanes[key] = makeLaneState(key, 64, BOOT_BINOPS[index] ?? "xor");
+});
 var S = {
 	N: 64,
-	slots: {
-		A: makeSlot("A", 64, "xor"),
-		B: makeSlot("B", 64, "xor"),
-		C: makeSlot("C", 64, "and")
-	},
-	slot: "A",
+	lanes: initialLanes,
+	laneKey: LANE_KEYS[0],
 	split3d: false,
-	splitPair: ["A", "B"],
+	splitPair: [LANE_KEYS[0], LANE_KEYS[1]],
 	activePane: 0,
 	copyArmed: false,
 	compact: false,
@@ -325,55 +411,56 @@ var S = {
 	hoverReg: null,
 	hoverJ: -1,
 	get A() {
-		return this.slots[this.slot].A;
+		return this.lanes[this.laneKey].A;
 	},
 	get B() {
-		return this.slots[this.slot].B;
+		return this.lanes[this.laneKey].B;
 	},
 	get Z() {
-		return this.slots[this.slot].Z;
+		return this.lanes[this.laneKey].Z;
 	},
 	get showB() {
-		return this.slots[this.slot].showB;
+		return this.lanes[this.laneKey].showB;
 	},
 	set showB(value) {
-		this.slots[this.slot].showB = value;
+		this.lanes[this.laneKey].showB = value;
 	},
 	get binop() {
-		return this.slots[this.slot].binop;
+		return this.lanes[this.laneKey].binop;
 	},
 	set binop(value) {
-		this.slots[this.slot].binop = value;
+		this.lanes[this.laneKey].binop = value;
 	},
 	get edit() {
-		return this.slots[this.slot].edit;
+		return this.lanes[this.laneKey].edit;
 	},
 	set edit(value) {
-		this.slots[this.slot].edit = value;
+		this.lanes[this.laneKey].edit = value;
 	},
 	get seededB() {
-		return this.slots[this.slot].seededB;
+		return this.lanes[this.laneKey].seededB;
 	},
 	set seededB(value) {
-		this.slots[this.slot].seededB = value;
+		this.lanes[this.laneKey].seededB = value;
 	}
 };
-var curSlot = () => S.slots[S.slot];
+/** The focused lane's state, keyed by `S.laneKey`. */
+var curLane = () => S.lanes[S.laneKey];
 var nibCount = () => S.N >> 2;
 /** Place value of nibble j (0 = MSB): exponent of two its LSB is worth. */
 var nibWeightPow = (j) => nibWeightPow$1(S.N, j);
-var regOf = (k, sl = curSlot()) => k === "b" ? sl.B : k === "z" ? sl.Z : sl.A;
-var editKey = (sl = curSlot()) => sl.showB && sl.edit === "b" ? "b" : "a";
-var editReg = (sl = curSlot()) => regOf(editKey(sl), sl);
+var regOf = (k, sl = curLane()) => k === "b" ? sl.B : k === "z" ? sl.Z : sl.A;
+var editKey = (sl = curLane()) => sl.showB && sl.edit === "b" ? "b" : "a";
+var editReg = (sl = curLane()) => regOf(editKey(sl), sl);
 /** Focus is what the strip and readouts show; edit is what a write targets.
 *  Z can be focused but never edited (DESIGN §10.8), so its strip is read-only. */
-var focusKey = (sl = curSlot()) => {
+var focusKey = (sl = curLane()) => {
 	if (sl.focus === "z") return "z";
 	return sl.showB && sl.focus === "b" ? "b" : "a";
 };
-var focusReg = (sl = curSlot()) => regOf(focusKey(sl), sl);
-var focusEditable = (sl = curSlot()) => focusKey(sl) !== "z";
-var frameLabel = (sl = curSlot(), frame = focusKey(sl)) => frameName$1(sl.key, frame);
+var focusReg = (sl = curLane()) => regOf(focusKey(sl), sl);
+var focusEditable = (sl = curLane()) => focusKey(sl) !== "z";
+var frameLabel = (sl = curLane(), frame = focusKey(sl)) => frameName$1(sl.key, frame);
 var nibAt = (bits, j) => nibAt$1(bits, S.N, j);
 var setNibAt = (bits, j, v) => setNibAt$1(bits, S.N, j, v);
 var nibValue = (r, j) => nibAt(r.bits, j);
@@ -382,7 +469,7 @@ function syncTarget(r, instant = false) {
 	syncTarget$1(r, S.N);
 	if (instant) r.anim = r.target.slice();
 }
-var isArith = (sl = curSlot()) => isArith$1(sl.binop);
+var isArith = (sl = curLane()) => isArith$1(sl.binop);
 var regToBig = (r) => regToBig$1(r.bits, S.N);
 // src/core/ops.ts
 /**
@@ -563,13 +650,6 @@ function unpair(sl) {
 	sl.edit = "a";
 	sl.focus = "a";
 }
-// src/core/types.ts
-/** Display order of the lanes. */
-var LANE_KEYS = [
-	"1",
-	"2",
-	"3"
-];
 // src/core/routing.ts
 var createRouting = () => ({
 	routes: [],
@@ -579,6 +659,12 @@ var portKey = (lane, frame) => `${lane}:${frame}`;
 var routeKey = (from, to) => `${from.lane}:${from.frame}>${to.lane}:${to.frame}`;
 var sameDest = (a, b) => a.lane === b.lane && a.frame === b.frame;
 var operandReg = (lane, frame) => frame === "a" ? lane.A : lane.B;
+/** A per-lane table keyed by the stable lane keys in display order. */
+function laneTable(make) {
+	const out = {};
+	for (const key of LANE_KEYS) out[key] = make();
+	return out;
+}
 function readPort(lanes, laneKey, frame) {
 	const lane = lanes[laneKey];
 	return frame === "z" ? lane.Z.bits : frame === "b" ? lane.B.bits : lane.A.bits;
@@ -648,16 +734,8 @@ function clearRoutes(routing, lanes) {
 * and route insertion order. A self-lane route (3·Z -> 3·A) is always delayed.
 */
 function markDelays(routing) {
-	const color = {
-		"1": 0,
-		"2": 0,
-		"3": 0
-	};
-	const edges = {
-		"1": [],
-		"2": [],
-		"3": []
-	};
+	const color = laneTable(() => 0);
+	const edges = laneTable(() => []);
 	for (const route of routing.routes) edges[route.from.lane].push(route);
 	const visit = (laneKey) => {
 		color[laneKey] = 1;
@@ -680,16 +758,8 @@ function markDelays(routing) {
 * markDelays() first (evaluateAll does).
 */
 function topoOrder(routing) {
-	const color = {
-		"1": 0,
-		"2": 0,
-		"3": 0
-	};
-	const edges = {
-		"1": [],
-		"2": [],
-		"3": []
-	};
+	const color = laneTable(() => 0);
+	const edges = laneTable(() => []);
 	for (const route of routing.routes) if (!route.delay) edges[route.from.lane].push(route.to.lane);
 	const order = [];
 	const visit = (laneKey) => {
@@ -1317,8 +1387,8 @@ function stopRecording() {
 function recordSnapshot() {
 	if (!S.record.on || S.drag >= 0) return false;
 	const frames = {};
-	for (const key of SLOT_KEYS) {
-		const sl = S.slots[key];
+	for (const key of LANE_KEYS) {
+		const sl = S.lanes[key];
 		const names = FRAME_NAMES$1[key];
 		frames[names.a] = toHex(sl.A.bits, S.N);
 		frames[names.b] = toHex(sl.B.bits, S.N);
@@ -1376,17 +1446,10 @@ function recordCsv() {
 * dependency order, apply expression operands (which see the previous record row
 * as `log.<frame>`), then derive every lane's Z. Call it on transaction
 * boundaries only (never per animation frame).
+*
+* D43: the core lane map is keyed by stable lane key ("1".."13"); the app tree
+* is keyed the same way, so no A/B/C slot lookup is needed anywhere.
 */
-var LANE_KEY$1 = {
-	A: "1",
-	B: "2",
-	C: "3"
-};
-var SLOT_BY_LANE = {
-	"1": "A",
-	"2": "B",
-	"3": "C"
-};
 /** Routes and parked bases for the instrument. Empty until the matrix lands. */
 var routing = createRouting();
 function laneView(sl, key) {
@@ -1404,24 +1467,18 @@ function laneView(sl, key) {
 		colB: sl.colB
 	};
 }
-/** Core lane map view over the app's slots: numeric keys, shared registers. */
+/** Core lane map view over the app tree: stable lane keys, shared registers. */
 function coreLanes() {
-	return {
-		"1": laneView(S.slots.A, "1"),
-		"2": laneView(S.slots.B, "2"),
-		"3": laneView(S.slots.C, "3")
-	};
+	const lanes = {};
+	for (const key of LANE_KEYS) lanes[key] = laneView(S.lanes[key], key);
+	return lanes;
 }
 /** Every current frame as a name -> BigInt map (for expression environments). */
 function frameWords(lanes, N) {
 	const out = {};
-	for (const laneKey of [
-		"1",
-		"2",
-		"3"
-	]) {
+	for (const laneKey of LANE_KEYS) {
 		const lane = lanes[laneKey];
-		const names = FRAME_NAMES$1[SLOT_BY_LANE[laneKey]];
+		const names = FRAME_NAMES$1[laneKey];
 		out[names.a] = regToBig$1(lane.A.bits, N);
 		out[names.b] = regToBig$1(lane.B.bits, N);
 		out[names.z] = regToBig$1(lane.Z.bits, N);
@@ -1430,7 +1487,7 @@ function frameWords(lanes, N) {
 }
 /** Apply one expression source, if present. Invalid text leaves the base bits. */
 function applyExpression(laneKey, frame, lanes, N) {
-	const sl = S.slots[SLOT_BY_LANE[laneKey]];
+	const sl = S.lanes[laneKey];
 	const text = sl.expressions[frame];
 	if (text.trim() === "") return;
 	const reg = frame === "a" ? sl.A : sl.B;
@@ -1445,11 +1502,10 @@ function applyExpression(laneKey, frame, lanes, N) {
 /** The single evaluation entry point for the app. Writes state only. */
 function evaluate(instant = false) {
 	evaluateAll(routing, coreLanes(), S.N, { applyExpression });
-	for (const key of SLOT_KEYS) {
-		const sl = S.slots[key];
-		const lane = LANE_KEY$1[key];
-		if (isDriven(routing, lane, "a") || sl.expressions.a.trim() !== "") syncTarget(sl.A, instant);
-		if (isDriven(routing, lane, "b") || sl.expressions.b.trim() !== "") syncTarget(sl.B, instant);
+	for (const key of LANE_KEYS) {
+		const sl = S.lanes[key];
+		if (isDriven(routing, key, "a") || sl.expressions.a.trim() !== "") syncTarget(sl.A, instant);
+		if (isDriven(routing, key, "b") || sl.expressions.b.trim() !== "") syncTarget(sl.B, instant);
 		syncTarget(sl.Z, instant);
 	}
 }
@@ -1498,32 +1554,21 @@ var DEMO = {
 * restores the pre-patch base (DESIGN §10.8, D2).
 *
 * Names follow D15: the six operand frames are A–F; source frames are A–F plus
-* Z1–Z3. The assignment is the label: a data-bound row reads `A · sine`.
+* Z1–Z3. The assignment is the label: a data-bound row reads `A · sine`. D43:
+* a row is identified by its lane key, and names derive from that key.
 */
-var LANE_KEY = {
-	A: "1",
-	B: "2",
-	C: "3"
-};
-var LANE_BY_KEY = {
-	"1": "A",
-	"2": "B",
-	"3": "C"
-};
-var laneKeyOf = (slotKey) => LANE_KEY[slotKey];
-var slotKeyOf = (lane) => LANE_BY_KEY[lane];
 var columnIndexOf = (sl, operand) => operand === "a" ? sl.colA : sl.colB;
 var expressionOf = (sl, operand) => operand === "a" ? sl.expressions.a : sl.expressions.b;
 var hasExpression = (sl, operand) => expressionOf(sl, operand).trim() !== "";
 var destinationOf = (sl, operand) => ({
-	lane: laneKeyOf(sl.key),
+	lane: sl.key,
 	frame: operand
 });
-var routeFor = (sl, operand) => driverOf(routing, laneKeyOf(sl.key), operand);
+var routeFor = (sl, operand) => driverOf(routing, sl.key, operand);
 /** The global name of the frame driving this input, or null when local. */
 function driverName(sl, operand) {
 	const route = routeFor(sl, operand);
-	if (route) return frameName$1(slotKeyOf(route.from.lane), route.from.frame);
+	if (route) return frameName$1(route.from.lane, route.from.frame);
 	return hasExpression(sl, operand) ? "an expression" : null;
 }
 function describeInput(sl, operand) {
@@ -1537,7 +1582,7 @@ function describeInput(sl, operand) {
 			kind: "frame",
 			lane: route.from.lane,
 			frame: route.from.frame,
-			name: frameName$1(slotKeyOf(route.from.lane), route.from.frame)
+			name: frameName$1(route.from.lane, route.from.frame)
 		};
 		state = route.delay ? "z⁻¹" : "1:1";
 	} else if (expression !== "") {
@@ -1556,7 +1601,7 @@ function describeInput(sl, operand) {
 	}
 	return {
 		lane: sl.key,
-		laneNumber: Number(sl.key === "A" ? 1 : sl.key === "B" ? 2 : 3),
+		laneNumber: Number(sl.key),
 		operand,
 		frame: frameName$1(sl.key, operand),
 		source,
@@ -1566,11 +1611,11 @@ function describeInput(sl, operand) {
 }
 function listInputs() {
 	const out = [];
-	for (const key of SLOT_KEYS) for (const operand of ["a", "b"]) out.push(describeInput(S.slots[key], operand));
+	for (const key of LANE_KEYS) for (const operand of ["a", "b"]) out.push(describeInput(S.lanes[key], operand));
 	return out;
 }
 /** Is the focused frame an input that a route or expression drives? (editing is locked) */
-function isFocusDriven(sl = curSlot()) {
+function isFocusDriven(sl = curLane()) {
 	const key = focusKey(sl);
 	return key !== "z" && (Boolean(routeFor(sl, key)) || hasExpression(sl, key));
 }
@@ -1583,20 +1628,16 @@ function inputLabel(binding) {
 }
 /** All frame outputs a given input may read, excluding its own frame. */
 function availableSources(sl, operand) {
-	const destLane = laneKeyOf(sl.key);
+	const destLane = sl.key;
 	const out = [];
-	for (const lane of [
-		"1",
-		"2",
-		"3"
-	]) for (const frame of [
+	for (const lane of LANE_KEYS) for (const frame of [
 		"a",
 		"b",
 		"z"
 	]) out.push({
 		lane,
 		frame,
-		name: frameName$1(slotKeyOf(lane), frame),
+		name: frameName$1(lane, frame),
 		disabled: lane === destLane && frame === operand
 	});
 	return out;
@@ -1639,10 +1680,10 @@ function bindExpression(sl, operand, text) {
 /** Clear every route and column binding (used by a fresh CSV import). */
 function resetBindings() {
 	clearRoutes(routing, coreLanes());
-	for (const key of SLOT_KEYS) {
-		S.slots[key].colA = -1;
-		S.slots[key].colB = -1;
-		S.slots[key].expressions = {
+	for (const key of LANE_KEYS) {
+		S.lanes[key].colA = -1;
+		S.lanes[key].colB = -1;
+		S.lanes[key].expressions = {
 			a: "",
 			b: ""
 		};
@@ -1654,7 +1695,7 @@ function remapParkedBases(oldN, newN) {
 }
 /** Keep a driven input's parked base in step when its local base is copied. */
 function updateParkedBase(sl, operand, bits) {
-	routing.parked.set(portKey(laneKeyOf(sl.key), operand), bits.slice());
+	routing.parked.set(portKey(sl.key, operand), bits.slice());
 }
 // src/core/spline.ts
 function buildSpline(xs, ys) {
@@ -1844,9 +1885,9 @@ var PAIRS = [
 ];
 var binFn = (a, b) => S.binop === "and" ? a & b : S.binop === "or" ? a | b : a ^ b;
 function renderTruth() {
-	const fa = frameName$1(S.slot, "a");
-	const fb = frameName$1(S.slot, "b");
-	const fz = frameName$1(S.slot, "z");
+	const fa = frameName$1(S.laneKey, "a");
+	const fb = frameName$1(S.laneKey, "b");
+	const fz = frameName$1(S.laneKey, "z");
 	if (isArith()) {
 		const a = regToBig(S.A);
 		const b = regToBig(S.B);
@@ -1881,7 +1922,7 @@ function renderFrameLens() {
 	const focused = focusKey();
 	for (const [frame, el] of frames) {
 		if (!el) continue;
-		const name = frameName$1(S.slot, frame);
+		const name = frameName$1(S.laneKey, frame);
 		el.textContent = name;
 		el.setAttribute("aria-pressed", String(frame === focused));
 		if (frame === "z") {
@@ -1897,12 +1938,12 @@ function updateReadouts(withDecimal = true) {
 	metaEl.classList.toggle("ab", S.showB);
 	stripEl.dataset.edit = frameLabel();
 	if (slotBadgeEl) {
-		slotBadgeEl.hidden = !S.view3d && S.slot === "A";
-		slotBadgeEl.textContent = `lane ${laneLabel(S.slot)}`;
+		slotBadgeEl.hidden = !S.view3d && S.laneKey === "1";
+		slotBadgeEl.textContent = `lane ${S.laneKey}`;
 	}
 	if (S.showB) {
 		renderFrameLens();
-		popEl.previousElementSibling.textContent = `pop ${frameName$1(S.slot, "z")}`;
+		popEl.previousElementSibling.textContent = `pop ${frameName$1(S.laneKey, "z")}`;
 		hexAEl.textContent = toHexOf(S.A);
 		hexBEl.textContent = toHexOf(S.B);
 		hexZEl.textContent = toHexOf(S.Z);
@@ -1927,12 +1968,12 @@ function updateReadouts(withDecimal = true) {
 	for (let i = 0; i < S.N; i++) pop += S.Z.bits[i];
 	const alt = [
 		S.view3d ? "3-D depth field" : "2-D waveform",
-		`lane ${laneLabel(S.slot)}`,
-		`${frameName$1(S.slot, "a")} ${toHexOf(S.A)}`
+		`lane ${S.laneKey}`,
+		`${frameName$1(S.laneKey, "a")} ${toHexOf(S.A)}`
 	];
 	if (S.showB) {
-		alt.push(`${frameName$1(S.slot, "b")} ${toHexOf(S.B)}`);
-		alt.push(`${frameName$1(S.slot, "z")} ${toHexOf(S.Z)}`);
+		alt.push(`${frameName$1(S.laneKey, "b")} ${toHexOf(S.B)}`);
+		alt.push(`${frameName$1(S.laneKey, "z")} ${toHexOf(S.Z)}`);
 		alt.push(`popcount ${pop}`);
 	}
 	alt.push(`editing ${frameLabel()}`);
@@ -1955,7 +1996,7 @@ function updateReadouts(withDecimal = true) {
 * silently doing nothing.
 */
 function createFrameNavigator(deps) {
-	const { store, selectSlot, enableBOnSlot, syncEditUi, syncViewUi, renderStrip, updateReadouts, unpairB } = deps;
+	const { store, selectLane, enableBOnLane, syncEditUi, syncViewUi, renderStrip, updateReadouts, unpairB } = deps;
 	const framesBtn = document.getElementById("framesBtn");
 	const stageEl = document.querySelector(".stage");
 	const framesView = document.getElementById("framesView");
@@ -2000,10 +2041,10 @@ function createFrameNavigator(deps) {
 	const frameReg = (sl, frame) => frame === "a" ? sl.A : frame === "b" ? sl.B : sl.Z;
 	const frameSub = (frame) => frame === "z" ? "derived" : "operand";
 	function frameVisLabel(laneKey, frame) {
-		return `${S.slots[laneKey].frameVis[frame] ? "Hide" : "Show"} frame ${frameName$1(laneKey, frame)} in the 2D view`;
+		return `${S.lanes[laneKey].frameVis[frame] ? "Hide" : "Show"} frame ${frameName$1(laneKey, frame)} in the 2D view`;
 	}
 	function makeEyeButton(laneKey, frame) {
-		const sl = S.slots[laneKey];
+		const sl = S.lanes[laneKey];
 		const btn = document.createElement("button");
 		btn.type = "button";
 		btn.className = "eye-btn" + (sl.frameVis[frame] ? "" : " is-hidden");
@@ -2031,8 +2072,8 @@ function createFrameNavigator(deps) {
 		btn.appendChild(svg);
 		btn.addEventListener("click", (ev) => {
 			ev.stopPropagation();
-			const next = !S.slots[laneKey].frameVis[frame];
-			store.patch(() => toggleFrameVisibility(S.slots[laneKey], frame));
+			const next = !S.lanes[laneKey].frameVis[frame];
+			store.patch(() => toggleFrameVisibility(S.lanes[laneKey], frame));
 			btn.setAttribute("aria-pressed", String(next));
 			btn.classList.toggle("is-hidden", !next);
 			btn.setAttribute("aria-label", frameVisLabel(laneKey, frame));
@@ -2042,10 +2083,10 @@ function createFrameNavigator(deps) {
 		return btn;
 	}
 	function buildCard(laneKey, frame) {
-		const sl = S.slots[laneKey];
+		const sl = S.lanes[laneKey];
 		const reg = frameReg(sl, frame);
 		const name = frameName$1(laneKey, frame);
-		const active = laneKey === S.slot && focusKey(sl) === frame;
+		const active = laneKey === S.laneKey && focusKey(sl) === frame;
 		const visible = sl.frameVis[frame];
 		const hex = toHexOf(reg);
 		const wrap = document.createElement("div");
@@ -2056,8 +2097,8 @@ function createFrameNavigator(deps) {
 		btn.type = "button";
 		btn.className = "frame-card";
 		btn.setAttribute("aria-pressed", String(active));
-		btn.setAttribute("aria-label", `Lane ${laneLabel(laneKey)} · ${name} ${frameSub(frame)} · ${hex}`);
-		btn.title = `Lane ${laneLabel(laneKey)} · ${name} (${frameSub(frame)}) · ${hex}`;
+		btn.setAttribute("aria-label", `Lane ${laneKey} · ${name} ${frameSub(frame)} · ${hex}`);
+		btn.title = `Lane ${laneKey} · ${name} (${frameSub(frame)}) · ${hex}`;
 		const glyph = document.createElement("span");
 		glyph.className = "frame-glyph";
 		glyph.textContent = name;
@@ -2077,14 +2118,14 @@ function createFrameNavigator(deps) {
 		btn.type = "button";
 		btn.className = "lane-btn";
 		btn.dataset.lane = laneKey;
-		const active = laneKey === S.slot;
+		const active = laneKey === S.laneKey;
 		btn.setAttribute("aria-pressed", String(active));
-		btn.textContent = `LANE ${laneLabel(laneKey)}`;
-		btn.title = `Focus lane ${laneLabel(laneKey)}`;
+		btn.textContent = `LANE ${laneKey}`;
+		btn.title = `Focus lane ${laneKey}`;
 		btn.addEventListener("click", () => {
 			S.copyArmed = false;
 			store.patch(() => {
-				if (S.slot !== laneKey) selectSlot(laneKey);
+				if (S.laneKey !== laneKey) selectLane(laneKey);
 				syncViewUi();
 				syncEditUi();
 				renderStrip();
@@ -2093,7 +2134,7 @@ function createFrameNavigator(deps) {
 			renderGrid();
 		});
 		head.appendChild(btn);
-		const sl = S.slots[laneKey];
+		const sl = S.lanes[laneKey];
 		if (active && sl.showB && !S.view3d) {
 			const unpairBtn = document.createElement("button");
 			unpairBtn.type = "button";
@@ -2110,7 +2151,7 @@ function createFrameNavigator(deps) {
 		col.className = "lane-col";
 		col.dataset.lane = laneKey;
 		col.setAttribute("role", "group");
-		col.setAttribute("aria-label", `Lane ${laneLabel(laneKey)}`);
+		col.setAttribute("aria-label", `Lane ${laneKey}`);
 		col.appendChild(buildLaneHead(laneKey));
 		for (const frame of FRAME_ORDER) col.appendChild(buildCard(laneKey, frame));
 		return col;
@@ -2148,11 +2189,11 @@ function createFrameNavigator(deps) {
 			eye: active.classList.contains("eye-btn")
 		} : null;
 		framesGrid.textContent = "";
-		for (const laneKey of SLOT_KEYS) framesGrid.appendChild(buildLaneColumn(laneKey));
+		for (const laneKey of LANE_KEYS) framesGrid.appendChild(buildLaneColumn(laneKey));
 		framesGrid.appendChild(buildAddColumn());
-		const fa = frameName$1(curSlot().key, "a");
-		const fb = frameName$1(curSlot().key, "b");
-		const fz = frameName$1(curSlot().key, "z");
+		const fa = frameName$1(curLane().key, "a");
+		const fb = frameName$1(curLane().key, "b");
+		const fz = frameName$1(curLane().key, "z");
 		framesLegend.textContent = `${fa} solid · ${fz} glow · ${fb} dashed`;
 		updateScrollbar();
 		if (keep) {
@@ -2186,8 +2227,8 @@ function createFrameNavigator(deps) {
 		});
 	}
 	function focusActiveCard() {
-		const selector = `[data-lane="${S.slot}"] .frame-card`;
-		const target = framesGrid.querySelector(`[data-lane="${S.slot}"][data-frame="${focusKey(curSlot())}"] .frame-card`) || framesGrid.querySelector(selector);
+		const selector = `[data-lane="${S.laneKey}"] .frame-card`;
+		const target = framesGrid.querySelector(`[data-lane="${S.laneKey}"][data-frame="${focusKey(curLane())}"] .frame-card`) || framesGrid.querySelector(selector);
 		if (target) target.focus({ preventScroll: true });
 	}
 	function applyViewDom(open) {
@@ -2222,10 +2263,10 @@ function createFrameNavigator(deps) {
 	function selectFrame(laneKey, frame) {
 		S.copyArmed = false;
 		store.patch(() => {
-			if (!S.slots[laneKey].frameVis[frame]) toggleFrameVisibility(S.slots[laneKey], frame);
-			if (S.slot !== laneKey) selectSlot(laneKey);
-			const sl = curSlot();
-			if (frame !== "a" && !sl.showB) enableBOnSlot(sl);
+			if (!S.lanes[laneKey].frameVis[frame]) toggleFrameVisibility(S.lanes[laneKey], frame);
+			if (S.laneKey !== laneKey) selectLane(laneKey);
+			const sl = curLane();
+			if (frame !== "a" && !sl.showB) enableBOnLane(sl);
 			setFocus(sl, frame);
 			S.hoverReg = null;
 			S.hoverJ = -1;
@@ -2240,10 +2281,10 @@ function createFrameNavigator(deps) {
 		S.copyArmed = false;
 		store.patch(() => {
 			S.framesView = false;
-			if (!S.slots[laneKey].frameVis[frame]) toggleFrameVisibility(S.slots[laneKey], frame);
-			if (S.slot !== laneKey) selectSlot(laneKey);
-			const sl = curSlot();
-			if (frame !== "a" && !sl.showB) enableBOnSlot(sl);
+			if (!S.lanes[laneKey].frameVis[frame]) toggleFrameVisibility(S.lanes[laneKey], frame);
+			if (S.laneKey !== laneKey) selectLane(laneKey);
+			const sl = curLane();
+			if (frame !== "a" && !sl.showB) enableBOnLane(sl);
 			setFocus(sl, frame);
 			S.hoverReg = null;
 			S.hoverJ = -1;
@@ -2276,6 +2317,11 @@ function createFrameNavigator(deps) {
 	store.subscribe(() => {
 		if (S.framesView) renderGrid();
 	});
+	function setFrameVis(laneKey, frame, visible) {
+		const sl = S.lanes[laneKey];
+		if (!sl || sl.frameVis[frame] === visible) return;
+		store.patch(() => toggleFrameVisibility(sl, frame));
+	}
 	return {
 		framesBtn,
 		isOpen,
@@ -2283,6 +2329,7 @@ function createFrameNavigator(deps) {
 		render: () => renderGrid(),
 		selectFrame,
 		chooseCard,
+		setFrameVis,
 		focusButton: () => S.framesView ? document.getElementById("lanesBtn")?.focus() : framesBtn.focus()
 	};
 }
@@ -2295,9 +2342,12 @@ function createFrameNavigator(deps) {
 * and `LANE 1 · A ⊕ B → Z1`; in 3-D it adds the per-pane focus dots and, in
 * split mode, a second pane head. While the frames view is open it shrinks to
 * `Lanes` (D42). Reads the state tree; writes only this DOM.
+*
+* D43: each lane button carries its stable lane key (`data-lane="1"`), which is
+* also its displayed number.
 */
 function createStageBar(deps) {
-	const { element, framesBtn, selectSlot, selectSlotInPane, setSplitMode, focusSplitPane, slotExprText, closeFrames } = deps;
+	const { element, framesBtn, selectLane, selectLaneInPane, setSplitMode, focusSplitPane, laneExprText, closeFrames } = deps;
 	let stageDom = null;
 	function buildStageBar() {
 		const keep = [...element.children];
@@ -2315,39 +2365,39 @@ function createStageBar(deps) {
 			seg.setAttribute("role", "radiogroup");
 			seg.setAttribute("aria-label", `Lane${paneIdx === 1 ? " (second pane)" : ""}`);
 			const btns = {};
-			for (const k of SLOT_KEYS) {
+			for (const k of LANE_KEYS) {
 				const b = document.createElement("button");
 				b.type = "button";
 				b.className = "op";
-				b.dataset.slot = k;
+				b.dataset.lane = k;
 				b.setAttribute("role", "radio");
 				b.setAttribute("aria-checked", "false");
 				b.setAttribute("tabindex", "-1");
-				b.textContent = laneLabel(k);
-				b.title = `Lane ${laneLabel(k)}`;
-				b.setAttribute("aria-label", `Lane ${laneLabel(k)}`);
+				b.textContent = k;
+				b.title = `Lane ${k}`;
+				b.setAttribute("aria-label", `Lane ${k}`);
 				b.addEventListener("click", (ev) => {
 					ev.stopPropagation();
-					if (S.split3d) selectSlotInPane(paneIdx, k);
-					else selectSlot(k);
+					if (S.split3d) selectLaneInPane(paneIdx, k);
+					else selectLane(k);
 				});
 				seg.appendChild(b);
 				btns[k] = b;
 			}
 			seg.addEventListener("keydown", (e) => {
-				const current = S.split3d ? paneIdx === 0 ? S.splitPair[0] : S.splitPair[1] : S.slot;
-				let next = SLOT_KEYS.indexOf(current);
-				if (e.key === "ArrowLeft" || e.key === "ArrowUp") next = (next + SLOT_KEYS.length - 1) % SLOT_KEYS.length;
-				else if (e.key === "ArrowRight" || e.key === "ArrowDown") next = (next + 1) % SLOT_KEYS.length;
+				const current = S.split3d ? paneIdx === 0 ? S.splitPair[0] : S.splitPair[1] : S.laneKey;
+				let next = LANE_KEYS.indexOf(current);
+				if (e.key === "ArrowLeft" || e.key === "ArrowUp") next = (next + LANE_KEYS.length - 1) % LANE_KEYS.length;
+				else if (e.key === "ArrowRight" || e.key === "ArrowDown") next = (next + 1) % LANE_KEYS.length;
 				else if (e.key === "Home") next = 0;
-				else if (e.key === "End") next = SLOT_KEYS.length - 1;
+				else if (e.key === "End") next = LANE_KEYS.length - 1;
 				else return;
 				e.preventDefault();
 				e.stopPropagation();
-				const chosen = SLOT_KEYS[next];
-				if (S.split3d) selectSlotInPane(paneIdx, chosen);
-				else selectSlot(chosen);
-				seg.querySelector(`[data-slot="${chosen}"]`)?.focus();
+				const chosen = LANE_KEYS[next];
+				if (S.split3d) selectLaneInPane(paneIdx, chosen);
+				else selectLane(chosen);
+				seg.querySelector(`[data-lane="${chosen}"]`)?.focus();
 			});
 			wrap.appendChild(seg);
 			if (paneIdx === 0 && framesBtn) wrap.appendChild(framesBtn);
@@ -2396,7 +2446,7 @@ function createStageBar(deps) {
 		for (const node of keep) if (node !== framesBtn && node.parentNode !== element) node.remove();
 	}
 	function syncRadio(btns, active) {
-		for (const k of SLOT_KEYS) {
+		for (const k of LANE_KEYS) {
 			const on = k === active;
 			btns[k].classList.toggle("on", on);
 			btns[k].setAttribute("aria-checked", String(on));
@@ -2428,13 +2478,13 @@ function createStageBar(deps) {
 			p0.spBtn.setAttribute("aria-pressed", "false");
 			p0.spBtn.classList.remove("on");
 			setSplitEnabled(p0.spBtn, false);
-			syncRadio(p0.btns, S.slot);
-			p0.expr.textContent = slotExprText(curSlot(), true);
+			syncRadio(p0.btns, S.laneKey);
+			p0.expr.textContent = laneExprText(curLane(), true);
 			p1.wrap.hidden = true;
 			return;
 		}
 		if (!S.split3d) {
-			const sl = curSlot();
+			const sl = curLane();
 			p0.dot.hidden = true;
 			p0.wrap.classList.add("focused");
 			p0.wrap.hidden = false;
@@ -2442,8 +2492,8 @@ function createStageBar(deps) {
 			p0.spBtn.setAttribute("aria-pressed", "false");
 			p0.spBtn.classList.remove("on");
 			setSplitEnabled(p0.spBtn, true);
-			syncRadio(p0.btns, S.slot);
-			p0.expr.textContent = slotExprText(sl, true);
+			syncRadio(p0.btns, S.laneKey);
+			p0.expr.textContent = laneExprText(sl, true);
 			p1.wrap.hidden = true;
 		} else {
 			const k0 = S.splitPair[0], k1 = S.splitPair[1];
@@ -2452,7 +2502,7 @@ function createStageBar(deps) {
 			p0.spBtn.hidden = true;
 			p0.wrap.classList.toggle("focused", S.activePane === 0);
 			syncRadio(p0.btns, k0);
-			p0.expr.textContent = slotExprText(S.slots[k0], false);
+			p0.expr.textContent = laneExprText(S.lanes[k0], false);
 			p1.wrap.hidden = false;
 			p1.dot.hidden = false;
 			p1.spBtn.hidden = false;
@@ -2461,7 +2511,7 @@ function createStageBar(deps) {
 			setSplitEnabled(p1.spBtn, true);
 			p1.wrap.classList.toggle("focused", S.activePane === 1);
 			syncRadio(p1.btns, k1);
-			p1.expr.textContent = slotExprText(S.slots[k1], false);
+			p1.expr.textContent = laneExprText(S.lanes[k1], false);
 		}
 	}
 	return {
@@ -2474,10 +2524,11 @@ function createStageBar(deps) {
 * Keyboard map and file drop — global shortcuts for the instrument.
 *
 * Moved out of main.js in F2. Escape closes the navigator or copy mode,
-* Alt+1/2/3 select a lane, Alt+S toggles split; arrows step the dataset.
+* Alt+1/2/3 select a lane (by its stable lane key), Alt+S toggles split;
+* arrows step the dataset.
 */
 function attachKeyboard(deps) {
-	const { frameNav, syncViewUi, selectSlot, setSplitMode, applyExample, loadCSV, copyMenu, onDropError, S, DEMO } = deps;
+	const { frameNav, syncViewUi, selectLane, setSplitMode, applyExample, loadCSV, copyMenu, onDropError, S, DEMO } = deps;
 	document.addEventListener("keydown", (e) => {
 		if (e.key === "Escape" && frameNav.isOpen()) {
 			frameNav.close(true);
@@ -2491,19 +2542,19 @@ function attachKeyboard(deps) {
 		}
 		if (e.altKey && !e.ctrlKey && !e.metaKey) {
 			if (e.key === "1" || e.code === "Digit1") {
-				selectSlot("A");
+				selectLane("1");
 				if (frameNav.isOpen()) frameNav.render();
 				e.preventDefault();
 				return;
 			}
 			if (e.key === "2" || e.code === "Digit2") {
-				selectSlot("B");
+				selectLane("2");
 				if (frameNav.isOpen()) frameNav.render();
 				e.preventDefault();
 				return;
 			}
 			if (e.key === "3" || e.code === "Digit3") {
-				selectSlot("C");
+				selectLane("3");
 				if (frameNav.isOpen()) frameNav.render();
 				e.preventDefault();
 				return;
@@ -2558,7 +2609,7 @@ function createControls(deps) {
 	const hexEntry = document.getElementById("hexEntry");
 	const editTarget = document.getElementById("editTarget");
 	const bState = document.getElementById("bState");
-	function lfoBConfig(v = curSlot().lfoB) {
+	function lfoBConfig(v = curLane().lfoB) {
 		const frac = v === "q" ? .25 : v === "h" ? .5 : 0;
 		return {
 			opp: v === "opp",
@@ -2570,8 +2621,8 @@ function createControls(deps) {
 		if (S.lfo.mode === "csvStep" && (!DEMO.rows || !DEMO.rows.length)) return;
 		store.patch(() => {
 			const base = {};
-			for (const k of SLOT_KEYS) {
-				const sl = S.slots[k];
+			for (const k of LANE_KEYS) {
+				const sl = S.lanes[k];
 				base[k] = {
 					a: sl.A.bits.slice(),
 					b: sl.B.bits.slice()
@@ -2592,8 +2643,8 @@ function createControls(deps) {
 			const snap = S.lfo.base;
 			if (snap) {
 				if (S.lfo.mode !== "csvStep") {
-					for (const k of SLOT_KEYS) {
-						const sl = S.slots[k];
+					for (const k of LANE_KEYS) {
+						const sl = S.lanes[k];
 						if (snap[k]) {
 							if (!isInputDriven(sl, "a")) sl.A.bits = snap[k].a.slice();
 							if (!isInputDriven(sl, "b")) sl.B.bits = snap[k].b.slice();
@@ -2640,8 +2691,8 @@ function createControls(deps) {
 				const p = t % (2 * maxSteps);
 				shift = (p <= maxSteps ? p : 2 * maxSteps - p) * k;
 			}
-			for (const sk of SLOT_KEYS) {
-				const sl = S.slots[sk];
+			for (const sk of LANE_KEYS) {
+				const sl = S.lanes[sk];
 				const sb = base[sk];
 				if (!sb) continue;
 				if (!isInputDriven(sl, "a")) sweepInto(sl.A, sb.a, shift, rotate);
@@ -2673,7 +2724,7 @@ function createControls(deps) {
 	});
 	lfoBSel.addEventListener("change", () => {
 		store.patch(() => {
-			curSlot().lfoB = lfoBSel.value;
+			curLane().lfoB = lfoBSel.value;
 		});
 	});
 	function applyTable(name, reg = editReg()) {
@@ -2723,8 +2774,8 @@ function createControls(deps) {
 		hexEntry.setAttribute("aria-label", `hex value for ${frameLabel()}`);
 		if (document.activeElement !== hexEntry) hexEntry.value = toHexOf(editable ? editReg() : focusReg());
 		stripEl.dataset.edit = frameLabel();
-		if (hintEl) hintEl.textContent = !focusEditable() ? `${frameLabel()} is derived — read-only` : driven ? `${frameLabel()} is driven by ${driverName(curSlot(), focusKey())} — unplug in sources` : "drag a nibble · click a bit · Tab to edit";
-		lfoBSel.value = curSlot().lfoB;
+		if (hintEl) hintEl.textContent = !focusEditable() ? `${frameLabel()} is derived — read-only` : driven ? `${frameLabel()} is driven by ${driverName(curLane(), focusKey())} — unplug in sources` : "drag a nibble · click a bit · Tab to edit";
+		lfoBSel.value = curLane().lfoB;
 		lfoBSel.hidden = S.lfo.mode === "csvStep" || !S.view3d && !S.showB;
 	}
 	const sizeInput = document.getElementById("size");
@@ -2973,7 +3024,7 @@ function logCurrentObservation() {
 	}
 	const obs = {
 		timestamp: (/* @__PURE__ */ new Date()).toISOString(),
-		view: laneLabel(S.slot),
+		view: S.laneKey,
 		index: DEMO.i + 1,
 		name: exName,
 		width_bits: S.N,
@@ -3035,8 +3086,8 @@ function createCsvImport(deps) {
 	}
 	function fitToMappedColumns() {
 		let maxBits = 8;
-		for (const k of SLOT_KEYS) {
-			const sl = S.slots[k];
+		for (const k of LANE_KEYS) {
+			const sl = S.lanes[k];
 			if (sl.colA >= 0) maxBits = Math.max(maxBits, columnWidth(DEMO.rows, sl.colA));
 			if (sl.colB >= 0) maxBits = Math.max(maxBits, columnWidth(DEMO.rows, sl.colB));
 		}
@@ -3058,8 +3109,8 @@ function createCsvImport(deps) {
 			const n = DEMO.rows.length;
 			DEMO.i = (idx % n + n) % n;
 			const row = DEMO.rows[DEMO.i];
-			for (const k of SLOT_KEYS) {
-				const sl = S.slots[k];
+			for (const k of LANE_KEYS) {
+				const sl = S.lanes[k];
 				if (sl.colA >= 0 && !isInputDriven(sl, "a")) {
 					const a = cellToBits(row[sl.colA], columnMode(DEMO.rows, sl.colA));
 					if (a) writeBitsInto(sl.A, a);
@@ -3135,7 +3186,7 @@ function createCsvImport(deps) {
 		}
 		if (!payload.length) payload = [primary];
 		const ordered = [primary, ...payload.filter((c) => c !== primary)];
-		const slA = S.slots.A, slB = S.slots.B, slC = S.slots.C;
+		const slA = S.lanes["1"], slB = S.lanes["2"], slC = S.lanes["3"];
 		slA.colA = primary;
 		slA.colB = (S.view3d || slA.showB) && ordered.length >= 2 ? ordered[1] : -1;
 		if (ordered.length >= 4) {
@@ -3252,7 +3303,7 @@ function createSourceTable(deps) {
 	}
 	function commitExpression(binding, index, input) {
 		if (committing) return;
-		const sl = S.slots[binding.lane];
+		const sl = S.lanes[binding.lane];
 		const key = draftKey(binding);
 		const text = input.value.trim();
 		const previous = expressionOf(sl, binding.operand);
@@ -3322,7 +3373,7 @@ function createSourceTable(deps) {
 			} else if (event.key === "Escape") {
 				event.preventDefault();
 				event.stopPropagation();
-				input.value = expressionOf(S.slots[binding.lane], binding.operand);
+				input.value = expressionOf(S.lanes[binding.lane], binding.operand);
 				input.classList.remove("invalid");
 				input.removeAttribute("aria-invalid");
 			}
@@ -3338,7 +3389,7 @@ function createSourceTable(deps) {
 		return input;
 	}
 	function buildRow(binding, index) {
-		const sl = S.slots[binding.lane];
+		const sl = S.lanes[binding.lane];
 		const key = draftKey(binding);
 		const tr = document.createElement("tr");
 		const dest = document.createElement("td");
@@ -3597,10 +3648,10 @@ function createLiveStatus(store) {
 		const n = nibCount();
 		let hex = "";
 		for (let j = 0; j < n; j++) hex += nibValue(r, j).toString(16).toUpperCase();
-		const sl = curSlot();
+		const sl = curLane();
 		let pop = 0;
 		for (let i = 0; i < S.N; i++) pop += sl.Z.bits[i];
-		return `lane ${laneLabel(S.slot)} · ${frameLabel()} = ${hex} · ${frameName$1(S.slot, "z")} popcount ${pop}`;
+		return `lane ${S.laneKey} · ${frameLabel()} = ${hex} · ${frameName$1(S.laneKey, "z")} popcount ${pop}`;
 	}
 	function flush() {
 		timer = 0;
@@ -3646,6 +3697,8 @@ function createLiveStatus(store) {
 * an outside click closes it and returns focus, arrows move between the lane
 * items, and the copy itself is one `copyLane` transaction (the live region
 * reports the destination state). The copy belongs to the rack, not the lane.
+*
+* D43: an item is labelled and identified by its stable lane key.
 */
 function createCopyMenu(deps) {
 	const { store, button, onCopy } = deps;
@@ -3654,15 +3707,15 @@ function createCopyMenu(deps) {
 	menu.hidden = true;
 	menu.setAttribute("role", "menu");
 	menu.setAttribute("aria-label", "copy the focused lane to");
-	const items = SLOT_KEYS.map((key) => {
+	const items = LANE_KEYS.map((key) => {
 		const item = document.createElement("button");
 		item.type = "button";
 		item.className = "op";
 		item.setAttribute("role", "menuitem");
 		item.setAttribute("tabindex", "-1");
 		item.dataset.lane = key;
-		item.textContent = `lane ${laneLabel(key)}`;
-		item.title = `Copy lane ${laneLabel(S.slot)} into lane ${laneLabel(key)}`;
+		item.textContent = `lane ${key}`;
+		item.title = `Copy lane ${S.laneKey} into lane ${key}`;
 		item.addEventListener("click", () => activate(key));
 		menu.appendChild(item);
 		return item;
@@ -3688,7 +3741,7 @@ function createCopyMenu(deps) {
 		if (open) return;
 		open = true;
 		items.forEach((item, i) => {
-			item.title = `Copy lane ${laneLabel(S.slot)} into lane ${laneLabel(SLOT_KEYS[i])}`;
+			item.title = `Copy lane ${S.laneKey} into lane ${LANE_KEYS[i]}`;
 		});
 		store.patch(() => {
 			S.copyArmed = true;
@@ -3714,7 +3767,7 @@ function createCopyMenu(deps) {
 		if (refocus) button.focus();
 	}
 	function activate(key) {
-		const src = S.slot;
+		const src = S.laneKey;
 		closeMenu(false);
 		if (key !== src) onCopy(src, key);
 		button.focus();
@@ -3848,72 +3901,6 @@ function createHelpPanel(deps) {
 		activeTab: () => activeTab
 	};
 }
-function checkIndex(index) {
-	if (!Number.isInteger(index) || index < 0 || index >= 13) throw new RangeError(`lane index must be an integer in [0, 12]; got ${String(index)}`);
-}
-function checkCount(count) {
-	if (!Number.isInteger(count) || count < 1 || count > 13) throw new RangeError(`lane count must be an integer in [1, 13]; got ${String(count)}`);
-}
-/** One lane's names, derived from its 0-based name index. Gaps are fine: `laneDef(3)` is G/H/Z4. */
-function laneDef(index) {
-	checkIndex(index);
-	return {
-		key: String(index + 1),
-		index,
-		a: String.fromCharCode(65 + 2 * index),
-		b: String.fromCharCode(66 + 2 * index),
-		z: `Z${index + 1}`
-	};
-}
-/** The first `count` lanes, in name order (names derive from the index, not array position). */
-function laneDefs(count = 3) {
-	checkCount(count);
-	const out = [];
-	for (let index = 0; index < count; index += 1) out.push(laneDef(index));
-	return out;
-}
-/** A lane key ("1".."13") from the numeric 1-based name index; null otherwise. */
-function laneKeyFromNumber$1(value) {
-	if (typeof value !== "number" || !Number.isInteger(value) || value < 1 || value > 13) return null;
-	return String(value);
-}
-/** Frame name table keyed by lane key, in lane order: `{ "1": {a:"A", b:"B", z:"Z1"}, … }`. */
-function frameNamesFor(count = 3) {
-	const out = {};
-	for (const def of laneDefs(count)) out[def.key] = {
-		a: def.a,
-		b: def.b,
-		z: def.z
-	};
-	return out;
-}
-/**
-* Resolve a global frame name (`A`–`Z`, `Z1`–`Z13`) to its lane/frame pair;
-* case-insensitive, and null for names outside the supplied lane count. The
-* returned `name` is the canonical uppercase form.
-*/
-function frameRefFromName$1(value, count = 3) {
-	if (typeof value !== "string" || value === "") return null;
-	const upper = value.toUpperCase();
-	for (const def of laneDefs(count)) {
-		if (upper === def.a) return {
-			lane: def.key,
-			frame: "a",
-			name: def.a
-		};
-		if (upper === def.b) return {
-			lane: def.key,
-			frame: "b",
-			name: def.b
-		};
-		if (upper === def.z) return {
-			lane: def.key,
-			frame: "z",
-			name: def.z
-		};
-	}
-	return null;
-}
 // src/core/lanes.ts
 function makeLane(key, N, binop = "xor") {
 	const empty = () => ({
@@ -3943,24 +3930,42 @@ function seed(lane, N, a, b) {
 	lane.Z.bits = computeZ(lane.A.bits, lane.B.bits, N, lane.binop);
 	syncTarget$1(lane.Z, N);
 }
+/** Boot wavetables per shipped lane, in lane order (DESIGN §2 / index.html). */
+var BOOT_SEEDS = [
+	{
+		a: "sine",
+		b: "square",
+		binop: "xor",
+		seededB: false
+	},
+	{
+		a: "cosine",
+		b: "triangle",
+		binop: "xor",
+		seededB: true
+	},
+	{
+		a: "sawUp",
+		b: "sine",
+		binop: "and",
+		seededB: true
+	}
+];
 /**
 * Boot values, matching index.html: Lane 1 sine + square, Lane 2 cosine +
-* triangle, Lane 3 saw-up + sine (AND). Pinned by the golden vectors.
+* triangle, Lane 3 saw-up + sine (AND). Pinned by the golden vectors. Keys come
+* from `LANE_KEYS` (the default three from `lanedefs.ts`), not a literal map.
 */
 function makeBootLanes(N = 64) {
-	const one = makeLane("1", N, "xor");
-	seed(one, N, tableValues("sine", N), tableValues("square", N));
-	const two = makeLane("2", N, "xor");
-	seed(two, N, tableValues("cosine", N), tableValues("triangle", N));
-	two.seededB = true;
-	const three = makeLane("3", N, "and");
-	seed(three, N, tableValues("sawUp", N), tableValues("sine", N));
-	three.seededB = true;
-	return {
-		"1": one,
-		"2": two,
-		"3": three
-	};
+	const lanes = {};
+	LANE_KEYS.forEach((key, index) => {
+		const boot = BOOT_SEEDS[index];
+		const lane = makeLane(key, N, boot.binop);
+		seed(lane, N, tableValues(boot.a, N), tableValues(boot.b, N));
+		lane.seededB = boot.seededB;
+		lanes[key] = lane;
+	});
+	return lanes;
 }
 var PROJECT_APP = "bitwave";
 var ProjectError = class extends Error {
@@ -5389,11 +5394,7 @@ function sourceFor(doc, lane, frame, route) {
 function buildUiState(doc, options = {}) {
 	const width = doc.N;
 	const lanes = {};
-	for (const lane of [
-		"1",
-		"2",
-		"3"
-	]) {
+	for (const lane of LANE_KEYS) {
 		const laneDoc = doc.lanes[lane];
 		const names = FRAME_NAMES[lane];
 		const aBits = fromHex(laneDoc.a, width);
@@ -5506,20 +5507,13 @@ function buildUiState(doc, options = {}) {
 * `ProjectDoc`. It is DOM-free so the round trip is testable in Node and the
 * desktop shell can reuse it.
 *
+* D43: the live tree is keyed by stable lane keys ("1".."13"), exactly like the
+* schema-3 document, so the mapping is the identity for the shipped three lanes.
+*
 * Unknown top-level fields from a loaded document are remembered and merged
 * back on the next capture, so a file written by a newer build survives a
 * load/save cycle in this one.
 */
-var SLOT_OF = {
-	"1": "A",
-	"2": "B",
-	"3": "C"
-};
-var LANE_OF = {
-	A: "1",
-	B: "2",
-	C: "3"
-};
 var KNOWN_TOP_LEVEL = /* @__PURE__ */ new Set([
 	"schema",
 	"app",
@@ -5541,18 +5535,17 @@ function rememberUnknownFields(raw) {
 /** Snapshot the live instrument as a versioned project document. */
 function captureProject(now = (/* @__PURE__ */ new Date()).toISOString()) {
 	const view = {
-		lane: LANE_OF[S.slot],
+		lane: S.laneKey,
 		view3d: S.view3d,
 		split3d: S.split3d,
-		splitPair: [LANE_OF[S.splitPair[0]], LANE_OF[S.splitPair[1]]],
+		splitPair: [S.splitPair[0], S.splitPair[1]],
 		activePane: S.activePane === 1 ? 1 : 0
 	};
 	const focus = {};
 	const frameVis = {};
 	const expressions = {};
-	for (const key of SLOT_KEYS) {
-		const lane = LANE_OF[key];
-		const sl = S.slots[key];
+	for (const lane of LANE_KEYS) {
+		const sl = S.lanes[lane];
 		focus[lane] = sl.focus;
 		frameVis[lane] = { ...sl.frameVis };
 		const expr = {};
@@ -5613,12 +5606,8 @@ function applyProject(raw) {
 	}
 	const { lanes, routing: loadedRouting, N, view, dataset, extras } = loaded;
 	S.N = N;
-	for (const laneKey of [
-		"1",
-		"2",
-		"3"
-	]) {
-		const sl = S.slots[SLOT_OF[laneKey]];
+	for (const laneKey of LANE_KEYS) {
+		const sl = S.lanes[laneKey];
 		const src = lanes[laneKey];
 		sl.A = makeReg(N);
 		sl.B = makeReg(N);
@@ -5644,10 +5633,10 @@ function applyProject(raw) {
 	}
 	routing.routes = loadedRouting.routes;
 	routing.parked = loadedRouting.parked;
-	S.slot = SLOT_OF[view.lane];
+	S.laneKey = view.lane;
 	S.view3d = view.view3d;
 	S.split3d = view.split3d;
-	S.splitPair = [SLOT_OF[view.splitPair[0]], SLOT_OF[view.splitPair[1]]];
+	S.splitPair = [view.splitPair[0], view.splitPair[1]];
 	S.activePane = view.activePane === 1 ? 1 : 0;
 	S.copyArmed = false;
 	S.drag = -1;
@@ -5717,7 +5706,7 @@ function toolDefinitions() {
 	}));
 }
 function createAgentBridge(deps) {
-	const { store, share, selectSlot, selectFrame, setView: applyView, resizeRegister, setSize, chooseBinop, lfoStart, lfoStop, syncLfoUi, loadCSV, applyExample, resetInstrument, syncEditUi, setExpression: applyExpressionSource, setSource: applySourceSource, startRecording, stopRecording, skipRecordSnapshot, readLog } = deps;
+	const { store, share, selectLane, selectFrame, setView: applyView, resizeRegister, setSize, chooseBinop, lfoStart, lfoStop, syncLfoUi, loadCSV, applyExample, resetInstrument, syncEditUi, setExpression: applyExpressionSource, setSource: applySourceSource, startRecording, stopRecording, skipRecordSnapshot, readLog } = deps;
 	/** Subscriber set; each listener is wrapped so one thrower cannot break others. */
 	const subscribers = /* @__PURE__ */ new Set();
 	let installed = null;
@@ -5799,7 +5788,7 @@ function createAgentBridge(deps) {
 				code: "E_BAD_ENUM",
 				message: "Z is derived and cannot be written; choose an operand frame"
 			};
-			const sl = S.slots[ref.slotKey];
+			const sl = S.lanes[ref.lane];
 			if (isInputDriven(sl, ref.frame)) {
 				const driver = driverName(sl, ref.frame) || "a route";
 				return {
@@ -5851,7 +5840,7 @@ function createAgentBridge(deps) {
 	function applyRegister(register) {
 		const ref = frameRefFromName(register.frame);
 		if (!ref) return;
-		const sl = S.slots[ref.slotKey];
+		const sl = S.lanes[ref.lane];
 		const reg = regOf(ref.frame, sl);
 		lfoStop();
 		setHexWord(reg, register.hex);
@@ -5899,10 +5888,13 @@ function createAgentBridge(deps) {
 	/** Apply a validated patch in the instrument's canonical key order. */
 	function applyNormalized(patch) {
 		if (patch.reset) resetInstrument();
-		if (patch.lane !== void 0) selectSlot(SLOT_OF_LANE[laneKeyFromNumber(patch.lane)]);
+		if (patch.lane !== void 0) {
+			const lane = laneKeyFromNumber(patch.lane);
+			if (lane !== null) selectLane(lane);
+		}
 		if (patch.frame !== void 0) {
 			const ref = frameRefFromName(patch.frame);
-			if (ref) selectFrame(ref.slotKey, ref.frame);
+			if (ref) selectFrame(ref.lane, ref.frame);
 		}
 		if (patch.view !== void 0) applyView(patch.view);
 		if (patch.width !== void 0) {
@@ -6519,21 +6511,21 @@ function drawLegend(x1, ly) {
 	const items = [
 		{
 			key: "a",
-			t: frameName$1(S.slot, "a"),
+			t: frameName$1(S.laneKey, "a"),
 			w: 1.8,
 			dash: null,
 			a: .82
 		},
 		{
 			key: "b",
-			t: frameName$1(S.slot, "b"),
+			t: frameName$1(S.laneKey, "b"),
 			w: 1.8,
 			dash: [6, 4],
 			a: .82
 		},
 		{
 			key: "z",
-			t: frameName$1(S.slot, "z"),
+			t: frameName$1(S.laneKey, "z"),
 			w: 2.5,
 			dash: null,
 			a: 1
@@ -6551,7 +6543,7 @@ function drawLegend(x1, ly) {
 	let lx = x1 - total;
 	const hits = [];
 	for (const it of items) {
-		const vis = curSlot().frameVis[it.key];
+		const vis = curLane().frameVis[it.key];
 		drawEyeGlyph(lx + 7, ly, vis);
 		ctx.save();
 		ctx.setLineDash(it.dash || []);
@@ -6576,7 +6568,7 @@ function drawLegend(x1, ly) {
 	}
 	G.legendHits = hits;
 }
-function drawField3d(n, sl = curSlot(), rect = G) {
+function drawField3d(n, sl = curLane(), rect = G) {
 	const AX = rect.x0, BX = rect.x1, AY = rect.y0, BY = rect.y1;
 	const paneW = Math.max(20, BX - AX);
 	const ph = Math.max(20, BY - AY);
@@ -6746,7 +6738,7 @@ function draw() {
 			ctx.beginPath();
 			ctx.rect(0, 0, mid, VH);
 			ctx.clip();
-			drawField3d(n, S.slots[S.splitPair[0]], {
+			drawField3d(n, S.lanes[S.splitPair[0]], {
 				x0: splitPad,
 				x1: Math.max(splitPad + 20, mid - splitPad),
 				y0: fieldY0,
@@ -6757,7 +6749,7 @@ function draw() {
 			ctx.beginPath();
 			ctx.rect(mid + 1, 0, VW - mid - 1, VH);
 			ctx.clip();
-			drawField3d(n, S.slots[S.splitPair[1]], {
+			drawField3d(n, S.lanes[S.splitPair[1]], {
 				x0: mid + 1 + splitPad,
 				x1: Math.max(mid + 21 + splitPad, VW - splitPad),
 				y0: fieldY0,
@@ -6770,7 +6762,7 @@ function draw() {
 			ctx.moveTo(mid + .5, 0);
 			ctx.lineTo(mid + .5, VH);
 			ctx.stroke();
-		} else drawField3d(n, curSlot(), {
+		} else drawField3d(n, curLane(), {
 			x0,
 			x1,
 			y0: fieldY0,
@@ -6781,37 +6773,37 @@ function draw() {
 	} else drawGuides(x0, x1, y0, y1, cx, cy, yOf);
 	if (S.view3d) {} else if (!S.showB) {
 		const spA = spFor(S.A);
-		G.spA = curSlot().frameVis.a ? spA : null;
+		G.spA = curLane().frameVis.a ? spA : null;
 		G.spB = null;
-		if (curSlot().frameVis.a) paintCurve(spA, {
+		if (curLane().frameVis.a) paintCurve(spA, {
 			width: 2.2,
 			grad: true,
 			glow: true
 		});
-		handleSp = ek !== "z" && curSlot().frameVis.a ? spA : null;
+		handleSp = ek !== "z" && curLane().frameVis.a ? spA : null;
 	} else {
 		const spA = spFor(S.A);
 		const spB = spFor(S.B);
 		const spZ = spFor(S.Z);
-		G.spA = curSlot().frameVis.a ? spA : null;
-		G.spB = curSlot().frameVis.b ? spB : null;
-		if (curSlot().frameVis.a) paintCurve(spA, {
+		G.spA = curLane().frameVis.a ? spA : null;
+		G.spB = curLane().frameVis.b ? spB : null;
+		if (curLane().frameVis.a) paintCurve(spA, {
 			width: ek === "a" ? 1.8 : 1.3,
 			dash: null,
 			color: `rgba(52,211,153,${ek === "a" ? .82 : .3})`
 		});
-		if (curSlot().frameVis.b) paintCurve(spB, {
+		if (curLane().frameVis.b) paintCurve(spB, {
 			width: ek === "b" ? 1.8 : 1.3,
 			dash: [6, 4],
 			color: `rgba(52,211,153,${ek === "b" ? .82 : .3})`
 		});
-		if (curSlot().frameVis.z) paintCurve(spZ, {
+		if (curLane().frameVis.z) paintCurve(spZ, {
 			width: 2.5,
 			grad: true,
 			glow: true
 		});
 		drawLegend(x1, 42);
-		handleSp = ek === "z" ? null : ek === "b" ? curSlot().frameVis.b ? spB : null : curSlot().frameVis.a ? spA : null;
+		handleSp = ek === "z" ? null : ek === "b" ? curLane().frameVis.b ? spB : null : curLane().frameVis.a ? spA : null;
 	}
 	const dense = n > 32;
 	for (let j = 0; handleSp && j < n; j++) {
@@ -6916,13 +6908,13 @@ var getPad = () => PAD;
 				return vals;
 			};
 			const mapped = {};
-			for (const k of SLOT_KEYS) mapped[k] = {
-				a: remap(S.slots[k].A),
-				b: remap(S.slots[k].B)
+			for (const k of LANE_KEYS) mapped[k] = {
+				a: remap(S.lanes[k].A),
+				b: remap(S.lanes[k].B)
 			};
 			S.N = newN;
-			for (const k of SLOT_KEYS) {
-				const sl = S.slots[k];
+			for (const k of LANE_KEYS) {
+				const sl = S.lanes[k];
 				for (const [r, vals] of [[sl.A, mapped[k].a], [sl.B, mapped[k].b]]) {
 					r.bits = new Uint8Array(newN);
 					r.target = vals.slice();
@@ -6969,8 +6961,8 @@ var getPad = () => PAD;
 	}
 	function nearestReg(px, py) {
 		if (!S.showB || S.view3d) return editKey();
-		const ya = curSlot().frameVis.a && G.spA ? evalSpline(G.spA, px) : Infinity;
-		const yb = curSlot().frameVis.b && G.spB ? evalSpline(G.spB, px) : Infinity;
+		const ya = curLane().frameVis.a && G.spA ? evalSpline(G.spA, px) : Infinity;
+		const yb = curLane().frameVis.b && G.spB ? evalSpline(G.spB, px) : Infinity;
 		if (!Number.isFinite(ya) && !Number.isFinite(yb)) return editKey();
 		return Math.abs(py - ya) <= Math.abs(py - yb) ? "a" : "b";
 	}
@@ -6998,7 +6990,7 @@ var getPad = () => PAD;
 				S.drag = j;
 				S.hoverReg = nearestReg(px, py);
 				S.hoverJ = j;
-				setFocus(curSlot(), S.hoverReg);
+				setFocus(curLane(), S.hoverReg);
 				controls.syncEditUi();
 				renderStrip();
 				canvas.classList.add("grabbing");
@@ -7025,7 +7017,7 @@ var getPad = () => PAD;
 		const r = canvas.getBoundingClientRect();
 		const hit = legendHitAt(e.clientX - r.left, e.clientY - r.top);
 		if (hit) {
-			frameNav.setFrameVis(S.slot, hit, !curSlot().frameVis[hit]);
+			frameNav.setFrameVis(S.laneKey, hit, !curLane().frameVis[hit]);
 			e.preventDefault();
 			return;
 		}
@@ -7177,7 +7169,7 @@ var getPad = () => PAD;
 	});
 	function unpairB() {
 		if (S.view3d) return;
-		const sl = curSlot();
+		const sl = curLane();
 		if (!sl.showB) return;
 		controls.lfoStop();
 		store.patch(() => {
@@ -7191,7 +7183,7 @@ var getPad = () => PAD;
 			renderStrip();
 			updateReadouts();
 		});
-		if (frameNav.isOpen()) frameNav.render(S.slot);
+		if (frameNav.isOpen()) frameNav.render(S.laneKey);
 		else frameNav.focusButton();
 	}
 	const binopBtns = [...document.querySelectorAll("[data-binop]")];
@@ -7199,7 +7191,7 @@ var getPad = () => PAD;
 	function chooseBinop(op, { force = false, focus = true } = {}) {
 		if (!S.showB && !force) return;
 		store.patch(() => {
-			setBinop(curSlot(), op);
+			setBinop(curLane(), op);
 			controls.syncEditUi();
 			syncViewUi();
 			evaluate();
@@ -7225,17 +7217,17 @@ var getPad = () => PAD;
 	});
 	const depthBtn = document.getElementById("depthBtn");
 	const foldBtn = document.getElementById("foldBtn");
-	const copySlotBtn = document.getElementById("copySlotBtn");
+	const copyLaneBtn = document.getElementById("copySlotBtn");
 	const frameNav = createFrameNavigator({
 		store,
-		selectSlot,
-		enableBOnSlot,
+		selectLane,
+		enableBOnLane,
 		syncEditUi: (...args) => controls.syncEditUi(...args),
 		syncViewUi,
 		renderStrip,
 		updateReadouts,
 		unpairB,
-		slotExprText
+		laneExprText
 	});
 	for (const id of [
 		"lblA",
@@ -7246,25 +7238,25 @@ var getPad = () => PAD;
 		if (!btn) continue;
 		btn.addEventListener("click", () => {
 			const frame = btn.dataset.frame;
-			if (frame === "a" || frame === "b" || frame === "z") frameNav.selectFrame(S.slot, frame);
+			if (frame === "a" || frame === "b" || frame === "z") frameNav.selectFrame(S.laneKey, frame);
 		});
 	}
 	const stageBar = createStageBar({
 		element: document.getElementById("stageBar"),
 		framesBtn: document.getElementById("framesBtn"),
-		selectSlot,
-		selectSlotInPane,
+		selectLane,
+		selectLaneInPane,
 		setSplitMode,
 		focusSplitPane,
-		slotExprText,
+		laneExprText,
 		closeFrames: () => frameNav.close(true)
 	});
 	const copyMenu = createCopyMenu({
 		store,
-		button: copySlotBtn,
+		button: copyLaneBtn,
 		onCopy: (srcKey, dstKey) => {
-			copySlotInto(srcKey, dstKey);
-			liveStatus.say(`copied lane ${laneLabel(srcKey)} → lane ${laneLabel(dstKey)}`);
+			copyLaneInto(srcKey, dstKey);
+			liveStatus.say(`copied lane ${srcKey} → lane ${dstKey}`);
 		}
 	});
 	const hintEl = document.getElementById("hint");
@@ -7309,14 +7301,14 @@ var getPad = () => PAD;
 		}
 		if (applyLoadedProject(raw, file.name)) share.start();
 	});
-	function slotExprText(sl, withViewPrefix) {
+	function laneExprText(sl, withViewPrefix) {
 		const hasCsv = DEMO.rows.length > 0;
 		const lhs = hasCsv && sl.colA >= 0 && DEMO.cols[sl.colA] ? shortCol(DEMO.cols[sl.colA], 14) : frameName$1(sl.key, "a");
 		const rhs = hasCsv && sl.colB >= 0 && DEMO.cols[sl.colB] ? shortCol(DEMO.cols[sl.colB], 14) : frameName$1(sl.key, "b");
 		const sym = OPSYM[sl.binop] || "⊕";
-		return `${withViewPrefix ? `LANE ${laneLabel(sl.key)} \u00B7 ` : ""}${lhs} ${sym} ${rhs} \u2192 ${frameName$1(sl.key, "z")}`;
+		return `${withViewPrefix ? `LANE ${sl.key} \u00B7 ` : ""}${lhs} ${sym} ${rhs} \u2192 ${frameName$1(sl.key, "z")}`;
 	}
-	function enableBOnSlot(sl = curSlot()) {
+	function enableBOnLane(sl = curLane()) {
 		if (sl.showB) return;
 		sl.showB = true;
 		if (!sl.seededB) {
@@ -7328,11 +7320,11 @@ var getPad = () => PAD;
 		if (isInputDriven(sl, "b")) updateParkedBase(sl, "b", sl.B.bits);
 		evaluate(true);
 	}
-	function copySlotInto(srcKey, dstKey) {
+	function copyLaneInto(srcKey, dstKey) {
 		if (srcKey === dstKey) return;
 		controls.lfoStop();
-		const src = S.slots[srcKey];
-		const dst = S.slots[dstKey];
+		const src = S.lanes[srcKey];
+		const dst = S.lanes[dstKey];
 		store.patch(() => {
 			copyLane(src, dst);
 			syncTarget(dst.A, true);
@@ -7342,7 +7334,7 @@ var getPad = () => PAD;
 			evaluate(true);
 		});
 	}
-	function refreshActiveSlotUi() {
+	function refreshActiveLaneUi() {
 		S.hoverReg = null;
 		S.hoverJ = -1;
 		controls.syncEditUi();
@@ -7354,23 +7346,23 @@ var getPad = () => PAD;
 	function focusSplitPane(paneIdx) {
 		store.patch(() => {
 			S.activePane = paneIdx === 1 ? 1 : 0;
-			S.slot = S.splitPair[S.activePane];
-			enableBOnSlot(curSlot());
-			refreshActiveSlotUi();
+			S.laneKey = S.splitPair[S.activePane];
+			enableBOnLane(curLane());
+			refreshActiveLaneUi();
 		});
 	}
-	function selectSlotInPane(paneIdx, key) {
+	function selectLaneInPane(paneIdx, key) {
 		if (S.copyArmed) copyMenu.close(false);
 		store.patch(() => {
 			S.splitPair[paneIdx] = key;
 			S.activePane = paneIdx;
-			S.slot = key;
-			enableBOnSlot(curSlot());
-			refreshActiveSlotUi();
+			S.laneKey = key;
+			enableBOnLane(curLane());
+			refreshActiveLaneUi();
 		});
 	}
-	function selectSlot(key) {
-		if (!S.slots[key]) return;
+	function selectLane(key) {
+		if (!S.lanes[key]) return;
 		if (S.copyArmed) copyMenu.close(false);
 		store.patch(() => {
 			if (S.view3d && S.split3d) {
@@ -7378,9 +7370,9 @@ var getPad = () => PAD;
 				else if (S.splitPair[1] === key && S.splitPair[0] !== key) S.activePane = 1;
 				else S.splitPair[S.activePane] = key;
 			}
-			S.slot = key;
-			if (S.view3d) enableBOnSlot(curSlot());
-			refreshActiveSlotUi();
+			S.laneKey = key;
+			if (S.view3d) enableBOnLane(curLane());
+			refreshActiveLaneUi();
 		});
 	}
 	function setSplitMode(on) {
@@ -7389,26 +7381,26 @@ var getPad = () => PAD;
 			if (on) {
 				S.view3d = true;
 				S.split3d = true;
-				if (!S.splitPair.includes(S.slot)) {
-					const other = S.splitPair[0] === S.slot ? "B" : S.splitPair[0];
-					S.splitPair = [other === S.slot ? "A" : other, S.slot];
+				if (!S.splitPair.includes(S.laneKey)) {
+					const other = S.splitPair[0] === S.laneKey ? LANE_KEYS[1] : S.splitPair[0];
+					S.splitPair = [other === S.laneKey ? LANE_KEYS[0] : other, S.laneKey];
 					S.activePane = 1;
-				} else S.activePane = S.splitPair[0] === S.slot ? 0 : 1;
-				if (S.splitPair[0] === S.splitPair[1]) S.splitPair[1] = S.splitPair[0] === "A" ? "B" : "A";
-				enableBOnSlot(S.slots[S.splitPair[0]]);
-				enableBOnSlot(S.slots[S.splitPair[1]]);
+				} else S.activePane = S.splitPair[0] === S.laneKey ? 0 : 1;
+				if (S.splitPair[0] === S.splitPair[1]) S.splitPair[1] = S.splitPair[0] === LANE_KEYS[0] ? LANE_KEYS[1] : LANE_KEYS[0];
+				enableBOnLane(S.lanes[S.splitPair[0]]);
+				enableBOnLane(S.lanes[S.splitPair[1]]);
 			} else {
 				S.split3d = false;
-				if (S.view3d) enableBOnSlot(curSlot());
+				if (S.view3d) enableBOnLane(curLane());
 			}
-			refreshActiveSlotUi();
+			refreshActiveLaneUi();
 		});
 	}
 	function syncViewUi() {
 		depthBtn.setAttribute("aria-pressed", String(S.view3d));
 		depthBtn.classList.toggle("on", S.view3d);
 		depthBtn.title = S.view3d ? "Return to the 2D register view" : "Show the depth field: operands at frame 1 and 256, the result at 128";
-		const fold = curSlot().fold;
+		const fold = curLane().fold;
 		foldBtn.hidden = !S.view3d;
 		foldBtn.textContent = fold === "a-far" ? "A far" : "B far";
 		foldBtn.setAttribute("aria-label", S.view3d ? `3-D hinge: ${fold === "a-far" ? "A far, B near" : "B far, A near"}; press to swap` : "3-D hinge");
@@ -7425,13 +7417,13 @@ var getPad = () => PAD;
 		store.patch(() => {
 			S.view3d = !S.view3d;
 			if (!S.view3d) S.split3d = false;
-			if (S.view3d) enableBOnSlot(curSlot());
-			refreshActiveSlotUi();
+			if (S.view3d) enableBOnLane(curLane());
+			refreshActiveLaneUi();
 		});
 	});
 	foldBtn.addEventListener("click", () => {
 		if (!S.view3d) return;
-		const sl = curSlot();
+		const sl = curLane();
 		store.patch(() => {
 			sl.fold = sl.fold === "a-far" ? "b-far" : "a-far";
 			syncViewUi();
@@ -7445,7 +7437,7 @@ var getPad = () => PAD;
 			store.patch(() => {
 				S.view3d = false;
 				S.split3d = false;
-				refreshActiveSlotUi();
+				refreshActiveLaneUi();
 			});
 			return;
 		}
@@ -7455,8 +7447,8 @@ var getPad = () => PAD;
 			store.patch(() => {
 				S.view3d = true;
 				S.split3d = false;
-				enableBOnSlot(curSlot());
-				refreshActiveSlotUi();
+				enableBOnLane(curLane());
+				refreshActiveLaneUi();
 			});
 			return;
 		}
@@ -7465,8 +7457,8 @@ var getPad = () => PAD;
 		if (S.copyArmed) copyMenu.close(false);
 		if (!S.view3d) store.patch(() => {
 			S.view3d = true;
-			enableBOnSlot(curSlot());
-			refreshActiveSlotUi();
+			enableBOnLane(curLane());
+			refreshActiveLaneUi();
 		});
 		setSplitMode(true);
 	}
@@ -7504,7 +7496,7 @@ var getPad = () => PAD;
 	function applySourceSource(frame, source) {
 		const ref = frameRefFromName(frame);
 		if (!ref || ref.frame === "z") return false;
-		const sl = S.slots[ref.slotKey];
+		const sl = S.lanes[ref.lane];
 		store.patch(() => {
 			if (source.kind === "none") bindNone(sl, ref.frame);
 			else if (source.kind === "data") {
@@ -7529,7 +7521,7 @@ var getPad = () => PAD;
 	function applyExpressionSource(frame, text) {
 		const ref = frameRefFromName(frame);
 		if (!ref || ref.frame === "z") return false;
-		const sl = S.slots[ref.slotKey];
+		const sl = S.lanes[ref.lane];
 		store.patch(() => {
 			bindExpression(sl, ref.frame, text);
 			evaluate();
@@ -7545,7 +7537,7 @@ var getPad = () => PAD;
 		loadCSV: csv.loadCSV,
 		frameNav,
 		syncViewUi,
-		selectSlot,
+		selectLane,
 		setSplitMode,
 		copyMenu,
 		onDropError: (name) => setSourceStatus(`could not read ${name}`, true),
@@ -7577,8 +7569,8 @@ var getPad = () => PAD;
 				controls.lfoTick();
 			}
 		}
-		for (const k of SLOT_KEYS) {
-			const sl = S.slots[k];
+		for (const k of LANE_KEYS) {
+			const sl = S.lanes[k];
 			if (reduce) {
 				sl.A.anim = sl.A.target.slice();
 				if (sl.showB) {
@@ -7605,7 +7597,7 @@ var getPad = () => PAD;
 		controls.syncEditUi();
 		syncViewUi();
 		csv.renderUi();
-		if (frameNav.isOpen()) frameNav.render(S.slot);
+		if (frameNav.isOpen()) frameNav.render(S.laneKey);
 		else frameNav.close(false);
 		sources.render();
 		renderStrip();
@@ -7675,9 +7667,9 @@ var getPad = () => PAD;
 	(function setupAgentAttributes() {
 		const annotate = () => {
 			const stageEl = document.getElementById("stageBar");
-			if (stageEl) for (const btn of stageEl.querySelectorAll("[data-slot]")) {
+			if (stageEl) for (const btn of stageEl.querySelectorAll("[data-lane]")) {
 				const pane = btn.closest(".pane-head");
-				const value = pane && pane.hidden ? null : laneLabel(btn.dataset.slot);
+				const value = pane && pane.hidden ? null : btn.dataset.lane;
 				if (value === null) {
 					if (btn.hasAttribute("data-agent-lane")) btn.removeAttribute("data-agent-lane");
 				} else if (btn.getAttribute("data-agent-lane") !== value) btn.setAttribute("data-agent-lane", value);
@@ -7704,8 +7696,8 @@ var getPad = () => PAD;
 		createAgentBridge({
 			store,
 			share,
-			selectSlot,
-			selectFrame: (slotKey, frame) => frameNav.selectFrame(slotKey, frame),
+			selectLane,
+			selectFrame: (laneKey, frame) => frameNav.selectFrame(laneKey, frame),
 			setView: setViewMode,
 			resizeRegister,
 			setSize: (index) => controls.setSize(index),
@@ -7728,16 +7720,16 @@ var getPad = () => PAD;
 		agentPanel.refresh();
 	}
 	function boot() {
-		applyPreset(S.slots.A.A, "sine");
-		applyPreset(S.slots.A.B, "square");
-		applyPreset(S.slots.B.A, "cosine");
-		applyPreset(S.slots.B.B, "triangle");
-		S.slots.B.seededB = true;
-		applyPreset(S.slots.C.A, "sawUp");
-		applyPreset(S.slots.C.B, "sine");
-		S.slots.C.seededB = true;
-		for (const k of SLOT_KEYS) {
-			const sl = S.slots[k];
+		applyPreset(S.lanes["1"].A, "sine");
+		applyPreset(S.lanes["1"].B, "square");
+		applyPreset(S.lanes["2"].A, "cosine");
+		applyPreset(S.lanes["2"].B, "triangle");
+		S.lanes["2"].seededB = true;
+		applyPreset(S.lanes["3"].A, "sawUp");
+		applyPreset(S.lanes["3"].B, "sine");
+		S.lanes["3"].seededB = true;
+		for (const k of LANE_KEYS) {
+			const sl = S.lanes[k];
 			syncTarget(sl.A, true);
 			syncTarget(sl.B, true);
 		}
@@ -7767,9 +7759,9 @@ var getPad = () => PAD;
 	const round3 = (value) => Math.round(value * 1e3) / 1e3;
 	function snapshotState() {
 		const lanes = {};
-		for (const key of SLOT_KEYS) {
-			const sl = S.slots[key];
-			const lane = Number(laneLabel(key));
+		for (const key of LANE_KEYS) {
+			const sl = S.lanes[key];
+			const lane = Number(key);
 			const names = FRAME_NAMES$1[key];
 			lanes[String(lane)] = {
 				lane,
@@ -7803,11 +7795,11 @@ var getPad = () => PAD;
 				bits: S.N,
 				nibbles: nibCount()
 			},
-			lane: Number(laneLabel(S.slot)),
-			frame: frameName$1(S.slot, focusKey()),
+			lane: Number(S.laneKey),
+			frame: frameName$1(S.laneKey, focusKey()),
 			view: {
 				mode,
-				splitPair: S.splitPair.map((key) => Number(laneLabel(key))),
+				splitPair: S.splitPair.map((key) => Number(key)),
 				activePane: S.activePane
 			},
 			lanes,
@@ -7874,9 +7866,9 @@ var getPad = () => PAD;
 	}
 	function snapshotFrames() {
 		const lanes = {};
-		for (const key of SLOT_KEYS) {
+		for (const key of LANE_KEYS) {
 			const names = FRAME_NAMES$1[key];
-			const lane = Number(laneLabel(key));
+			const lane = Number(key);
 			lanes[String(lane)] = {
 				lane,
 				operands: [names.a, names.b],

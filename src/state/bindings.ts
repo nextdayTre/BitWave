@@ -8,7 +8,8 @@
  * restores the pre-patch base (DESIGN §10.8, D2).
  *
  * Names follow D15: the six operand frames are A–F; source frames are A–F plus
- * Z1–Z3. The assignment is the label: a data-bound row reads `A · sine`.
+ * Z1–Z3. The assignment is the label: a data-bound row reads `A · sine`. D43:
+ * a row is identified by its lane key, and names derive from that key.
  */
 
 import {
@@ -21,7 +22,14 @@ import {
 } from "../core/routing.ts";
 import type { DestinationPort, FrameKey, LaneKey, SourcePort } from "../core/types.ts";
 import { DEMO } from "./dataset.ts";
-import { S, SLOT_KEYS, curSlot, focusKey, frameName, type Slot, type SlotKey } from "./instrument.ts";
+import {
+  LANE_KEYS,
+  S,
+  curLane,
+  focusKey,
+  frameName,
+  type LaneState,
+} from "./instrument.ts";
 import { coreLanes, routing } from "./routing.ts";
 
 export type Operand = "a" | "b";
@@ -47,7 +55,8 @@ export interface NoSource {
 export type BindingSource = DataSource | FrameSource | ExpressionSource | NoSource;
 
 export interface InputBinding {
-  lane: SlotKey;
+  /** Stable lane key of the destination lane ("1".."13"). */
+  lane: LaneKey;
   laneNumber: number;
   operand: Operand;
   /** Global frame name of the destination operand (A–F). */
@@ -59,37 +68,31 @@ export interface InputBinding {
   driven: boolean;
 }
 
-const LANE_KEY: Record<SlotKey, LaneKey> = { A: "1", B: "2", C: "3" };
-const LANE_BY_KEY: Record<LaneKey, SlotKey> = { "1": "A", "2": "B", "3": "C" };
-
-export const laneKeyOf = (slotKey: SlotKey): LaneKey => LANE_KEY[slotKey];
-export const slotKeyOf = (lane: LaneKey): SlotKey => LANE_BY_KEY[lane];
-
-export const columnIndexOf = (sl: Slot, operand: Operand): number =>
+export const columnIndexOf = (sl: LaneState, operand: Operand): number =>
   operand === "a" ? sl.colA : sl.colB;
 
-export const expressionOf = (sl: Slot, operand: Operand): string =>
+export const expressionOf = (sl: LaneState, operand: Operand): string =>
   operand === "a" ? sl.expressions.a : sl.expressions.b;
 
-export const hasExpression = (sl: Slot, operand: Operand): boolean =>
+export const hasExpression = (sl: LaneState, operand: Operand): boolean =>
   expressionOf(sl, operand).trim() !== "";
 
-export const destinationOf = (sl: Slot, operand: Operand): DestinationPort => ({
-  lane: laneKeyOf(sl.key),
+export const destinationOf = (sl: LaneState, operand: Operand): DestinationPort => ({
+  lane: sl.key,
   frame: operand,
 });
 
-export const routeFor = (sl: Slot, operand: Operand) =>
-  driverOf(routing, laneKeyOf(sl.key), operand);
+export const routeFor = (sl: LaneState, operand: Operand) =>
+  driverOf(routing, sl.key, operand);
 
 /** The global name of the frame driving this input, or null when local. */
-export function driverName(sl: Slot, operand: Operand): string | null {
+export function driverName(sl: LaneState, operand: Operand): string | null {
   const route = routeFor(sl, operand);
-  if (route) return frameName(slotKeyOf(route.from.lane), route.from.frame);
+  if (route) return frameName(route.from.lane, route.from.frame);
   return hasExpression(sl, operand) ? "an expression" : null;
 }
 
-export function describeInput(sl: Slot, operand: Operand): InputBinding {
+export function describeInput(sl: LaneState, operand: Operand): InputBinding {
   const route = routeFor(sl, operand);
   const column = columnIndexOf(sl, operand);
   const expression = expressionOf(sl, operand).trim();
@@ -101,7 +104,7 @@ export function describeInput(sl: Slot, operand: Operand): InputBinding {
       kind: "frame",
       lane: route.from.lane,
       frame: route.from.frame,
-      name: frameName(slotKeyOf(route.from.lane), route.from.frame),
+      name: frameName(route.from.lane, route.from.frame),
     };
     state = route.delay ? "z⁻¹" : "1:1";
   } else if (expression !== "") {
@@ -114,7 +117,7 @@ export function describeInput(sl: Slot, operand: Operand): InputBinding {
 
   return {
     lane: sl.key,
-    laneNumber: Number(sl.key === "A" ? 1 : sl.key === "B" ? 2 : 3),
+    laneNumber: Number(sl.key),
     operand,
     frame: frameName(sl.key, operand),
     source,
@@ -125,19 +128,19 @@ export function describeInput(sl: Slot, operand: Operand): InputBinding {
 
 export function listInputs(): InputBinding[] {
   const out: InputBinding[] = [];
-  for (const key of SLOT_KEYS) {
-    for (const operand of ["a", "b"] as const) out.push(describeInput(S.slots[key], operand));
+  for (const key of LANE_KEYS) {
+    for (const operand of ["a", "b"] as const) out.push(describeInput(S.lanes[key], operand));
   }
   return out;
 }
 
 /** Is the focused frame an input that a route or expression drives? (editing is locked) */
-export function isFocusDriven(sl: Slot = curSlot()): boolean {
+export function isFocusDriven(sl: LaneState = curLane()): boolean {
   const key = focusKey(sl);
   return key !== "z" && (Boolean(routeFor(sl, key)) || hasExpression(sl, key));
 }
 
-export function isInputDriven(sl: Slot, operand: Operand): boolean {
+export function isInputDriven(sl: LaneState, operand: Operand): boolean {
   return Boolean(routeFor(sl, operand)) || hasExpression(sl, operand);
 }
 
@@ -154,20 +157,20 @@ export function inputLabel(binding: InputBinding): string {
 }
 
 /** All frame outputs a given input may read, excluding its own frame. */
-export function availableSources(sl: Slot, operand: Operand): Array<{
+export function availableSources(sl: LaneState, operand: Operand): Array<{
   lane: LaneKey;
   frame: FrameKey;
   name: string;
   disabled: boolean;
 }> {
-  const destLane = laneKeyOf(sl.key);
+  const destLane = sl.key;
   const out = [];
-  for (const lane of ["1", "2", "3"] as const) {
+  for (const lane of LANE_KEYS) {
     for (const frame of ["a", "b", "z"] as const) {
       out.push({
         lane,
         frame,
-        name: frameName(slotKeyOf(lane), frame),
+        name: frameName(lane, frame),
         disabled: lane === destLane && frame === operand,
       });
     }
@@ -175,32 +178,32 @@ export function availableSources(sl: Slot, operand: Operand): Array<{
   return out;
 }
 
-function setColumn(sl: Slot, operand: Operand, column: number): void {
+function setColumn(sl: LaneState, operand: Operand, column: number): void {
   if (operand === "a") sl.colA = column;
   else sl.colB = column;
 }
 
-function dropRoute(sl: Slot, operand: Operand): void {
+function dropRoute(sl: LaneState, operand: Operand): void {
   const route = routeFor(sl, operand);
   if (route) removeRoute(routing, coreLanes(), route.id);
 }
 
 /** Bind an input to an imported column, restoring any parked base first. */
-export function bindData(sl: Slot, operand: Operand, column: number): void {
+export function bindData(sl: LaneState, operand: Operand, column: number): void {
   dropRoute(sl, operand);
   sl.expressions[operand] = "";
   setColumn(sl, operand, column >= 0 && DEMO.cols[column] ? column : -1);
 }
 
 /** Bind an input to a frame output; its data column mapping is cleared. */
-export function bindFrame(sl: Slot, operand: Operand, from: SourcePort): void {
+export function bindFrame(sl: LaneState, operand: Operand, from: SourcePort): void {
   sl.expressions[operand] = "";
   setColumn(sl, operand, -1);
   addRoute(routing, coreLanes(), from, destinationOf(sl, operand));
 }
 
 /** Unbind an input (no source); a parked base is restored. */
-export function bindNone(sl: Slot, operand: Operand): void {
+export function bindNone(sl: LaneState, operand: Operand): void {
   dropRoute(sl, operand);
   sl.expressions[operand] = "";
   setColumn(sl, operand, -1);
@@ -210,7 +213,7 @@ export function bindNone(sl: Slot, operand: Operand): void {
  * Bind an input to an expression source. The expression is evaluated on every
  * clocked evaluation (see `state/routing.ts`); an empty string clears it.
  */
-export function bindExpression(sl: Slot, operand: Operand, text: string): void {
+export function bindExpression(sl: LaneState, operand: Operand, text: string): void {
   dropRoute(sl, operand);
   setColumn(sl, operand, -1);
   sl.expressions[operand] = String(text ?? "").trim();
@@ -219,10 +222,10 @@ export function bindExpression(sl: Slot, operand: Operand, text: string): void {
 /** Clear every route and column binding (used by a fresh CSV import). */
 export function resetBindings(): void {
   clearRoutes(routing, coreLanes());
-  for (const key of SLOT_KEYS) {
-    S.slots[key].colA = -1;
-    S.slots[key].colB = -1;
-    S.slots[key].expressions = { a: "", b: "" };
+  for (const key of LANE_KEYS) {
+    S.lanes[key].colA = -1;
+    S.lanes[key].colB = -1;
+    S.lanes[key].expressions = { a: "", b: "" };
   }
 }
 
@@ -232,6 +235,6 @@ export function remapParkedBases(oldN: number, newN: number): void {
 }
 
 /** Keep a driven input's parked base in step when its local base is copied. */
-export function updateParkedBase(sl: Slot, operand: Operand, bits: Uint8Array): void {
-  routing.parked.set(portKey(laneKeyOf(sl.key), operand), bits.slice());
+export function updateParkedBase(sl: LaneState, operand: Operand, bits: Uint8Array): void {
+  routing.parked.set(portKey(sl.key, operand), bits.slice());
 }
