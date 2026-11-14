@@ -3992,18 +3992,22 @@ var ProjectError = class extends Error {
 		this.code = code;
 	}
 };
-var BINOPS$1 = [
+/** The binary operators in canonical order; a compact share stores the index. */
+var PROJECT_BINOPS = [
 	"and",
 	"or",
 	"xor",
 	"add",
 	"sub"
 ];
-var MIXES = [
+/** The route mix operators in canonical order; a compact share stores the index. */
+var PROJECT_MIXES = [
 	"set",
 	"add",
 	"xor"
 ];
+var BINOPS$1 = PROJECT_BINOPS;
+var MIXES = PROJECT_MIXES;
 /** Schema-2 defaults, used whenever a document omits (or corrupts) a new field. */
 var DEFAULT_FOCUS = "a";
 var LFO_DEFAULT_MODE = "rotcw";
@@ -4287,7 +4291,7 @@ var stringifyProject = (doc) => JSON.stringify(doc, null, 2);
 */
 var TOOL_ID = "bitwave";
 var TOOL_TITLE = "BitWave";
-var TOOLSET_VERSION = "1.2.0";
+var TOOLSET_VERSION = "1.3.0";
 /** Fixed timestamp for canonical share documents (links never carry `savedAt`). */
 var CANONICAL_SAVED_AT = "1970-01-01T00:00:00.000Z";
 var WIDTHS = SIZES$1;
@@ -4392,10 +4396,34 @@ function exampleProjectDoc() {
 }
 /**
 * Budget for the encoded payload, i.e. the characters after `bw=` (no prefix,
-* no leading `#`). A 256-bit document without a dataset is well under this;
-* a full CSV dataset is what can overflow it.
+* no leading `#`). The compact codec keeps an 8-lane 256-bit document under
+* this (D45); a large CSV dataset or many expression sources is what can
+* overflow it, and then the dataset (first) and expressions are dropped with
+* explicit flags.
 */
 var SHARE_MAX_CHARS = 2e3;
+/**
+* Top-level `.bitwave` keys understood by this build. Everything else rides
+* through a canonical document and a compact link (D44) under the `x` slot.
+*/
+var SHARE_DOC_KEYS = /* @__PURE__ */ new Set([
+	"schema",
+	"app",
+	"savedAt",
+	"N",
+	"view",
+	"lanes",
+	"routes",
+	"parked",
+	"dataset"
+]);
+/**
+* Leading tag of a compact payload. It is the `.bitwave` schema the compact
+* array expands to, so a future schema bump gets a new tag for free; a tag
+* newer than this build is refused as `newer-schema` exactly like a legacy
+* document (never half-applied).
+*/
+var COMPACT_SHARE_TAG = 4;
 var ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
 /** UTF-8 bytes for a string. JSON.stringify never emits lone surrogates. */
 function toUtf8(text) {
@@ -4498,12 +4526,6 @@ function fromBase64Url(payload) {
 	}
 	return bytes;
 }
-/** JSON document -> unpadded base64url payload. */
-function encodeShare(doc) {
-	const json = JSON.stringify(doc);
-	if (typeof json !== "string") throw new ProjectError("malformed", "share document is not JSON-serializable");
-	return toBase64Url(toUtf8(json));
-}
 /** Unpadded base64url payload -> JSON document. Throws ProjectError. */
 function decodeShare(payload) {
 	const text = fromUtf8(fromBase64Url(payload));
@@ -4515,47 +4537,376 @@ function decodeShare(payload) {
 	}
 	return doc;
 }
+var FRAME_ORDER$1 = [
+	"a",
+	"b",
+	"z"
+];
+var BINOP_ORDER = PROJECT_BINOPS;
+var MIX_ORDER = PROJECT_MIXES;
+var DEFAULT_LFO_MODE = "rotcw";
+var DEFAULT_LFO_RATE = 4;
+/** frameVis mask bits: 1 = A hidden, 2 = B hidden, 4 = Z hidden. */
+var HIDDEN_A = 1;
+var HIDDEN_B = 2;
+var HIDDEN_Z = 4;
+function malformed(message) {
+	throw new ProjectError("malformed", message);
+}
+/** Canonical hex word -> unpadded base64url of its raw bytes (two hex digits each). */
+function compactRegister(hex, N) {
+	const canonical = toHex(fromHex(hex, N), N);
+	const bytes = new Uint8Array(N / 8);
+	for (let k = 0; k < bytes.length; k++) bytes[k] = parseInt(canonical.slice(2 * k, 2 * k + 2), 16);
+	return toBase64Url(bytes);
+}
+/** Unpadded base64url of a raw word -> canonical uppercase hex; wrong length is malformed. */
+function expandRegister(text, N, where) {
+	if (typeof text !== "string") malformed(`${where} must be a compact register string`);
+	const bytes = fromBase64Url(text);
+	if (bytes.length !== N / 8) malformed(`${where} holds ${bytes.length} bytes; ${N} bits need ${N / 8}`);
+	let hex = "";
+	for (const byte of bytes) hex += byte.toString(16).padStart(2, "0");
+	return hex.toUpperCase();
+}
+/** One-based lane number ("1".."13") of a document port string. */
+function laneNumberOf(port, where) {
+	const lane = Number(port.slice(0, port.indexOf(".")));
+	if (!Number.isInteger(lane) || lane < 1 || lane > 13) malformed(`${where} has an invalid lane`);
+	return lane;
+}
+/** Frame index (a=0, b=1, z=2) of a document port string. */
+function frameIndexOf(port, where) {
+	const frame = FRAME_ORDER$1.indexOf(port.slice(port.indexOf(".") + 1));
+	if (frame < 0) malformed(`${where} has an invalid frame`);
+	return frame;
+}
+function encodeEnum(order, value, where) {
+	const index = order.indexOf(value);
+	if (index < 0) malformed(`${where} has an unknown value`);
+	return index;
+}
+function encodeCompactView(view) {
+	const tuple = [
+		Number(view.lane),
+		(view.view3d ? 1 : 0) | (view.split3d ? 2 : 0),
+		Number(view.splitPair[0]),
+		Number(view.splitPair[1]),
+		view.activePane === 1 ? 1 : 0
+	];
+	const mode = view.lfoMode ?? DEFAULT_LFO_MODE;
+	const rate = view.lfoRate ?? DEFAULT_LFO_RATE;
+	if (mode !== DEFAULT_LFO_MODE || rate !== DEFAULT_LFO_RATE) {
+		tuple.push(mode);
+		if (rate !== DEFAULT_LFO_RATE) tuple.push(rate);
+	}
+	return tuple;
+}
+function encodeCompactLane(key, lane, N) {
+	const tuple = [
+		Number(key),
+		compactRegister(lane.a, N),
+		compactRegister(lane.b, N),
+		lane.showB ? 1 : 0,
+		encodeEnum(BINOP_ORDER, lane.binop, `lanes.${key}.binop`),
+		lane.edit === "b" ? 1 : 0,
+		lane.seededB ? 1 : 0,
+		lane.lfoB,
+		lane.colA,
+		lane.colB
+	];
+	const focus = lane.focus ?? "a";
+	const vis = lane.frameVis ?? {
+		a: true,
+		b: true,
+		z: true
+	};
+	const visMask = (vis.a === false ? HIDDEN_A : 0) | (vis.b === false ? HIDDEN_B : 0) | (vis.z === false ? HIDDEN_Z : 0);
+	const expressions = lane.expressions ?? {};
+	const textA = typeof expressions.a === "string" && expressions.a !== "" ? expressions.a : null;
+	const textB = typeof expressions.b === "string" && expressions.b !== "" ? expressions.b : null;
+	const hasExpressions = textA !== null || textB !== null;
+	if (focus !== "a" || visMask !== 0 || hasExpressions) {
+		tuple.push(FRAME_ORDER$1.indexOf(focus));
+		if (visMask !== 0 || hasExpressions) {
+			tuple.push(visMask);
+			if (hasExpressions) {
+				tuple.push(textA);
+				if (textB !== null) tuple.push(textB);
+			}
+		}
+	}
+	return tuple;
+}
+/** Destination-first ordering: destinations are unique, so this is total. */
+function compareRoutePorts(a, b) {
+	const fromA = [laneNumberOf(a.from, "route.from"), frameIndexOf(a.from, "route.from")];
+	const fromB = [laneNumberOf(b.from, "route.from"), frameIndexOf(b.from, "route.from")];
+	const toA = [laneNumberOf(a.to, "route.to"), frameIndexOf(a.to, "route.to")];
+	const toB = [laneNumberOf(b.to, "route.to"), frameIndexOf(b.to, "route.to")];
+	return toA[0] - toB[0] || toA[1] - toB[1] || fromA[0] - fromB[0] || fromA[1] - fromB[1];
+}
+/**
+* Serialize a **canonical** `.bitwave` document (`canonicalShareDocument`) to
+* the compact base64url payload. Unknown top-level fields ride under `x`.
+*/
+function encodeCompactShare(doc) {
+	if (typeof doc !== "object" || doc === null || typeof doc.N !== "number") malformed("compact share needs a project document");
+	const N = doc.N;
+	if (!Number.isInteger(N) || N < 8 || N > 256 || N % 8 !== 0) malformed(`compact share has an unsupported width: ${String(N)}`);
+	if (typeof doc.lanes !== "object" || doc.lanes === null) malformed("compact share needs lanes");
+	const laneKeys = Object.keys(doc.lanes).sort((a, b) => Number(a) - Number(b));
+	if (laneKeys.length === 0) malformed("compact share needs at least one lane");
+	const lanes = laneKeys.map((key) => encodeCompactLane(key, doc.lanes[key], N));
+	const routes = doc.routes.slice().sort(compareRoutePorts).map((route) => [
+		laneNumberOf(route.from, "route.from"),
+		frameIndexOf(route.from, "route.from"),
+		laneNumberOf(route.to, "route.to"),
+		frameIndexOf(route.to, "route.to"),
+		encodeEnum(MIX_ORDER, route.mix, "route.mix")
+	]);
+	const parked = Object.keys(doc.parked).map((port) => [
+		laneNumberOf(port, "parked port"),
+		frameIndexOf(port, "parked port"),
+		port
+	]).sort((a, b) => a[0] - b[0] || a[1] - b[1]).map(([lane, frame, port]) => [
+		lane,
+		frame,
+		compactRegister(doc.parked[port], N)
+	]);
+	const payload = [
+		COMPACT_SHARE_TAG,
+		N,
+		encodeCompactView(doc.view),
+		lanes,
+		routes,
+		parked
+	];
+	const extras = {};
+	for (const [key, value] of Object.entries(doc)) if (!SHARE_DOC_KEYS.has(key)) extras[key] = value;
+	if (doc.dataset) {
+		const dataset = [doc.dataset.cols, doc.dataset.rows];
+		if (Object.prototype.hasOwnProperty.call(doc.dataset, "index")) dataset.push(doc.dataset.index);
+		payload.push(dataset);
+	} else if (Object.keys(extras).length > 0) payload.push(null);
+	if (Object.keys(extras).length > 0) payload.push(extras);
+	return toBase64Url(toUtf8(JSON.stringify(payload)));
+}
+var isObjectValue = (value) => typeof value === "object" && value !== null && !Array.isArray(value);
+function decodeFlag(value, where) {
+	if (value === 0) return false;
+	if (value === 1) return true;
+	return malformed(`${where} must be 0 or 1`);
+}
+function decodeLaneNumber(value, where) {
+	if (!Number.isInteger(value) || value < 1 || value > 13) malformed(`${where} must be a lane number in [1, 13]`);
+	return String(value);
+}
+function decodeFrameIndex(value, where) {
+	if (value !== 0 && value !== 1 && value !== 2) malformed(`${where} must be a frame index in [0, 2]`);
+	return FRAME_ORDER$1[value];
+}
+function decodeCompactView(value) {
+	if (!Array.isArray(value) || value.length < 5) malformed("compact view must be a 5-field tuple");
+	if (!Number.isInteger(value[1]) || value[1] < 0 || value[1] > 3) malformed("compact view flags must be in [0, 3]");
+	const view = {
+		lane: decodeLaneNumber(value[0], "compact view lane"),
+		view3d: (value[1] & 1) === 1,
+		split3d: (value[1] & 2) === 2,
+		splitPair: [decodeLaneNumber(value[2], "compact view splitPair"), decodeLaneNumber(value[3], "compact view splitPair")],
+		activePane: value[4] === 1 ? 1 : 0
+	};
+	if (value[4] !== 0 && value[4] !== 1) malformed("compact view activePane must be 0 or 1");
+	if (value.length > 5) {
+		if (typeof value[5] !== "string") malformed("compact view lfoMode must be a string");
+		view.lfoMode = value[5];
+	} else view.lfoMode = DEFAULT_LFO_MODE;
+	if (value.length > 6) {
+		if (typeof value[6] !== "number" || !Number.isFinite(value[6]) || value[6] <= 0) malformed("compact view lfoRate must be a positive number");
+		view.lfoRate = value[6];
+	} else view.lfoRate = DEFAULT_LFO_RATE;
+	if (value.length > 7) malformed("compact view has unexpected trailing fields");
+	return view;
+}
+function decodeCompactLane(value, N) {
+	if (!Array.isArray(value) || value.length < 10) malformed("compact lane must be a 10-field tuple");
+	if (value.length > 14) malformed("compact lane has unexpected trailing fields");
+	const key = decodeLaneNumber(value[0], "compact lane key");
+	const binop = BINOP_ORDER[value[4]];
+	if (value[4] !== 0 && value[4] !== 1 && value[4] !== 2 && value[4] !== 3 && value[4] !== 4) malformed(`compact lane ${key}.binop must be an operator index in [0, 4]`);
+	if (typeof value[7] !== "string") malformed(`compact lane ${key}.lfoB must be a string`);
+	if (!Number.isInteger(value[8]) || !Number.isInteger(value[9])) malformed(`compact lane ${key} columns must be integers`);
+	const lane = {
+		a: expandRegister(value[1], N, `compact lane ${key}.a`),
+		b: expandRegister(value[2], N, `compact lane ${key}.b`),
+		showB: decodeFlag(value[3], `compact lane ${key}.showB`),
+		binop,
+		edit: decodeFlag(value[5], `compact lane ${key}.edit`) ? "b" : "a",
+		seededB: decodeFlag(value[6], `compact lane ${key}.seededB`),
+		lfoB: value[7],
+		colA: value[8],
+		colB: value[9],
+		focus: "a",
+		frameVis: {
+			a: true,
+			b: true,
+			z: true
+		}
+	};
+	if (value.length > 10) lane.focus = decodeFrameIndex(value[10], `compact lane ${key}.focus`);
+	if (value.length > 11) {
+		const mask = value[11];
+		if (!Number.isInteger(mask) || mask < 0 || mask > 7) malformed(`compact lane ${key}.frameVis must be in [0, 7]`);
+		lane.frameVis = {
+			a: (mask & HIDDEN_A) === 0,
+			b: (mask & HIDDEN_B) === 0,
+			z: (mask & HIDDEN_Z) === 0
+		};
+	}
+	if (value.length > 12) {
+		const textA = value[12];
+		const textB = value.length > 13 ? value[13] : null;
+		if (textA !== null && typeof textA !== "string") malformed(`compact lane ${key}.expressions.a must be a string or null`);
+		if (textB !== null && typeof textB !== "string") malformed(`compact lane ${key}.expressions.b must be a string`);
+		const expressions = {};
+		if (typeof textA === "string" && textA !== "") expressions.a = textA;
+		if (typeof textB === "string" && textB !== "") expressions.b = textB;
+		if (Object.keys(expressions).length > 0) lane.expressions = expressions;
+	}
+	return [key, lane];
+}
+/**
+* Expand a compact payload value (the decoded JSON array) back to a
+* canonical-shaped schema-4 document. Unknown top-level fields are restored
+* from `x`. Throws `ProjectError` on a structurally corrupt/truncated array and
+* `newer-schema` when the tag is newer than this build.
+*/
+function decodeCompactShare(value) {
+	if (!Array.isArray(value)) malformed("compact share payload must be a JSON array");
+	const tag = value[0];
+	if (!Number.isInteger(tag)) malformed("compact share tag must be an integer");
+	if (tag > COMPACT_SHARE_TAG) throw new ProjectError("newer-schema", `share codec ${String(tag)} is newer than supported ${COMPACT_SHARE_TAG}; open it read-only`);
+	if (tag !== COMPACT_SHARE_TAG) malformed(`unknown compact share tag: ${String(tag)}`);
+	if (value.length < 6) malformed("compact share payload is truncated");
+	const N = value[1];
+	if (!Number.isInteger(N) || N < 8 || N > 256 || N % 8 !== 0) malformed(`compact share width must be 8..256 in multiples of 8; got ${String(N)}`);
+	const view = decodeCompactView(value[2]);
+	if (!Array.isArray(value[3]) || value[3].length === 0) malformed("compact share needs at least one lane");
+	const lanes = {};
+	for (const rawLane of value[3]) {
+		const [key, lane] = decodeCompactLane(rawLane, N);
+		if (Object.prototype.hasOwnProperty.call(lanes, key)) malformed(`compact share repeats lane ${key}`);
+		lanes[key] = lane;
+	}
+	if (!Array.isArray(value[4])) malformed("compact share routes must be an array");
+	const routes = value[4].map((rawRoute) => {
+		if (!Array.isArray(rawRoute) || rawRoute.length !== 5) malformed("compact route must be a 5-field tuple");
+		const mix = MIX_ORDER[rawRoute[4]];
+		if (rawRoute[4] !== 0 && rawRoute[4] !== 1 && rawRoute[4] !== 2) malformed("compact route mix must be an index in [0, 2]");
+		return {
+			from: `${decodeLaneNumber(rawRoute[0], "compact route.from")}.${decodeFrameIndex(rawRoute[1], "compact route.from")}`,
+			to: `${decodeLaneNumber(rawRoute[2], "compact route.to")}.${decodeFrameIndex(rawRoute[3], "compact route.to")}`,
+			mix
+		};
+	});
+	if (!Array.isArray(value[5])) malformed("compact share parked bases must be an array");
+	const parked = {};
+	for (const rawBase of value[5]) {
+		if (!Array.isArray(rawBase) || rawBase.length !== 3) malformed("compact parked base must be a 3-field tuple");
+		const port = `${decodeLaneNumber(rawBase[0], "compact parked lane")}.${decodeFrameIndex(rawBase[1], "compact parked frame")}`;
+		parked[port] = expandRegister(rawBase[2], N, `compact parked.${port}`);
+	}
+	const doc = {
+		schema: tag,
+		app: PROJECT_APP,
+		N,
+		view,
+		lanes,
+		routes,
+		parked
+	};
+	if (value.length > 6 && value[6] !== null) {
+		const rawDataset = value[6];
+		if (!Array.isArray(rawDataset) || rawDataset.length < 2 || rawDataset.length > 3) malformed("compact dataset must be [cols, rows] or [cols, rows, index]");
+		if (!Array.isArray(rawDataset[0]) || !Array.isArray(rawDataset[1])) malformed("compact dataset needs column and row arrays");
+		const dataset = {
+			cols: rawDataset[0],
+			rows: rawDataset[1]
+		};
+		if (rawDataset.length === 3) {
+			if (!Number.isInteger(rawDataset[2]) || rawDataset[2] < 0) malformed("compact dataset index must be a non-negative integer");
+			dataset.index = rawDataset[2];
+		}
+		doc.dataset = dataset;
+	}
+	if (value.length > 7) {
+		const extras = value[7];
+		if (!isObjectValue(extras)) malformed("compact share extras must be an object");
+		for (const [key, extra] of Object.entries(extras)) if (!SHARE_DOC_KEYS.has(key)) doc[key] = extra;
+	}
+	if (value.length > 8) malformed("compact share payload has unexpected trailing fields");
+	return doc;
+}
+/**
+* Inspect a decoded share value: a JSON array is the compact payload (expanded
+* to a canonical-shaped schema-4 document), an object is a legacy schema 1–4
+* document returned as-is for `deserializeProject` to upgrade on read.
+*/
+function decodeShareDocument(value) {
+	if (Array.isArray(value)) return decodeCompactShare(value);
+	if (isObjectValue(value)) return value;
+	return malformed("share payload is not a document");
+}
 /**
 * Read a shared document from a `location.hash`, accepting either the full
 * fragment (`#bw=...`) or the bare payload form (`bw=...`). Returns null when
 * the hash carries no share (empty, a different fragment, or `bw=` with no
-* payload); a present-but-corrupt payload throws ProjectError.
+* payload); a present-but-corrupt payload throws ProjectError. Compact payloads
+* are expanded to a schema-4 document; legacy JSON payloads are returned raw
+* and upgrade in `deserializeProject`.
 */
 function parseShareHash(hash) {
 	const text = hash.startsWith("#") ? hash.slice(1) : hash;
 	if (!text.startsWith("bw=")) return null;
 	const payload = text.slice(3);
 	if (payload === "") return null;
-	return decodeShare(payload);
+	return decodeShareDocument(decodeShare(payload));
 }
 // src/core/agent-share.ts
 /**
 * Canonical share links for the agent layer.
 *
-* The `.bitwave` codec already exists in `share.ts`. This module adds the one rule
-* the agent contract needs: a state has exactly one link, so the timestamp is not
-* part of a shared document. It also reproduces the app's budget policy (drop the
-* dataset before giving up) so `build_deeplink` and the address bar agree.
+* The `.bitwave` codec already exists in `share.ts`. This module adds the rules
+* the agent contract needs: a state has exactly one link, so the timestamp is
+* not part of a shared document, routes and parked bases are written in a
+* deterministic order, and the link is the compact payload (D45) rather than
+* the legacy JSON document. It also reproduces the app's budget policy (drop
+* the dataset first, then expression sources, each with an explicit flag) so
+* `build_deeplink`, the address bar and `getDeeplink()` agree.
 *
 * Schema 1-4 documents are accepted: `deserializeProject` upgrades a legacy
 * document on read and the canonical form is always schema 4 (D44). Top-level
 * fields this build does not understand ride along, matching the app bridge.
 */
-var KNOWN_DOC_KEYS = /* @__PURE__ */ new Set([
-	"schema",
-	"app",
-	"savedAt",
-	"N",
-	"view",
-	"lanes",
-	"routes",
-	"parked",
-	"dataset"
-]);
+var FRAME_ORDER = [
+	"a",
+	"b",
+	"z"
+];
+/** Destination-first total order (destinations are unique in a document). */
+function comparePorts(a, b) {
+	const [aLane, aFrame] = [Number(a.slice(0, a.indexOf("."))), FRAME_ORDER.indexOf(a.slice(a.indexOf(".") + 1))];
+	const [bLane, bFrame] = [Number(b.slice(0, b.indexOf("."))), FRAME_ORDER.indexOf(b.slice(b.indexOf(".") + 1))];
+	return aLane - bLane || aFrame - bFrame;
+}
+function compareRoutes(a, b) {
+	return comparePorts(a.to, b.to) || comparePorts(a.from, b.from);
+}
 /**
 * Validate a document and re-serialize it canonically: schema 4, no `savedAt`,
-* extras preserved, unknown top-level fields carried along, engine recomputed.
-* Throws ProjectError on an invalid document.
+* extras preserved, unknown top-level fields carried along, engine recomputed,
+* routes and parked bases in deterministic order. Throws ProjectError on an
+* invalid document.
 */
 function canonicalShareDocument(doc) {
 	const loaded = deserializeProject(doc);
@@ -4567,28 +4918,55 @@ function canonicalShareDocument(doc) {
 		expressions: loaded.extras.expressions
 	});
 	delete out.savedAt;
-	for (const [key, value] of Object.entries(doc)) if (!KNOWN_DOC_KEYS.has(key)) out[key] = value;
+	for (const [key, value] of Object.entries(doc)) if (!SHARE_DOC_KEYS.has(key)) out[key] = value;
+	out.routes = out.routes.slice().sort(compareRoutes);
+	out.parked = Object.fromEntries(Object.entries(out.parked).sort(([a], [b]) => comparePorts(a, b)));
 	return out;
 }
+function hasExpressions(doc) {
+	return Object.values(doc.lanes).some((lane) => lane.expressions !== void 0 && Object.keys(lane.expressions).length > 0);
+}
+function withoutDataset(doc) {
+	const { dataset: _dropped, ...rest } = doc;
+	return rest;
+}
+function withoutExpressions(doc) {
+	const lanes = {};
+	for (const [key, lane] of Object.entries(doc.lanes)) {
+		const { expressions: _dropped, ...rest } = lane;
+		lanes[key] = rest;
+	}
+	return {
+		...doc,
+		lanes
+	};
+}
 /**
-* Build the canonical fragment, dropping the dataset when the payload would
-* exceed the share budget (mirroring `src/io/share-url.js`).
+* Build the canonical compact fragment, applying the share budget in its
+* documented order: the dataset first, then expression sources, each reported
+* by its own flag — never silently.
 */
 function buildShareLink(doc) {
 	let canonical = canonicalShareDocument(doc);
-	let payload = encodeShare(canonical);
+	let payload = encodeCompactShare(canonical);
 	let datasetDropped = false;
+	let expressionsDropped = false;
 	if (payload.length > 2e3 && canonical.dataset) {
-		const { dataset: _dropped, ...rest } = canonical;
-		canonical = rest;
-		payload = encodeShare(canonical);
+		canonical = withoutDataset(canonical);
+		payload = encodeCompactShare(canonical);
 		datasetDropped = true;
+	}
+	if (payload.length > 2e3 && hasExpressions(canonical)) {
+		canonical = withoutExpressions(canonical);
+		payload = encodeCompactShare(canonical);
+		expressionsDropped = true;
 	}
 	return {
 		fragment: `#bw=${payload}`,
 		payloadChars: payload.length,
 		withinBudget: payload.length <= SHARE_MAX_CHARS,
-		datasetDropped
+		datasetDropped,
+		expressionsDropped
 	};
 }
 // src/core/agent-tools.ts
@@ -4786,7 +5164,7 @@ function buildDeeplinkData(args) {
 		if (error instanceof ProjectError) bad("E_INVALID_PROJECT", error.message);
 		throw error;
 	}
-	if (!link.withinBudget) bad("E_INPUT_TOO_LARGE", `share payload is ${link.payloadChars} characters (budget ${SHARE_MAX_CHARS})`, "remove the dataset or use a smaller register width");
+	if (!link.withinBudget) bad("E_INPUT_TOO_LARGE", `share payload is ${link.payloadChars} characters (budget ${SHARE_MAX_CHARS})`, "remove the dataset or expression sources, or use a smaller register width");
 	let url = null;
 	if (input.base !== void 0) {
 		if (typeof input.base !== "string" || input.base === "" || input.base.includes("#")) bad("E_BAD_ARGS", "base must be an absolute URL without a fragment");
@@ -4797,6 +5175,7 @@ function buildDeeplinkData(args) {
 		payloadChars: link.payloadChars,
 		withinBudget: link.withinBudget,
 		datasetDropped: link.datasetDropped,
+		expressionsDropped: link.expressionsDropped,
 		url
 	};
 }
@@ -4955,7 +5334,7 @@ var TOOLS = [
 	{
 		name: "build_deeplink",
 		title: "Build a canonical deeplink",
-		description: "Validate a .bitwave document (schema 1–4; older schemas are upgraded) and build its canonical schema-4 share fragment (#bw=). Canonical links omit savedAt, so equal state gives equal links; the dataset is dropped if the payload would exceed the 2000-character budget.",
+		description: "Validate a .bitwave document (schema 1–4; older schemas are upgraded) and build its canonical schema-4 compact share fragment (#bw=). Canonical links omit savedAt, so equal state gives equal links; the dataset is dropped first and expression sources second if the payload would exceed the 2000-character budget, each reported by its own flag.",
 		scope: "pure",
 		inputSchema: {
 			type: "object",
@@ -5791,8 +6170,10 @@ function applyProject(raw) {
 * Toolset 1.1.0 added external routing: expression sources (`setExpression`,
 * patch key `expression`), the transient recorded take (`record(on)`,
 * `getLog({limit?})`) and `recording` / per-lane `expressions` in `getState()`.
-* Toolset 1.2.0 (D44) moves the shared `.bitwave` document to schema 4 (lane map
-* keyed by stable lane key); the bridge surface itself is unchanged.
+* Toolset 1.2.0 (D44) moved the shared `.bitwave` document to schema 4 (lane map
+* keyed by stable lane key); toolset 1.3.0 (D45) changes the canonical `#bw=`
+* link to the compact codec (legacy links still load). The bridge surface itself
+* is unchanged.
 */
 var STATE_NODE_ID = "bitwave-state";
 var READY_ATTR = "agent-ready";
@@ -6404,10 +6785,11 @@ function createAutosave(store, { enabled = true } = {}) {
 * only the fragment is used — no network, no server.
 *
 * The fragment comes from the shared canonical builder
-* (`src/core/agent-share.ts`): links omit `savedAt`, so equal state gives equal
-* links and the address bar matches `window.bitwave.getDeeplink()` and
-* `build_deeplink`. The builder also enforces the budget by dropping the
-* dataset first, exactly as the app always has.
+* (`src/core/agent-share.ts`): the compact codec (D45), links omit `savedAt`, so
+* equal state gives equal links and the address bar matches
+* `window.bitwave.getDeeplink()` and `build_deeplink`. The builder also enforces
+* the budget by dropping the dataset first and expression sources second, with
+* explicit flags, exactly as `build_deeplink` reports.
 */
 var DEBOUNCE_MS = 550;
 function createShareUrl({ allow = true } = {}) {

@@ -57,7 +57,7 @@ test("state has the contract keys and the focused defaults", () => {
   assert.equal(s.editing.enabled, true);
   assert.deepEqual(s.recording, { on: false, rows: 0 });
   assert.equal(s.deeplink, "file:///bitwave-v2.html#bw=abc");
-  assert.deepEqual(s.bridge, { schemaVersion: 1, version: "1.2.0" });
+  assert.deepEqual(s.bridge, { schemaVersion: 1, version: "1.3.0" });
   assert.deepEqual(Object.keys(s.lanes), ["1", "2", "3"]);
 });
 

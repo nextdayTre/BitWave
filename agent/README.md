@@ -21,7 +21,7 @@ node agent/cli.mjs <command> [flags] [--json]
 | `evaluate_lane` | `Z = A <op> B`, truth counts, carry/borrow |
 | `compare_operands` | all five operators for one A/B pair, in canonical order |
 | `parse_dataset` | CSV/TSV columns (bin/hex typing), row count, first rows |
-| `deeplink` | canonical `#bw=` fragment from a `.bitwave` document (boot document when `--project` is omitted) |
+| `deeplink` | canonical `#bw=` compact link from a `.bitwave` document (legacy JSON links still load; boot document when `--project` is omitted) |
 | `state` | the headless UI state object (`getState()` shape, no envelope) |
 | `artifacts` | regenerate `agent/manifest.json` and `agent/examples/**` (`--check` verifies) |
 | `selftest` | runs `node agent/selftest.mjs` |
@@ -38,7 +38,11 @@ Flags accept both forms, `--flag value` and `--flag=value`: `--hex`, `--a`,
   `bitwave-v2.html#bw=…` link, or `--base` + fragment when supplied. `--index`
   moves the dataset cursor before the state is captured.
 - `deeplink` validates the document through `build_deeplink`; malformed,
-  newer-schema or foreign documents fail with `E_INVALID_PROJECT`.
+  newer-schema or foreign documents fail with `E_INVALID_PROJECT`. The result
+  reports `payloadChars`, `withinBudget` and the explicit `datasetDropped` /
+  `expressionsDropped` flags (the dataset drops first, then expression sources,
+  when the 2000-character budget would overflow; `node tools/share-budget.mjs`
+  prints the measured table).
 
 Exit codes: `0` success, `2` usage (bad flag/command/file), `3` tool error
 (closed `E_*` set), `4` internal. `artifacts --check` forwards the generator's
@@ -63,7 +67,7 @@ dependencies. Stdout is the protocol channel and never carries logs; a clean
 stdin EOF exits 0.
 
 - `initialize` → `{ protocolVersion: "2025-06-18", capabilities: { tools: {} },
-  serverInfo: { name: "bitwave", version: "1.2.0" } }`
+  serverInfo: { name: "bitwave", version: "1.3.0" } }`
 - `notifications/initialized` → no response
 - `ping` → `{}`
 - `tools/list` → `{ tools: [{ name, description, inputSchema }] }` (the six pure tools)

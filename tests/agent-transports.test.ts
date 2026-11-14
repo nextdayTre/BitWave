@@ -16,6 +16,7 @@ import { fileURLToPath } from "node:url";
 import { UsageError, parseArgs, runCli } from "../agent/cli.mjs";
 import { PROTOCOL_VERSION, handleLine, handleMessage } from "../agent/mcp-server.mjs";
 import { buildArtifacts } from "../agent/gen-agent-artifacts.mjs";
+import { buildShareLink } from "../src/core/agent-share.ts";
 import { getManifest } from "../src/core/agent-tools.ts";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -81,7 +82,7 @@ test("manifest --json prints exactly one envelope on stdout", () => {
   assert.equal(envelope.schemaVersion, 1);
   assert.equal(envelope.tool, "manifest");
   assert.equal(envelope.data.id, "bitwave");
-  assert.equal(envelope.data.version, "1.2.0");
+  assert.equal(envelope.data.version, "1.3.0");
   assert.equal(envelope.deeplink, null);
   assert.deepEqual(envelope.warnings, []);
 });
@@ -154,6 +155,30 @@ test("state is headless, envelope-free and deterministic", () => {
   assert.ok(String(based.deeplink).startsWith("http://localhost:8000/#bw="));
 });
 
+test("the CLI deeplink equals the app's canonical builder for the same state", () => {
+  const fixture = JSON.parse(readFileSync(path.join(ROOT, "examples", "demo.bitwave.json"), "utf8"));
+  const direct = buildShareLink(fixture);
+  const spawned = spawnNode(CLI, [
+    "deeplink",
+    "--project",
+    "examples/demo.bitwave.json",
+    "--base",
+    "http://localhost:8000/",
+    "--json",
+  ]);
+  assert.equal(spawned.status, 0, spawned.stderr);
+  const envelope = parseEnvelope(spawned.stdout);
+  assert.equal(envelope.data.fragment, direct.fragment, "CLI and the address bar share one canonical link");
+  assert.equal(envelope.data.payloadChars, direct.payloadChars);
+  assert.equal(envelope.deeplink, "http://localhost:8000/" + direct.fragment);
+  // The canonical payload is the compact array (D45).
+  const raw = JSON.parse(
+    Buffer.from(direct.fragment.slice("#bw=".length), "base64url").toString("utf8"),
+  );
+  assert.ok(Array.isArray(raw));
+  assert.equal(raw[0], 4);
+});
+
 test("agent/manifest.json is byte-identical to getManifest()", () => {
   const file = readFileSync(path.join(ROOT, "agent", "manifest.json"), "utf8");
   assert.equal(file, JSON.stringify(getManifest(), null, 2) + "\n");
@@ -204,7 +229,7 @@ test("MCP initialize / ping / tools-list", () => {
   assert.equal(initialize.result.protocolVersion, PROTOCOL_VERSION);
   assert.equal(PROTOCOL_VERSION, "2025-06-18");
   assert.deepEqual(initialize.result.capabilities, { tools: {} });
-  assert.deepEqual(initialize.result.serverInfo, { name: "bitwave", version: "1.2.0" });
+  assert.deepEqual(initialize.result.serverInfo, { name: "bitwave", version: "1.3.0" });
 
   assert.equal(handleMessage({ jsonrpc: "2.0", method: "notifications/initialized" }), null);
   assert.deepEqual(handleMessage({ jsonrpc: "2.0", id: 2, method: "ping" }).result, {});

@@ -17,8 +17,10 @@
  * Toolset 1.1.0 added external routing: expression sources (`setExpression`,
  * patch key `expression`), the transient recorded take (`record(on)`,
  * `getLog({limit?})`) and `recording` / per-lane `expressions` in `getState()`.
- * Toolset 1.2.0 (D44) moves the shared `.bitwave` document to schema 4 (lane map
- * keyed by stable lane key); the bridge surface itself is unchanged.
+ * Toolset 1.2.0 (D44) moved the shared `.bitwave` document to schema 4 (lane map
+ * keyed by stable lane key); toolset 1.3.0 (D45) changes the canonical `#bw=`
+ * link to the compact codec (legacy links still load). The bridge surface itself
+ * is unchanged.
  */
 
 import {

@@ -7,10 +7,11 @@
  * only the fragment is used — no network, no server.
  *
  * The fragment comes from the shared canonical builder
- * (`src/core/agent-share.ts`): links omit `savedAt`, so equal state gives equal
- * links and the address bar matches `window.bitwave.getDeeplink()` and
- * `build_deeplink`. The builder also enforces the budget by dropping the
- * dataset first, exactly as the app always has.
+ * (`src/core/agent-share.ts`): the compact codec (D45), links omit `savedAt`, so
+ * equal state gives equal links and the address bar matches
+ * `window.bitwave.getDeeplink()` and `build_deeplink`. The builder also enforces
+ * the budget by dropping the dataset first and expression sources second, with
+ * explicit flags, exactly as `build_deeplink` reports.
  */
 
 import { buildShareLink } from "../core/agent-share.ts";

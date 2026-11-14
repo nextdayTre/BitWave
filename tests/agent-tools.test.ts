@@ -5,6 +5,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { Buffer } from "node:buffer";
 
 import {
   ERROR_CODES,
@@ -49,7 +50,7 @@ test("manifest is JSON-safe, versioned and strips run functions", () => {
   const manifest = getManifest();
   assert.equal(manifest.id, "bitwave");
   assert.equal(manifest.schemaVersion, SCHEMA_VERSION);
-  assert.equal(manifest.version, "1.2.0");
+  assert.equal(manifest.version, "1.3.0");
   assert.equal(manifest.tools.length, 6);
   assert.deepEqual(manifest.errorCodes, [...ERROR_CODES]);
   assert.ok(!("run" in manifest.tools[0]));
@@ -179,7 +180,16 @@ test("build_deeplink returns a canonical, deterministic, round-tripping link", (
   assert.equal(first.payloadChars, String(first.fragment).length - 4);
   assert.equal(first.withinBudget, true);
   assert.equal(first.datasetDropped, false);
+  assert.equal(first.expressionsDropped, false);
   assert.equal(first.url, null);
+
+  // The canonical payload is the compact JSON array with the leading tag (D45).
+  const raw = JSON.parse(
+    Buffer.from(String(first.fragment).slice("#bw=".length), "base64url").toString("utf8"),
+  );
+  assert.ok(Array.isArray(raw));
+  assert.equal(raw[0], 4);
+  assert.equal(raw[1], 8);
 
   const decoded = parseShareHash(String(first.fragment));
   assert.ok(decoded && typeof decoded === "object");

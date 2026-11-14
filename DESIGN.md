@@ -686,10 +686,15 @@ something that looked fine until it was measured.
 40. **Autosave captures settled state only.** One debounced write per transaction burst;
     transient interaction state (copy menu, drag, hover, LFO snapshot) is never stored.
     `?fresh` opens an ephemeral session that neither reads nor writes autosave/share state.
-41. **The share link is the fragment, not the page.** `#bw=` carries the document minus the
-    dataset when the budget would overflow, updated with `replaceState` only; a shared link
-    wins over autosave on boot and must stay ≤ ~2 KB at 256 bits. It works from `file://`
-    (no network, no server).
+41. **The share link is the fragment, not the page.** `#bw=` is the canonical **compact
+    codec** (D45): unpadded base64url of a small JSON array (tag, width, view tuple, lane
+    tuples with defaults omitted, route triples, parked bases, optional dataset and the
+    unknown-field `x` slot), written with `replaceState` only. Legacy JSON links from
+    earlier builds still load and upgrade. A shared link wins over autosave on boot and
+    must stay ≤ ~2 KB at 256 bits: measured, an 8-lane 256-bit document is 1260 characters.
+    The builder drops the dataset first, then expression sources, each with an explicit
+    flag — never silently. No UI, view or lane-count behaviour changes with the codec. It
+    works from `file://` (no network, no server).
 42. **Distribution never changes the instrument.** The committed single file
     (`bitwave-v2.html`) keeps zero external references and carries no manifest or
     service-worker registration. The installable build is a separate second output

@@ -295,7 +295,7 @@ function buildDeeplinkData(args: unknown): unknown {
     bad(
       "E_INPUT_TOO_LARGE",
       `share payload is ${link.payloadChars} characters (budget ${SHARE_MAX_CHARS})`,
-      "remove the dataset or use a smaller register width",
+      "remove the dataset or expression sources, or use a smaller register width",
     );
   }
 
@@ -312,6 +312,7 @@ function buildDeeplinkData(args: unknown): unknown {
     payloadChars: link.payloadChars,
     withinBudget: link.withinBudget,
     datasetDropped: link.datasetDropped,
+    expressionsDropped: link.expressionsDropped,
     url,
   };
 }
@@ -416,7 +417,7 @@ export const TOOLS: ToolDef[] = [
     name: "build_deeplink",
     title: "Build a canonical deeplink",
     description:
-      "Validate a .bitwave document (schema 1–4; older schemas are upgraded) and build its canonical schema-4 share fragment (#bw=). Canonical links omit savedAt, so equal state gives equal links; the dataset is dropped if the payload would exceed the 2000-character budget.",
+      "Validate a .bitwave document (schema 1–4; older schemas are upgraded) and build its canonical schema-4 compact share fragment (#bw=). Canonical links omit savedAt, so equal state gives equal links; the dataset is dropped first and expression sources second if the payload would exceed the 2000-character budget, each reported by its own flag.",
     scope: "pure",
     inputSchema: {
       type: "object",

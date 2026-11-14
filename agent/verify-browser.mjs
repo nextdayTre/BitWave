@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Independent browser verification for the BitWave agent layer (toolset 1.2.0).
+ * Independent browser verification for the BitWave agent layer (toolset 1.3.0).
  *
  * Drives the built single-file artifact (`bitwave-v2.html`) over `file://` in a
  * fresh-profile headless Chrome/Edge over the DevTools Protocol, then asserts the
@@ -55,7 +55,7 @@ function flag(name, fallback) {
 const artifactPath = resolve(flag("--artifact", join(ROOT, "bitwave-v2.html")));
 const artifactUrl = pathToFileURL(artifactPath).href;
 
-/** The bridge surface the contract promises: v1 base + 1.1.0 additions + 1.2.0 schema-4 documents. */
+/** The bridge surface the contract promises: v1 base + 1.1.0 additions + the 1.2.0 schema-4 document shape (links are compact since 1.3.0). */
 const BRIDGE_KEYS = [
   "schemaVersion",
   "version",
@@ -970,7 +970,7 @@ async function main() {
     await browser.close();
   }
 
-  console.log("BitWave agent browser verification (toolset 1.2.0 / schema 4)");
+  console.log("BitWave agent browser verification (toolset 1.3.0 / schema 4)");
   console.log(`  artifact: ${artifactPath} (${existsSync(artifactPath) ? readFileSync(artifactPath).length : 0} bytes)`);
   console.log(`  browser:  ${chromePath}`);
   console.log(

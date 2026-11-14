@@ -8,7 +8,7 @@ also exposes its machine-readable state at `#bitwave-state` (see
 So prefer a **deeplink + state JSON pair** over prose, and never infer state from pixels.
 The images in `docs/agent/` are reproducibility fixtures, not the source of truth.
 
-Since the external-routing slice (toolset `1.1.0`, `.bitwave` schema 3; schema 4 since toolset `1.2.0`, D44) the default view
+Since the external-routing slice (toolset `1.1.0`, `.bitwave` schema 3; schema 4 since toolset `1.2.0`, D44; compact `#bw=` links since toolset `1.3.0`, D45) the default view
 also contains the **Record** control and the source table can carry **`expr`** rows. The
 Record take is transient session state, so its screenshot is driven over CDP rather than
 through a deeplink; everything else is still a link.

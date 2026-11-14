@@ -1,10 +1,10 @@
 # Dynamic lanes — design note
 
 **Status: building (author-approved 2026-11-14, D43).** The pass is staged and each slice
-lands on its own gates: 1) core lane/frame naming primitives → 2) state + schema 4 +
-migration → 3) compact share codec + budget proof → 4) shipped UI (cap 8, live `+`,
-lane sets, source table, keyboard) → 5) agent surface, manifest/docs. See §11 for the
-approved decisions and slice status.
+lands on its own gates: 1) core lane/frame naming primitives (**landed**) → 2) state +
+schema 4 + migration (**landed**, D44) → 3) compact share codec + budget proof (**landed**,
+D45) → 4) shipped UI (cap 8, live `+`, lane sets, source table, keyboard) → 5) agent
+surface, manifest/docs. See §11 for the approved decisions and slice status.
 
 The author asked how many lanes the instrument could support, and whether the FRAMES
 panel should grow a `+` for new lanes. The answer depends on which ceiling is meant: the
@@ -76,7 +76,7 @@ The surfaces that grow with `L` are JSON, DOM rows, lane buttons and the share l
 
 ## 4. The share link is the first real gate
 
-The canonical `#bw=` link has a ~2000-character design budget. Three lanes already use a
+The canonical `#bw=` link has a 2000-character design budget. Three lanes already use a
 meaningful fraction of it at 256 bits, especially with expressions; the builder drops the
 dataset before giving up.
 
@@ -97,6 +97,42 @@ promising a large cap, choose one:
 
 **Recommendation:** cap the first dynamic build at 8 and keep the 2 KB promise while a
 compact encoding is designed; do not ship 13 lanes with a link that silently truncates.
+
+**Shipped 2026-11-14 (D45): the compact codec, budget kept.** Option 1 landed without
+raising the budget: the link is base64url of a compact JSON array of lane tuples (defaults
+omitted, raw-bit register words, route triples, port-sorted parked bases, unknown fields
+under `x`). It keeps the 2 KB promise for 8-lane documents and still decodes every legacy
+JSON link. Measured payload characters (after `bw=`; reproducible with
+`node tools/share-budget.mjs`):
+
+| fixture | raw compact | after drop policy | flags |
+|---|---:|---:|---|
+| 3 lanes · 64-bit · no dataset | 243 | 243 | — |
+| 3 lanes · 64-bit · expressions | 507 | 507 | — |
+| 3 lanes · 64-bit · 3×3 dataset | 458 | 458 | — |
+| 3 lanes · 64-bit · dataset + expressions | 722 | 722 | — |
+| 3 lanes · 256-bit · no dataset | 500 | 500 | — |
+| 3 lanes · 256-bit · expressions | 764 | 764 | — |
+| 3 lanes · 256-bit · 3×3 dataset | 715 | 715 | — |
+| 3 lanes · 256-bit · dataset + expressions | 979 | 979 | — |
+| **8 lanes · 256-bit · no dataset** | **1260** | **1260** | — |
+| 8 lanes · 256-bit · expressions | 1978 | 1978 | — |
+| 8 lanes · 256-bit · 3×3 dataset | 1475 | 1475 | — |
+| 8 lanes · 256-bit · dataset + expressions | 2192 | 1978 | `datasetDropped` |
+| 8 lanes · 256-bit · 8×8 dataset | 2978 | 1260 | `datasetDropped` |
+| 8 lanes · 256-bit · 8 routes + expressions | 2658 | 1940 | `expressionsDropped` |
+| 8 lanes · 256-bit · dataset + 8 routes + expressions | 2872 | 1940 | both |
+| 8 lanes · 256-bit · 16 routes (fully routed) | 2623 | 2623 | `withinBudget:false` |
+
+The target is met with headroom: **8 lanes / 256-bit / no dataset = 1260 characters**
+(740 below the budget). Datasets and expression sources are the overflow drivers, so the
+drop order is dataset first (`datasetDropped`, existing) then expressions
+(`expressionsDropped`, additive) — each reported, never silent. A fully routed 16-route
+8-lane 256-bit document is the one case that still cannot fit; it is reported as
+`withinBudget:false` and the app writes no link (the UI slice will show the count). No
+budget raise is needed for the 8-lane cap; a later raw-bit/parked compression or a
+documented subset remains the path if 13 lanes or fully routed 8-lane links must be
+portable.
 
 ## 5. UI shape
 
@@ -183,8 +219,10 @@ maps by key (the shipped tree still has three lanes until slice 4), and routing
 evaluation is lane-set aware so an 8-lane document derives every Z. The agent layer is
 minimally updated: `build_deeplink` accepts schema 1–4 and canonicalises to 4, boot/
 example documents are schema 4, and the toolset is **1.2.0**; lane-count/selector enums
-stay three-lane until the agent-surface slice. Not yet shipped: the compact codec and
-its budget proof (next slice) and the `fold` persistence/hinge UI (UI slice).
+stay three-lane until the agent-surface slice. The compact codec and its budget proof
+landed as **D45** (toolset **1.3.0**): canonical links are compact, legacy JSON links
+still load, and §4 records the measured payload table. Not yet shipped: the `fold`
+persistence/hinge UI and the live lane UI (UI slice).
 
 Once lanes are dynamic, `.bitwave` cannot keep a closed three-key `lanes` object as the
 only shape. The pre-decision survey is kept here for the record; the shipped shape above
@@ -214,7 +252,8 @@ This is broader than the UI plus button; it is a state-model pass.
 2. **Dynamic-lanes spike**: generalize the core lane/frame name table and routing to a
    supplied lane list (still 8 max in the app), behind a dev flag or temporary build.
 3. **Share budget decision + compact encoding**: prove an 8-lane, 256-bit document fits a
-   portable link, or explicitly raise the budget.
+   portable link, or explicitly raise the budget. **Shipped (D45):** compact codec, 1260
+   characters at 8 lanes/256 bits, budget unchanged; see §4.
 4. **UI**: `+` menu, dynamic FRAMES list, source table grouping, stage-bar overflow,
    duplicate/delete, keyboard.
 5. **Schema/agent migration**: one deliberate schema bump carrying dynamic lanes and the
@@ -253,10 +292,10 @@ with the `+` tile naming the 3-lane cap.
 | Lane identity | **stable name index** — lane key `"1"`..`"13"`, gaps allowed; frame names derive from the index (`0 → A/B/Z1`, `3 → G/H/Z4`); deleting never renumbers existing lanes |
 | Add | a blank lane allocating the **lowest free pair**; the new lane is focused |
 | Duplicate / delete | duplicate copies register values, operator, visibility, expressions and fold, **not** route edges (routing/bindings stay an explicit second decision); delete warns when the lane's frames are referenced and clears its routes/parked bases |
-| Share link | **compact codec** for the `#bw=` fragment (lane tuple arrays, defaults omitted, route triples); proof target: an 8-lane, 256-bit, no-dataset document stays portable (~2 KB promise, measured and reported in the UI); if it still overflows, explicit drop flags (`datasetDropped` / expressions dropped) — never silent |
+| Share link | **compact codec shipped (D45)** for the `#bw=` fragment: base64url of a compact JSON array — lane tuples, defaults omitted, route triples, raw-bit register words, unknown fields under `x`; measured **8 lanes/256-bit = 1260 chars** (740 headroom), so the ~2 KB promise holds without a budget raise; if it still overflows, explicit drop flags (`datasetDropped` then `expressionsDropped`) — never silent |
 | UI | stage bar scales to the lane set (wrapping/scrolling, `Alt+1..8`); split stays exactly two panes; extra lanes are browsed in the frames view, not all displayed; frames view gets the live `+` with a disabled cap state |
 | Out of scope | lane rename (breaks frame references), 13-lane ship, per-lane undo |
 
 Slices (each a reviewed commit): **1** core naming primitives (behaviour-identical),
-**2** state + schema 4 + migration, **3** compact codec + budget, **4** UI + DESIGN
-amendment, **5** agent surface + manifest/toolset bump + docs + full `npm run verify`.
+**2** state + schema 4 + migration, **3** compact codec + budget (landed, D45),
+**4** UI + DESIGN amendment, **5** agent surface + manifest/toolset bump + docs + full `npm run verify`.

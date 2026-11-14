@@ -1,6 +1,6 @@
 # BitWave — implementation status
 
-**Updated:** 2026-11-14 · **Phase:** F0 **done**, F1 **done**, F2 spine + render + UI modules done (pointer/lane controllers still in `main.js`), F3 source table + frame routing **done**, F4 accessibility + IA **done**, F5 persistence & reach **done**, **F6 distribution done**, the **agent interface done** (2026-11-08), the **external-routing slice done** (2026-11-08, D40) — expression sources, a DAW-style Record/log, `.bitwave` schema 3, and bridge `setExpression`/`record`/`getLog` (toolset 1.1.0) — the **frame-navigation pair done** (2026-11-14, D41/D42), and the **dynamic-lanes pass** started 2026-11-14 (D43): cap 8, stable name-index lanes, compact share codec, staged slices. Landed so far: **core naming primitives**, **state lane-key identity** (A/B/C slots removed, three-lane pixels unchanged) and **`.bitwave` schema 4 + migration** (D44: lane map keyed by stable lane key, gaps, cap 8, schema 1/2/3 upgrade, toolset 1.2.0, three-lane document unchanged in the new shape). Pending: compact share codec + budget proof, live lane UI, agent-surface widening. The plan's funded path is complete; Tauri remains deferred (D37).
+**Updated:** 2026-11-14 · **Phase:** F0 **done**, F1 **done**, F2 spine + render + UI modules done (pointer/lane controllers still in `main.js`), F3 source table + frame routing **done**, F4 accessibility + IA **done**, F5 persistence & reach **done**, **F6 distribution done**, the **agent interface done** (2026-11-08), the **external-routing slice done** (2026-11-08, D40) — expression sources, a DAW-style Record/log, `.bitwave` schema 3, and bridge `setExpression`/`record`/`getLog` (toolset 1.1.0) — the **frame-navigation pair done** (2026-11-14, D41/D42), and the **dynamic-lanes pass** started 2026-11-14 (D43): cap 8, stable name-index lanes, compact share codec, staged slices. Landed so far: **core naming primitives**, **state lane-key identity** (A/B/C slots removed, three-lane pixels unchanged), **`.bitwave` schema 4 + migration** (D44: lane map keyed by stable lane key, gaps, cap 8, schema 1/2/3 upgrade, three-lane document unchanged in the new shape) and the **compact `#bw=` codec + budget proof** (D45: 8 lanes/256-bit = 1260 chars, legacy JSON links still load, dataset/expression drops flagged, toolset 1.3.0). Pending: live lane UI, agent-surface widening. The plan's funded path is complete; Tauri remains deferred (D37).
 **Source of truth:** [`PLAN.md`](PLAN.md) for the plan, [`DECISIONS.md`](DECISIONS.md) for choices taken, [`DESIGN.md`](DESIGN.md) for the visual contract. `index.html` is still untouched and remains the shipping instrument.
 
 ## Author decisions (2026-11-06)
@@ -40,7 +40,7 @@ cell enough? Confirm before the matrix lands in the app.
 | **Agent interface** | **Done** | Additive agent layer (2026-11-08): `src/core/agent-*.ts` one registry/state/deeplink source; `window.bitwave` bridge (state/setters/call/subscribe/events) beside the untouched `window.BitWave`; hidden `#bitwave-state` + `body[data-agent-ready]`; `keys | agent` help-panel tab; `agent/cli.mjs` + `agent/mcp-server.mjs` (zero deps); generated `agent/manifest.json` + examples (`--check`); AGENTS/contract/llms/screenshot/ecosystem docs; hosted build serves the agent files. Default rendering pixel-identical (D39). |
 | **External routing** | **Done** | `.bitwave` schema 3 (expressions additive; schema 1/2 load); six source rows gain a validated `expr` editor; DAW-style Record toggle + bounded transient frame log + `export log`; expression-aware clocked pass (routes → expression sources → Z) with the previous row as `log.<frame>`; bridge `setExpression`/`record`/`getLog`, state `recording` + per-lane `expressions`; toolset 1.1.0. Float is a boundary authoring format (converted once to exact values). D40. |
 | **Frame navigation** | **Done (2026-11-14)** | A/B/Z1 readout labels are focus buttons bound to the whole-word hex entry (D41); the pop-out frame navigator is replaced by the stage-level **frames view** — equal cards per frame, lane columns, mini-splines, per-card eyes, `unpair B`, horizontal scroll arrows/track, `Lanes`/Esc return, and a perpetual `+` tile that names the 3-lane cap until dynamic lanes (D42). Canvas hidden while open; strip/meta/controls stay live; default pixels unchanged when closed. |
-| **Dynamic lanes (D43/D44)** | **In progress** | Core naming primitives and state lane-key identity landed; **`.bitwave` schema 4 + migration landed (D44)**: `lanes` is keyed by the stable lane key (`"1"`..`"13"`, gaps allowed, at most `APP_LANE_CAP` (8) lanes, ascending numeric order), schema 1/2/3 documents and `#bw=` links load and upgrade on read, 9 lanes/invalid keys are refused, Z is never stored; the app bridge maps by key and still ships three lanes (wider documents load the representable lanes, and a dropped route restores its parked base); routing evaluation is lane-set aware. Agent: schema-4 boot/example documents, `build_deeplink` accepts schema 1–4 and canonicalises to 4, toolset **1.2.0**. Pending: compact codec + budget proof, live lane UI (cap 8, `+`, deletion), agent-surface widening. |
+| **Dynamic lanes (D43/D44/D45)** | **In progress** | Core naming primitives and state lane-key identity landed; **`.bitwave` schema 4 + migration landed (D44)**: `lanes` is keyed by the stable lane key (`"1"`..`"13"`, gaps allowed, at most `APP_LANE_CAP` (8) lanes, ascending numeric order), schema 1/2/3 documents and `#bw=` links load and upgrade on read, 9 lanes/invalid keys are refused, Z is never stored; the app bridge maps by key and still ships three lanes (wider documents load the representable lanes, and a dropped route restores its parked base); routing evaluation is lane-set aware. **Compact share codec + budget proof landed (D45)**: canonical `#bw=` links are compact (8 lanes/256-bit = 1260 chars against the unchanged 2000 budget), legacy JSON links load, the dataset drops first then expression sources with explicit `datasetDropped`/`expressionsDropped` flags; the address bar, `getDeeplink()`, `build_deeplink` and the CLI agree; toolset **1.3.0**, artifacts regenerated. Pending: live lane UI (cap 8, `+`, deletion), agent-surface widening. |
 | **F6 Distribution** | **Done** | Hosted/installable PWA build (`dist/hosted/`): manifest + maskable icons, hash-versioned app-shell service worker, relative URLs, offline reload. The committed single-file `bitwave-v2.html` is untouched and still has zero external references (asserted). `npm run check:pwa` proves install/offline against the real built output; deploy/install/privacy guidance in [`docs/hosting.md`](docs/hosting.md). Tauri 2 deferred (D37). |
 
 ## F4 progress (2026-11-06) — complete
@@ -211,8 +211,8 @@ the document shape it needs, with no UI change yet:
 - **Migration.** A schema 1/2/3 document (the closed three-lane object) loads and upgrades
   on read; the writer always emits schema 4; a schema 5 payload takes the existing
   `newer-schema` refusal; unknown top-level fields survive load/save and now canonical
-  links too. The share codec is unchanged (same JSON + base64url; dataset dropped only on
-  overflow and reported) — the compact codec is the next slice.
+  links too. The share codec was still the JSON + base64url form in this slice (dataset
+  dropped only on overflow and reported); the compact codec landed next (D45, below).
 - **Core/state.** `src/core/project.ts` owns the keyed map, cap and migration;
   `markDelays`/`topoOrder`/`evaluateAll` are lane-set aware so an 8-lane document derives
   every Z and routes across new lanes; `src/state/project-bridge.ts` maps by key and still
@@ -228,7 +228,62 @@ the document shape it needs, with no UI change yet:
   round-trip for three lanes and a wider/gapped document; agent tool/transport/example
   artifacts updated.
 
+## Dynamic lanes — compact share codec (2026-11-14) — slice 3 landed
+
+**Compact `#bw=` payload + budget proof (D45).** No UI or lane-count change: the default
+three-lane instrument still renders pixel-identically, and every legacy link still loads.
+
+- **Codec.** The canonical link is now `#bw=<unpadded base64url(UTF-8 compact JSON
+  array)>`: `[tag=4, N, view, lanes, routes, parked, dataset?, x?]` (lane tuples with
+  defaults omitted, route triples, raw-bit register words, unknown fields under `x`).
+  Decode inspects the JSON value: array = compact (expanded to a schema-4 document),
+  object = legacy JSON (upgraded on read). `parseShareHash` is the front door; a corrupt
+  or truncated payload is refused, and a newer tag takes the existing `newer-schema`
+  refusal.
+- **Canonical rules.** Ascending lane key, destination-sorted routes, port-sorted parked
+  bases, no `savedAt`; equal state ⇒ equal link. The app path
+  (`src/io/share-url.js` → `buildShareLink(captureProject())`, i.e. the address bar and
+  `getDeeplink()`), `build_deeplink` and the CLI `deeplink` command share one builder.
+- **Budget proof (unchanged `SHARE_MAX_CHARS` = 2000).** Measured payload characters:
+  3/64 no dataset 243, 3/256 500, **8/256 no dataset 1260** (740 headroom),
+  8/256 + 3×3 dataset 1475, 8/256 + expressions 1978, 8/256 + dataset + expressions
+  2192 → dataset dropped → 1978, 8/256 + 8 routes + expressions 2658 → expressions
+  dropped → 1940. Full table: `docs/DYNAMIC-LANES.md` §4; reproducible with
+  `node tools/share-budget.mjs`. Drop order is dataset first (`datasetDropped`, existing)
+  then expression sources (`expressionsDropped`, additive) — never silent; a document that
+  still overflows returns `withinBudget:false` (the app writes no link).
+- **Agent.** `TOOLSET_VERSION` bumps to **1.3.0** (canonical link format changed; legacy
+  links load); `agent/manifest.json` + `agent/examples/` regenerated; `build_deeplink`
+  reports `expressionsDropped`; the bridge surface, state shape and lane enums are
+  unchanged.
+- **Tests.** Compact round-trip/determinism, defaults omission/restoration, unknown-field
+  `x`, legacy JSON decode/upgrade, corrupt/truncated refusal, the measured budget table and
+  drop flags, and app-vs-agent canonical agreement; existing assertions were kept.
+
 ## Verified this session
+
+### Compact-codec slice gates (2026-11-14, D45)
+
+- `npm test` → **159 + 10 tests, all pass, 0 fail** (adds compact round-trip/determinism,
+  legacy-payload, unknown-field, corrupt/truncated, measured-budget/drop-flag and
+  app-vs-agent-agreement tests; the existing share/project assertions are kept).
+- `npm run typecheck` → **clean**.
+- `node agent/gen-agent-artifacts.mjs --check` → **8 files current** after intentional
+  regeneration (toolset 1.3.0, compact `build_deeplink` example, 162-char payload).
+- `node agent/selftest.mjs` → **23/23**.
+- `npm run build` → **`bitwave-v2.html` 322,222 B (314.7 KB)**, single file, no external
+  references.
+- `node tools/browser-check.mjs` → **54/54**; the F5 share check now mirrors the compact
+  payload (256-bit link **496 characters**, down from the legacy JSON size) and still
+  round-trips.
+- `node agent/verify-browser.mjs` → **31/31** (the `#bw=` reload check decodes the compact
+  payload back to a schema-4 document with expression sources).
+- `node tools/build-pwa.mjs && node tools/check-pwa.mjs` → **8/8**.
+- Parity: `node tools/browser-check.mjs --compare <HEAD artifact>` → **6/6 states
+  pixel-identical** (55/55 checks with `--compare`). One first run flagged the known
+  compositing-flaky `3d-focus-z1` state (24 pixels at ≤2 channel levels, the exact
+  software-rasterisation jitter the harness comments describe); the retry was clean and
+  byte-identical, so the default three-lane instrument is unchanged.
 
 ### Schema-4 persistence slice gates (2026-11-14)
 

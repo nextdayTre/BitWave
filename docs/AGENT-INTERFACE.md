@@ -1,4 +1,4 @@
-# Agent Interface Contract — bitwave v1 (toolset 1.2.0)
+# Agent Interface Contract — bitwave v1 (toolset 1.3.0)
 
 Normative contract for BitWave's agent layer. The human-facing onboarding is
 [`AGENTS.md`](../AGENTS.md); this file is the precise spec the browser bridge, CLI and
@@ -24,7 +24,7 @@ Design rules:
 |---|---|
 | tool id | `bitwave` |
 | title | `BitWave` |
-| toolset version | `1.2.0` |
+| toolset version | `1.3.0` |
 | `schemaVersion` | `1` |
 | browser bridge | `window.bitwave` |
 | legacy surface | `window.BitWave` (schema 1, read-only, unchanged) |
@@ -40,7 +40,7 @@ Exports:
 
 ```ts
 export const SCHEMA_VERSION: 1
-export const TOOLSET_VERSION: "1.2.0"
+export const TOOLSET_VERSION: "1.3.0"
 export const TOOL_ID: "bitwave"
 export class AgentToolError extends Error { code; hint? }
 export const TOOLS: ToolDef[]              // definition order is canonical
@@ -158,23 +158,27 @@ Args: `{ project: object, base?: string }` (`project` is a `.bitwave` schema 1�
 older schemas upgrade on read).
 
 Validates with `deserializeProject` (throws `E_INVALID_PROJECT` on malformed/newer/
-foreign documents), re-serializes canonically **as schema 4 and without `savedAt`** (so a
-state has one link), and returns:
+foreign documents), re-serializes canonically **as schema 4, without `savedAt`, in the
+compact payload (D45)** (so a state has one link), and returns:
 
 ```json
-{ "fragment": "#bw=…", "payloadChars": 1180, "withinBudget": true,
-  "datasetDropped": false, "url": "http://localhost:8000/#bw=…" }
+{ "fragment": "#bw=…", "payloadChars": 162, "withinBudget": true,
+  "datasetDropped": false, "expressionsDropped": false,
+  "url": "http://localhost:8000/#bw=…" }
 ```
 
 - `payloadChars` counts the characters after `bw=` (no `#`); budget is `SHARE_MAX_CHARS`
   (2000, §10.41).
-- If the dataset would overflow the budget and a dataset is present, drop it, set
-  `datasetDropped:true`, and return the smaller link; if it still overflows →
-  `E_INPUT_TOO_LARGE`.
+- Budget policy, in order: if the payload would overflow and a dataset is present, drop
+  it, set `datasetDropped:true` and re-measure; if it would still overflow and expression
+  sources are present, drop them, set `expressionsDropped:true` and re-measure. Neither
+  drop is silent. If the payload still overflows → `withinBudget:false` (the app writes no
+  link) and the tool fails with `E_INPUT_TOO_LARGE`.
 - `url` is `null` when `base` is omitted; otherwise `base` (an absolute URL without a
   fragment) with the `#bw=…` fragment appended.
 - The fragment must round-trip: `parseShareHash(fragment)` deserializes to the same
-  engine state.
+  engine state. The generated `agent/examples/build_deeplink.json` shows the 162-character
+  8-bit example document.
 
 ## 4. Envelope and error codes
 
@@ -199,14 +203,49 @@ Setters may also return `E_BAD_STATE` for a well-formed patch that cannot apply.
 
 ## 5. Deeplink grammar
 
-BitWave's view state is already the URL fragment (`#bw=`), produced by
-`shareFragment(doc)` (`src/core/share.ts`):
+BitWave's view state is already the URL fragment (`#bw=`), produced canonically by
+`buildShareLink(doc)` (`src/core/agent-share.ts`):
 
 ```
-bitwave-v2.html#bw=<unpadded base64url(UTF-8 JSON .bitwave schema 4)>
+bitwave-v2.html#bw=<unpadded base64url(UTF-8 compact JSON array)>
 ```
 
-- Parse/validate with `parseShareHash(hash)`; a corrupt payload is refused; a hash
+The canonical compact payload (D45, `src/core/share.ts`):
+
+```
+[ tag, N, view, lanes, routes, parked, dataset?, x? ]
+
+  tag     = 4 — the `.bitwave` schema this payload expands to. A newer tag is refused
+            as `newer-schema`, never half-applied.
+  N       = register width.
+  view    = [lane, flags, pairLane, pairLane, activePane, lfoMode?, lfoRate?]
+            flags = view3d | split3d<<1
+  lanes   = ascending lane-key order, each
+            [key, a, b, showB, binop, edit, seededB, lfoB, colA, colB,
+             focus?, frameVis?, expressions?]
+  routes  = destination order, each [fromLane, fromFrame, toLane, toFrame, mix]
+            (delay is recomputed from the graph on load)
+  parked  = port order, each [lane, frame, base]
+  dataset = [cols, rows] or [cols, rows, index] — present only when the document has one
+  x       = unknown top-level document fields, preserved verbatim (D44)
+```
+
+- `a`/`b`/`base` register words are unpadded base64url of the raw `N/8` bytes of the
+  word in canonical hex order; the header `N` restores the word. Enums are indices into
+  the canonical orders (`binop`: and, or, xor, add, sub; `mix`: set, add, xor; frames
+  a/b/z; edit a/b) and flags are `0`/`1`. Documented defaults are omitted: the trailing
+  lane fields are absent when `focus` is `a`, `frameVis` is all-visible and there are no
+  expressions; `lfoMode`/`lfoRate` are absent at rotcw/4. Decoding restores every
+  default.
+- Canonical rules: ascending numeric lane key, routes destination-sorted, parked bases
+  port-sorted, no `savedAt`; equal engine state ⇒ equal link. The live address bar,
+  `window.bitwave.getDeeplink()`, `build_deeplink` and the CLI `deeplink` command all
+  write this same payload.
+- Parse/validate with `parseShareHash(hash)`: it inspects the decoded JSON value — an
+  **array** is the compact payload, expanded back to a schema-4 document; an **object**
+  is a legacy schema 1–4 JSON document, returned as-is for `deserializeProject` to
+  upgrade on read. Links written by builds up to toolset 1.2.0 keep loading. A corrupt
+  or truncated payload is refused (`ProjectError`, `malformed`/`newer-schema`); a hash
   without `bw=` is ignored.
 - The document is schema 4 (D44): `lanes` is keyed by the stable lane key string
   (`"1"`..`"13"`, gaps allowed, at most 8 lanes per document) in ascending numeric key
@@ -216,9 +255,14 @@ bitwave-v2.html#bw=<unpadded base64url(UTF-8 JSON .bitwave schema 4)>
   sharing (an ephemeral session).
 - The app mirrors settled state with a debounced `history.replaceState` (~550 ms),
   never `pushState`; reloading a link reproduces the state. Works over `file://`.
-- Canonical links omit `savedAt`, so equal state ⇒ equal link (the live app and
-  `build_deeplink` share this rule). The 2000-character budget/dataset-drop rule is
-  unchanged; a compact codec is a later slice.
+- Budget: `SHARE_MAX_CHARS` = 2000 characters after `bw=`. Measured compact sizes (D45):
+  3 lanes/64-bit no dataset **243**; 3/256 **500**; 8/256 no dataset **1260** (740
+  headroom). The full table, including the dataset and expression rows and the drop
+  cases, is in `docs/DYNAMIC-LANES.md` §4 and reproducible with
+  `node tools/share-budget.mjs`. The builder drops the dataset first
+  (`datasetDropped`) and expression sources second (`expressionsDropped`) only when the
+  link would still overflow; `withinBudget:false` is reported rather than silently
+  truncating.
 - A link is portable only when the app file is available; the CLI/MCP path needs no URL.
 
 ## 6. UI state — `getState()` and `#bitwave-state`
@@ -255,7 +299,7 @@ once mounted and contains `JSON.stringify(getState())`. `getState()` returns:
   "editing": { "copyArmed": false, "enabled": true },
   "recording": { "on": false, "rows": 0 },
   "deeplink": "file:///…/bitwave-v2.html#bw=…",
-  "bridge": { "schemaVersion": 1, "version": "1.2.0" }
+  "bridge": { "schemaVersion": 1, "version": "1.3.0" }
 }
 ```
 
@@ -282,7 +326,7 @@ once mounted and contains `JSON.stringify(getState())`. `getState()` returns:
 
 ```js
 window.bitwave = {
-  schemaVersion: 1, version: "1.2.0", ready: true,
+  schemaVersion: 1, version: "1.3.0", ready: true,
   getState(), getManifest(), tools(), call(name, args),
   getDeeplink(),
   setState(patch), setLane(n), setFrame(name), setView(mode), setWidth(bits),
@@ -346,7 +390,7 @@ Automation hooks (additive attributes only):
 
 ```json
 {
-  "id": "bitwave", "title": "BitWave", "version": "1.2.0", "schemaVersion": 1,
+  "id": "bitwave", "title": "BitWave", "version": "1.3.0", "schemaVersion": 1,
   "description": "…",
   "urls": { "app": "bitwave-v2.html", "manifest": "agent/manifest.json",
             "agents": "AGENTS.md", "interface": "docs/AGENT-INTERFACE.md" },
@@ -403,7 +447,7 @@ Commands: `manifest`, `analyze_register`, `evaluate_lane`, `compare_operands`,
 Newline-delimited JSON-RPC 2.0 over stdio, zero dependencies.
 
 - `initialize` → `{ protocolVersion: "2025-06-18", capabilities: { tools: {} },
-  serverInfo: { name: "bitwave", version: "1.2.0" } }`
+  serverInfo: { name: "bitwave", version: "1.3.0" } }`
 - `notifications/initialized` → no response.
 - `ping` → `{}`.
 - `tools/list` → `{ tools: [{ name, description, inputSchema }] }` (pure tools only).

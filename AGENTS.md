@@ -12,7 +12,7 @@ disagree: one implementation, one envelope, deterministic output.
 
 Onboarding path: this file → the normative contract
 [`docs/AGENT-INTERFACE.md`](docs/AGENT-INTERFACE.md). User docs:
-[`README.md`](README.md). Version: toolset `1.2.0`, state schema `1`, `.bitwave` schema
+[`README.md`](README.md). Version: toolset `1.3.0`, state schema `1`, `.bitwave` schema
 `4` (schema 1/2/3 still load and upgrade).
 
 ## Quick start
@@ -70,21 +70,29 @@ saw-up/sine `AND` lane 3.
 
 ### 1. URL deep links
 
-The URL fragment is the whole view state, encoded by the `.bitwave` schema-4 codec
-(schema 1/2/3 still load and upgrade on read):
+The URL fragment is the whole view state, written by the canonical **compact codec**
+(D45; legacy JSON links from earlier builds still decode and upgrade — schemas 1–4):
 
 ```
-bitwave-v2.html#bw=<unpadded base64url(UTF-8 JSON document)>
+bitwave-v2.html#bw=<unpadded base64url(UTF-8 compact JSON array)>
 ```
 
+- The compact payload is `[tag=4, N, view, lanes, routes, parked, dataset?, x?]`: lane
+  tuples with documented defaults omitted, route triples, parked bases, register words
+  as raw-bit base64url, and unknown top-level fields carried under `x`. The full layout is
+  in `docs/AGENT-INTERFACE.md` §5 and `DECISIONS.md` D45.
 - A document is a lane map keyed by the stable lane key (`"1"`..`"13"`, gaps allowed, at
   most 8 lanes, ascending numeric key order); a schema 1/2/3 document is the closed
   three-lane object. Z is never stored.
 - Build canonical links headlessly with `node agent/cli.mjs deeplink --project
   examples/demo.bitwave.json --base "file:///C:/path/to/bitwave-v2.html" --json`
-  (or `window.bitwave.getDeeplink()` in a live page).
+  (or `window.bitwave.getDeeplink()` in a live page). The address bar, `getDeeplink()`,
+  `build_deeplink` and the CLI all write the same payload for the same state.
 - Canonical links omit `savedAt`, so equal state ⇒ equal link; the app mirrors settled
   state with `history.replaceState` (debounced, no history entries).
+- The 2000-character budget drops the dataset first (`datasetDropped`) and expression
+  sources second (`expressionsDropped`) with explicit flags; an 8-lane 256-bit document
+  measures 1260 characters (`node tools/share-budget.mjs`).
 - Reloading a link reproduces the state; a corrupt payload is refused; `?fresh` disables
   autosave and sharing.
 - Links work over `file://` because only the fragment is used. Over `file://` a copied
@@ -94,7 +102,7 @@ bitwave-v2.html#bw=<unpadded base64url(UTF-8 JSON document)>
 
 ```js
 window.bitwave.schemaVersion            // 1
-window.bitwave.version                  // "1.2.0"
+window.bitwave.version                  // "1.3.0"
 window.bitwave.getState()               // full UI state (§6 of the contract)
 window.bitwave.getManifest()            // manifest data
 window.bitwave.tools()                  // tool definitions
@@ -212,7 +220,7 @@ node agent/verify-browser.mjs
 | `docs/AGENT-INTERFACE.md` | contract: tools, envelope, deeplink, state, bridge, CLI, MCP |
 | `docs/AGENT-SCREENSHOTS.md` | reproducible states + headless Chrome recipes |
 | `docs/BITWAVE-ECOSYSTEM-MAP.md` | sibling tools and what a handoff would carry |
-| `docs/DYNAMIC-LANES.md` | design note: lane-count ceiling (13/8), `+` menu, share budget; schema 4 + migration shipped (D44), compact codec/UI pending |
+| `docs/DYNAMIC-LANES.md` | design note: lane-count ceiling (13/8), `+` menu, share budget; schema 4 + migration shipped (D44), compact codec (D45) shipped, UI pending |
 | `docs/EXTERNAL-ROUTING.md` | shipped slice: Record/log and expression operands (schema 3, toolset 1.1.0) |
 | `agent/manifest.json` | generated capability manifest (tools, selectors, errors) |
 | `agent/examples/` | generated example envelopes, one per tool |

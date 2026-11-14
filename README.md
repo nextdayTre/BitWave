@@ -78,7 +78,7 @@ Paths: `assets/pwa/` holds the committed icons (regenerate with
 ## Verify
 
 ```bash
-npm test               # DOM-free core + state + bindings + project/share + agent layer: 112 + 6 tests, zero dependencies
+npm test               # DOM-free core + state + bindings + project/share + agent layer: 169 tests, zero dependencies
 npm run check:browser  # 52 artifact checks in headless Chromium (53 with --shots or --compare)
 npm run check:pwa      # 8 hosted/PWA checks incl. a server-down offline reload + served agent files
 npm run capture        # state screenshots → .tmp-captures/
@@ -165,8 +165,9 @@ remaining boundary (expression-only dependency ordering, float-valued mode).
 
 ### 1. URL deep links
 
-The URL fragment is the whole view state, encoded by the `.bitwave` schema-4 codec.
-A schema-1/2/3 document and its `#bw=` link still load and upgrade on read: the `lanes`
+The URL fragment is the whole view state, written by the compact `.bitwave` codec
+(D45): `#bw=` is unpadded base64url of a compact JSON array, not the JSON document.
+Legacy JSON links and schema-1/2/3 documents still load and upgrade on read: the `lanes`
 object is keyed by the stable lane key (`"1"`..`"13"`, gaps allowed, at most 8 lanes per
 document, ascending key order) and the shipped build always writes schema 4. Build
 canonical links headlessly:
@@ -178,9 +179,12 @@ node agent/cli.mjs deeplink --project examples/demo.bitwave.json `
 
 Canonical links omit `savedAt`, so equal state gives an equal link; the app mirrors its
 settled state into the address bar with `history.replaceState` and a reload reproduces
-the view. `?fresh` opens an ephemeral session (no autosave, no share mirroring). Over
-`file://` a copied link is portable only to the same file path; pass an `http(s)` `--base`
-for a portable link.
+the view. The address bar, `getDeeplink()`, `build_deeplink` and the CLI all write the
+same payload. The 2000-character budget keeps an 8-lane 256-bit document portable
+(1260 characters; `node tools/share-budget.mjs` prints the measured table) and drops the
+dataset first, then expression sources, each with an explicit flag. `?fresh` opens an
+ephemeral session (no autosave, no share mirroring). Over `file://` a copied link is
+portable only to the same file path; pass an `http(s)` `--base` for a portable link.
 
 ### 2. Browser bridge — `window.bitwave`
 
@@ -189,7 +193,7 @@ this in the console:
 
 ```js
 window.bitwave.schemaVersion            // 1
-window.bitwave.version                  // "1.2.0"
+window.bitwave.version                  // "1.3.0"
 window.bitwave.getState()               // full UI state (schema 1)
 window.bitwave.getManifest()            // manifest data
 window.bitwave.tools()                  // tool definitions

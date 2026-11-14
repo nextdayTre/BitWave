@@ -154,7 +154,7 @@ const MCP_INPUT = [
     params: {
       protocolVersion: "2025-06-18",
       capabilities: {},
-      clientInfo: { name: "bitwave-selftest", version: "1.2.0" },
+      clientInfo: { name: "bitwave-selftest", version: "1.3.0" },
     },
   }),
   JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }),
@@ -235,7 +235,7 @@ function runChecks() {
       "relatedTools",
     ]);
     assert.equal(envelope.data.id, "bitwave");
-    assert.equal(envelope.data.version, "1.2.0");
+    assert.equal(envelope.data.version, "1.3.0");
     assert.equal(envelope.data.schemaVersion, 1);
     assert.deepEqual(
       envelope.data.tools.map((tool) => tool.name),
@@ -432,7 +432,7 @@ function runChecks() {
     assert.equal(state.dataset, null);
     assert.ok(String(state.deeplink).startsWith("bitwave-v2.html#bw="));
     assert.deepEqual(Object.keys(state.lanes), ["1", "2", "3"]);
-    assert.deepEqual(state.bridge, { schemaVersion: 1, version: "1.2.0" });
+    assert.deepEqual(state.bridge, { schemaVersion: 1, version: "1.3.0" });
   });
 
   check("state --project reports the dataset cursor", () => {
@@ -487,7 +487,7 @@ function runChecks() {
     assert.equal(initialize.jsonrpc, "2.0");
     assert.equal(initialize.result.protocolVersion, "2025-06-18");
     assert.deepEqual(initialize.result.capabilities, { tools: {} });
-    assert.deepEqual(initialize.result.serverInfo, { name: "bitwave", version: "1.2.0" });
+    assert.deepEqual(initialize.result.serverInfo, { name: "bitwave", version: "1.3.0" });
     const ping = responses.find((response) => response.id === 2);
     assert.deepEqual(ping.result, {});
     const list = responses.find((response) => response.id === 3);

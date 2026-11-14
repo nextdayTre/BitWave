@@ -135,8 +135,13 @@ export interface ProjectDoc {
   dataset?: Dataset;
 }
 
-const BINOPS: readonly BinOp[] = ["and", "or", "xor", "add", "sub"];
-const MIXES: readonly MixOp[] = ["set", "add", "xor"];
+/** The binary operators in canonical order; a compact share stores the index. */
+export const PROJECT_BINOPS: readonly BinOp[] = ["and", "or", "xor", "add", "sub"];
+/** The route mix operators in canonical order; a compact share stores the index. */
+export const PROJECT_MIXES: readonly MixOp[] = ["set", "add", "xor"];
+
+const BINOPS = PROJECT_BINOPS;
+const MIXES = PROJECT_MIXES;
 
 /** Schema-2 defaults, used whenever a document omits (or corrupts) a new field. */
 const DEFAULT_FOCUS: FrameKey = "a";
