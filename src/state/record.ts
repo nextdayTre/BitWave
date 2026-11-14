@@ -3,15 +3,15 @@
  *
  * When armed, one row is appended per settled evaluation transaction (the
  * pointer-drag stream is skipped; the row lands on release). Each row holds the
- * nine global frame registers as N-bit uppercase hex plus a monotonic step
- * number. Rows live in memory only (ring buffer, not `.bitwave`, not the share
- * link); an expression can read the previous row as `log.<frame>`.
+ * 3L global frame registers (three per live lane) as N-bit uppercase hex plus a
+ * monotonic step number. Rows live in memory only (ring buffer, not `.bitwave`,
+ * not the share link); an expression can read the previous row as `log.<frame>`.
  *
  * DOM-free: the UI module and the agent bridge both call this module.
  */
 
 import { fromHex, regToBig, toHex } from "../core/registers.ts";
-import { FRAME_NAMES, LANE_KEYS, S } from "./instrument.ts";
+import { FRAME_NAMES, S, liveLaneKeys } from "./instrument.ts";
 
 export const RECORD_CAP = 2048;
 
@@ -54,7 +54,7 @@ export function recordSnapshot(): boolean {
   if (!S.record.on || S.drag >= 0) return false;
 
   const frames: Record<string, string> = {};
-  for (const key of LANE_KEYS) {
+  for (const key of liveLaneKeys()) {
     const sl = S.lanes[key];
     const names = FRAME_NAMES[key];
     frames[names.a] = toHex(sl.A.bits, S.N);
@@ -92,9 +92,13 @@ export function readLog(): Array<{ step: number; frames: Record<string, string> 
   return S.record.rows.map((row) => ({ step: row.step, frames: { ...row.frames } }));
 }
 
-/** Deterministic CSV of the recorded rows (no timestamps). */
+/** Deterministic CSV of the recorded rows (no timestamps). One column per frame. */
 export function recordCsv(): string {
-  const header = ["step", "A", "B", "Z1", "C", "D", "Z2", "E", "F", "Z3"];
+  const header = ["step"];
+  for (const key of liveLaneKeys()) {
+    const names = FRAME_NAMES[key];
+    header.push(names.a, names.b, names.z);
+  }
   const lines = [header.join(",")];
   for (const row of S.record.rows) {
     lines.push(

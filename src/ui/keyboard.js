@@ -2,12 +2,14 @@
  * Keyboard map and file drop — global shortcuts for the instrument.
  *
  * Moved out of main.js in F2. Escape closes the navigator or copy mode,
- * Alt+1/2/3 select a lane (by its stable lane key), Alt+S toggles split;
- * arrows step the dataset.
+ * Alt+1..8 selects a live lane (by its stable lane key; an absent key is a
+ * no-op), Alt+S toggles split; arrows step the dataset. The stage-bar lane
+ * dropdown is the declared lane-selection keyboard path; Alt+digit is the
+ * shortcut beside it.
  */
 
 export function attachKeyboard(deps) {
-  const { frameNav, syncViewUi, selectLane, setSplitMode, applyExample, loadCSV, copyMenu, onDropError, S, DEMO } = deps;
+  const { frameNav, syncViewUi, selectLane, setSplitMode, applyExample, loadCSV, copyMenu, onDropError, S: liveState, DEMO } = deps;
 
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape" && frameNav.isOpen()) {
@@ -15,18 +17,25 @@ export function attachKeyboard(deps) {
       e.preventDefault();
       return;
     }
-    if (e.key === "Escape" && S.copyArmed) {
+    if (e.key === "Escape" && liveState.copyArmed) {
       copyMenu.close(true);
       e.preventDefault();
       return;
     }
     if (e.altKey && !e.ctrlKey && !e.metaKey) {
-      if (e.key === "1" || e.code === "Digit1") { selectLane("1"); if (frameNav.isOpen()) frameNav.render(); e.preventDefault(); return; }
-      if (e.key === "2" || e.code === "Digit2") { selectLane("2"); if (frameNav.isOpen()) frameNav.render(); e.preventDefault(); return; }
-      if (e.key === "3" || e.code === "Digit3") { selectLane("3"); if (frameNav.isOpen()) frameNav.render(); e.preventDefault(); return; }
+      const digit = /^(?:Digit([1-9])|([1-9]))$/.exec(e.code || "") || /^([1-9])$/.exec(e.key || "");
+      const laneKey = digit ? (digit[1] || digit[2]) : null;
+      if (laneKey) {
+        /* Alt+1..8 selects a lane when it exists; the freed/gapped keys simply
+           do nothing (D46: no renumbering, so a live set may be 1, 3, 4). */
+        if (liveState.lanes[laneKey]) selectLane(laneKey);
+        if (frameNav.isOpen()) frameNav.render();
+        e.preventDefault();
+        return;
+      }
       if (e.key === "s" || e.key === "S" || e.code === "KeyS") {
         /* Split is 3-D only; the stage-bar button is disabled in 2-D too. */
-        if (S.view3d) setSplitMode(!S.split3d);
+        if (liveState.view3d) setSplitMode(!liveState.split3d);
         e.preventDefault();
         return;
       }

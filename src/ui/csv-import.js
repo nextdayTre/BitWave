@@ -2,7 +2,7 @@
  * CSV import + example stepper.
  *
  * Moved out of main.js in F2, and re-housed as the source table's data path in
- * F3: an import fills the six bindings with columns, then steps write each
+ * F3: an import fills the live bindings with columns, then steps write each
  * bound input. Driven inputs are left to the routing engine.
  */
 
@@ -15,7 +15,7 @@ import {
   normCell,
   parseDelimited,
 } from "../core/csv.ts";
-import { LANE_KEYS, S, SIZES, syncTarget } from "../state/instrument.ts";
+import { S, SIZES, liveLaneKeys, syncTarget } from "../state/instrument.ts";
 import { DEMO } from "../state/dataset.ts";
 import { DEMO_CSV, DEMO_NAME } from "../state/demo-data.ts";
 import { isInputDriven, resetBindings } from "../state/bindings.ts";
@@ -56,7 +56,7 @@ export function createCsvImport(deps) {
 
   function fitToMappedColumns() {
     let maxBits = 8;
-    for (const k of LANE_KEYS) {
+    for (const k of liveLaneKeys()) {
       const sl = S.lanes[k];
       if (sl.colA >= 0) maxBits = Math.max(maxBits, columnWidth(DEMO.rows, sl.colA));
       if (sl.colB >= 0) maxBits = Math.max(maxBits, columnWidth(DEMO.rows, sl.colB));
@@ -78,7 +78,7 @@ export function createCsvImport(deps) {
       DEMO.i = ((idx % n) + n) % n;
       const row = DEMO.rows[DEMO.i];
 
-      for (const k of LANE_KEYS) {
+      for (const k of liveLaneKeys()) {
         const sl = S.lanes[k];
         if (sl.colA >= 0 && !isInputDriven(sl, "a")) {
           const a = cellToBits(row[sl.colA], columnMode(DEMO.rows, sl.colA));
@@ -159,7 +159,7 @@ export function createCsvImport(deps) {
     DEMO.i = 0;
 
     /* A fresh import replaces the binding board: frame routes are dropped and
-       the six rows are filled from the imported columns (D11). */
+       the live rows are filled from the imported columns (D11/D46). */
     resetBindings();
 
     /* Collect payload-grade columns so lanes 2 & 3 pre-route extra columns
@@ -177,11 +177,18 @@ export function createCsvImport(deps) {
     const rest = payload.filter((c) => c !== primary);
     const ordered = [primary, ...rest];
 
-    const slA = S.lanes["1"], slB = S.lanes["2"], slC = S.lanes["3"];
+    /* D46: map the imported columns across the live lane set. The first three
+       lanes keep the shipped assignment exactly (widest column → lane 1 A,
+       payload spread over the other operands); lanes past three cycle through
+       the payload columns so a wider instrument still fills. */
+    const laneKeys = liveLaneKeys();
+    const slA = S.lanes[laneKeys[0]];
+    const slB = laneKeys[1] ? S.lanes[laneKeys[1]] : null;
+    const slC = laneKeys[2] ? S.lanes[laneKeys[2]] : null;
     slA.colA = primary;
     slA.colB = (S.view3d || slA.showB) && ordered.length >= 2 ? ordered[1] : -1;
 
-    if (ordered.length >= 4) {
+    if (slB && slC && ordered.length >= 4) {
       const off = slA.colB >= 0 ? 2 : 1;
       slB.colA = ordered[off] ?? ordered[0];
       slB.colB = ordered[off + 1] ?? ordered[1];
@@ -189,14 +196,14 @@ export function createCsvImport(deps) {
       slC.colA = ordered[off + 2] ?? ordered[0];
       slC.colB = ordered[off + 3] ?? ordered[ordered.length - 1];
       slC.showB = true;
-    } else if (ordered.length === 3) {
+    } else if (slB && slC && ordered.length === 3) {
       slB.colA = slA.colB >= 0 ? ordered[0] : ordered[1];
       slB.colB = ordered[2];
       slB.showB = true;
       slC.colA = ordered[1];
       slC.colB = ordered[2];
       slC.showB = true;
-    } else if (ordered.length === 2) {
+    } else if (slB && slC && ordered.length === 2) {
       slB.colA = ordered[0];
       slB.colB = ordered[1];
       slB.showB = true;
@@ -204,9 +211,21 @@ export function createCsvImport(deps) {
       slC.colA = ordered[1];
       slC.colB = ordered[0];
       slC.showB = true;
-    } else {
+    } else if (slB && slC) {
       slB.colA = primary; slB.colB = -1;
       slC.colA = primary; slC.colB = -1;
+    }
+    for (let index = 3; index < laneKeys.length; index += 1) {
+      const sl = S.lanes[laneKeys[index]];
+      if (!sl) continue;
+      if (ordered.length >= 2) {
+        sl.colA = ordered[(index * 2) % ordered.length];
+        sl.colB = ordered[(index * 2 + 1) % ordered.length];
+        sl.showB = true;
+      } else {
+        sl.colA = primary;
+        sl.colB = -1;
+      }
     }
 
     fitToMappedColumns();

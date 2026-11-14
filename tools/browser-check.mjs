@@ -391,6 +391,28 @@ async function pressActivate() {
   await sleep(80);
 }
 
+/* Native Alt+digit — the D46 lane shortcut needs the modifier to survive. */
+async function pressAltDigit(digit) {
+  const key = {
+    key: String(digit),
+    code: `Digit${digit}`,
+    windowsVirtualKeyCode: 48 + digit,
+    nativeVirtualKeyCode: 48 + digit,
+    modifiers: 1, // Alt
+  };
+  await cdp.send('Input.dispatchKeyEvent', { type: 'rawKeyDown', ...key });
+  await cdp.send('Input.dispatchKeyEvent', { type: 'keyUp', ...key });
+  await sleep(120);
+}
+
+/** Read the visible pane lane select's live options. */
+async function laneSelectOptions() {
+  return JSON.parse(await evaluate(`JSON.stringify((() => {
+    const select = document.querySelector('#stageBar .pane-head:not([hidden]) .lane-select');
+    return select ? [...select.options].map((option) => ({ value: option.value, label: option.textContent.trim() })) : null;
+  })())`));
+}
+
 async function readInstrument() {
   return JSON.parse(await evaluate(`JSON.stringify({
     hex: document.getElementById('hex').textContent.trim(),
@@ -692,11 +714,33 @@ try {
       'Esc did not return to the lanes view'
     );
 
-    /* The + tile names the cap instead of inventing lanes. */
+    /* D46: the `+` tile is the live add-lane control. Clicking it creates a
+       blank lane at the lowest free key and focuses it. */
     await openFramesView();
+    const beforeAdd = JSON.parse(await evaluate(`JSON.stringify({
+      columns: document.querySelectorAll('#framesGrid .lane-col:not(.is-add)').length,
+      dup: document.querySelectorAll('#framesGrid [data-act="dup"]').length,
+      del: document.querySelectorAll('#framesGrid [data-act="del"]').length,
+      addDisabled: document.querySelector('#framesGrid .frame-add').getAttribute('aria-disabled'),
+      hint: document.querySelector('#framesGrid .frame-add-hint').textContent.trim()
+    })`));
+    assert(beforeAdd.columns === 3, `initial lane columns: ${beforeAdd.columns}`);
+    assert(beforeAdd.dup === 3 && beforeAdd.del === 3, `per-lane dup/del controls: ${beforeAdd.dup}/${beforeAdd.del}`);
+    assert(beforeAdd.addDisabled === 'false', 'the add tile is aria-disabled below the cap');
+    assert(beforeAdd.hint === 'add lane', `add hint: ${JSON.stringify(beforeAdd.hint)}`);
     await click('#framesGrid .frame-add');
-    const capNote = await evaluate(`document.getElementById('framesNote').textContent`);
-    assert(/maximum/.test(capNote), `add tile note: ${JSON.stringify(capNote)}`);
+    await sleep(250);
+    const afterAdd = JSON.parse(await evaluate(`JSON.stringify({
+      columns: document.querySelectorAll('#framesGrid .lane-col:not(.is-add)').length,
+      names: [...document.querySelectorAll('#framesGrid [data-lane="4"] .frame-glyph')].map((g) => g.textContent.trim()),
+      lane: window.BitWave.state().lane,
+      note: document.getElementById('framesNote').textContent.trim(),
+      focusedLane: document.activeElement?.closest?.('.lane-col')?.dataset.lane ?? null
+    })`));
+    assert(afterAdd.columns === 4, `add did not create a lane: ${afterAdd.columns} columns`);
+    assert(JSON.stringify(afterAdd.names) === JSON.stringify(['G', 'H', 'Z4']), `lane 4 names: ${JSON.stringify(afterAdd.names)}`);
+    assert(afterAdd.lane === 4, `add did not focus the new lane: ${afterAdd.lane}`);
+    assert(/\b4\b/.test(afterAdd.note), `add note: ${JSON.stringify(afterAdd.note)}`);
 
     /* Narrow viewport: the grid scrolls inside the frames view, the page does not. */
     await loadPage(artifactUrl, { width: 360, height: 780 });
@@ -714,7 +758,145 @@ try {
     const scrolled = await evaluate(`document.getElementById('framesScroll').scrollLeft`);
     assert(scrolled > 0, `the scroll arrow did not move the grid: ${scrolled}`);
 
-    return '9 equal cards · + cap note · Lanes/Esc return · 360 scrolls inside the view';
+    return '9 equal cards · live + adds lane 4 G/H/Z4 · Lanes/Esc return · 360 scrolls';
+  });
+
+  await runCheck('frames · add grows to the eight-lane cap then disables', async () => {
+    await loadApp();
+    await openFramesView();
+    for (let i = 0; i < 5; i += 1) await click('#framesGrid .frame-add');
+    await sleep(300);
+    const full = JSON.parse(await evaluate(`JSON.stringify({
+      columns: document.querySelectorAll('#framesGrid .lane-col:not(.is-add)').length,
+      heads: [...document.querySelectorAll('#framesGrid .lane-btn')].map((b) => b.textContent.trim()),
+      lastNames: [...document.querySelectorAll('#framesGrid [data-lane="8"] .frame-glyph')].map((g) => g.textContent.trim()),
+      addDisabled: document.querySelector('#framesGrid .frame-add').getAttribute('aria-disabled'),
+      addLabel: document.querySelector('#framesGrid .frame-add').getAttribute('aria-label'),
+      lanes: Object.keys(window.bitwave.getState().lanes).sort((a, b) => Number(a) - Number(b))
+    })`));
+    assert(full.columns === 8, `adding grew to ${full.columns} columns, expected 8`);
+    assert(full.heads.length === 8 && full.heads[7] === 'LANE 8', `lane heads: ${JSON.stringify(full.heads)}`);
+    assert(
+      JSON.stringify(full.lastNames) === JSON.stringify(['O', 'P', 'Z8']),
+      `lane 8 names: ${JSON.stringify(full.lastNames)}`,
+    );
+    assert(full.addDisabled === 'true', 'the add tile is not aria-disabled at the eight-lane cap');
+    assert(/maximum/.test(full.addLabel), `cap label: ${JSON.stringify(full.addLabel)}`);
+    assert(JSON.stringify(full.lanes) === JSON.stringify(['1', '2', '3', '4', '5', '6', '7', '8']), `lanes: ${JSON.stringify(full.lanes)}`);
+
+    /* Clicking the disabled tile reports the cap instead of inventing lanes. */
+    await click('#framesGrid .frame-add');
+    await sleep(150);
+    const note = await evaluate(`document.getElementById('framesNote').textContent`);
+    assert(/maximum/.test(note), `cap note: ${JSON.stringify(note)}`);
+    assert(
+      (await evaluate(`document.querySelectorAll('#framesGrid .lane-col:not(.is-add)').length`)) === 8,
+      'the cap click created a ninth lane',
+    );
+    return '3→8 lanes via + · 8 O/P/Z8 · add disabled at the cap with a reason';
+  });
+
+  await runCheck('frames · duplicate copies lane state but not routes', async () => {
+    await loadApp();
+    /* Route lane 3 Z3 into lane 1 A (the first source row). */
+    await click('#sourcesBtn');
+    await waitFor(`!document.getElementById('sourcesPanel').hidden`, 'source table');
+    await evaluate(`(() => {
+      const select = document.querySelector('#sourcesRows tr select');
+      select.value = 'frame:3:z';
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+      return true;
+    })()`);
+    await sleep(250);
+    await click('#sourcesClose');
+    await evaluate(`window.bitwave.setRegister('B', 'DEAD00000000BEEF')`);
+    await sleep(150);
+    await openFramesView();
+    const before = JSON.parse(await evaluate(`JSON.stringify({
+      a: window.bitwave.getState().lanes["1"].frames.A,
+      b: window.bitwave.getState().lanes["1"].frames.B,
+      z3: window.bitwave.getState().lanes["3"].frames.Z3
+    })`));
+    await click('#framesGrid [data-lane="1"] [data-act="dup"]');
+    await sleep(300);
+    const after = JSON.parse(await evaluate(`JSON.stringify({
+      columns: document.querySelectorAll('#framesGrid .lane-col:not(.is-add)').length,
+      lane: window.bitwave.getState().lane,
+      copy: window.bitwave.getState().lanes["4"],
+      lane1Driven: window.bitwave.getState().lanes["1"].driven,
+      note: document.getElementById('framesNote').textContent.trim()
+    })`));
+    assert(after.columns === 4, `duplicate created ${after.columns} columns`);
+    assert(after.lane === 4, `duplicate focused lane ${after.lane}`);
+    assert(after.copy.frames.G === before.a, `duplicate G: ${after.copy.frames.G} vs ${before.a}`);
+    assert(after.copy.frames.H === before.b, `duplicate H: ${after.copy.frames.H} vs ${before.b}`);
+    assert(after.copy.frames.Z4 && after.copy.frames.Z4.length > 0, 'duplicate has no derived Z4');
+    assert(after.copy.driven.G === false && after.copy.driven.H === false, 'duplicate inherited driven inputs');
+    assert(after.copy.sources.G.kind === 'none' && after.copy.sources.H.kind === 'none', 'duplicate inherited routes');
+    assert(after.lane1Driven.A === true, 'the source lane lost its route');
+    assert(before.a === before.z3, `route did not drive lane 1 A: ${before.a} vs ${before.z3}`);
+    assert(/duplicated lane 1 as lane 4/.test(after.note), `duplicate note: ${JSON.stringify(after.note)}`);
+    return 'copy keeps values/operator/expressions · driven source stays read-only · no route edges copied';
+  });
+
+  await runCheck('frames · delete warns with a reference count, confirms, and clears routes', async () => {
+    await loadApp();
+    /* Route lane 1 Z1 into lane 2 A: deleting lane 1 leaves a surviving
+       destination whose parked pre-patch base must be restored. */
+    const bootLane2A = await evaluate(`window.BitWave.state().lanes["2"].frames.C`);
+    await click('#sourcesBtn');
+    await waitFor(`!document.getElementById('sourcesPanel').hidden`, 'source table');
+    await evaluate(`(() => {
+      const select = document.querySelectorAll('#sourcesRows tr.src-binding')[2].querySelector('select');
+      select.value = 'frame:1:z';
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+      return true;
+    })()`);
+    await sleep(250);
+    await click('#sourcesClose');
+    await openFramesView();
+
+    /* First click shows an inline confirmation; Esc cancels and stays in-view. */
+    await click('#framesGrid [data-lane="1"] [data-act="del"]');
+    await sleep(200);
+    let confirm = JSON.parse(await evaluate(`JSON.stringify({
+      text: document.querySelector('#framesGrid [data-lane="1"] .lane-confirm-text')?.textContent ?? null,
+      focused: document.activeElement?.dataset?.act ?? null
+    })`));
+    assert(confirm.text && /delete lane 1/.test(confirm.text), `confirm text: ${JSON.stringify(confirm.text)}`);
+    assert(/1 route/.test(confirm.text), `confirm did not count the route: ${JSON.stringify(confirm.text)}`);
+    assert(confirm.focused === 'confirm', `focus did not move to the confirming button: ${confirm.focused}`);
+    await keydown('Escape');
+    await sleep(200);
+    const cancelled = JSON.parse(await evaluate(`JSON.stringify({
+      view: document.getElementById('framesView').hidden,
+      confirm: Boolean(document.querySelector('#framesGrid .lane-confirm-text')),
+      lane1: Boolean(window.bitwave.getState().lanes["1"]),
+      note: document.getElementById('framesNote').textContent.trim()
+    })`));
+    assert(cancelled.view === false, 'Esc cancelled the whole frames view instead of the delete');
+    assert(cancelled.confirm === false, 'the inline confirmation did not close');
+    assert(cancelled.lane1 === true, 'Esc still deleted lane 1');
+    assert(/cancelled/.test(cancelled.note), `cancel note: ${JSON.stringify(cancelled.note)}`);
+
+    /* Second delete: confirm deletes, clears the route and restores the parked base. */
+    await click('#framesGrid [data-lane="1"] [data-act="del"]');
+    await sleep(180);
+    await click('#framesGrid [data-lane="1"] [data-act="confirm"]');
+    await sleep(350);
+    const deleted = JSON.parse(await evaluate(`JSON.stringify({
+      lanes: Object.keys(window.bitwave.getState().lanes).sort((a, b) => Number(a) - Number(b)),
+      focused: window.bitwave.getState().lane,
+      note: document.getElementById('framesNote').textContent.trim(),
+      lane2A: window.BitWave.state().lanes["2"].frames.C,
+      lane2Driven: window.bitwave.getState().lanes["2"].driven
+    })`));
+    assert(JSON.stringify(deleted.lanes) === JSON.stringify(['2', '3']), `lanes after delete: ${JSON.stringify(deleted.lanes)}`);
+    assert(deleted.focused === 2, `focus after deleting the focused lane: ${deleted.focused}`);
+    assert(/deleted lane 1/.test(deleted.note), `delete note: ${JSON.stringify(deleted.note)}`);
+    assert(deleted.lane2Driven.C === false, 'the route into lane 2 survived the delete');
+    assert(deleted.lane2A === bootLane2A, `parked base not restored: ${deleted.lane2A} vs ${bootLane2A}`);
+    return 'warns with route count · Esc cancels · confirm deletes, clears route, restores parked base';
   });
 
   await runCheck('frames · eye toggle flips aria-pressed and dims the card', async () => {
@@ -733,10 +915,19 @@ try {
     return 'A hidden · aria-pressed=false · label now "Show frame A"';
   });
 
-  const clickLane = async (key) => {
-    await click(`#stageBar .pane-head:not([hidden]) [data-lane="${key}"]`);
-    await sleep(120);
+  /* D46: the stage bar selects a lane through a native per-pane dropdown. */
+  const selectLaneInPane = async (key, paneIdx = 0) => {
+    await evaluate(`(() => {
+      const panes = [...document.querySelectorAll('#stageBar .pane-head')].filter((pane) => !pane.hidden);
+      const select = panes[${paneIdx}] && panes[${paneIdx}].querySelector('.lane-select');
+      if (!select) throw new Error('missing lane select for pane ${paneIdx}');
+      select.value = ${JSON.stringify(key)};
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+      return select.value;
+    })()`);
+    await sleep(140);
   };
+  const clickLane = (key) => selectLaneInPane(key, 0);
 
   /* 3b. global frame names: A/B C/D E/F + Z1/Z2/Z3 ---------------------- */
   await runCheck('naming · lanes map to A/B, C/D, E/F and Z1/Z2/Z3', async () => {
@@ -1142,12 +1333,14 @@ try {
     await waitFor(`!document.getElementById('sourcesPanel').hidden`, 'source table');
     const state = JSON.parse(await evaluate(`JSON.stringify({
       size: document.getElementById('sizeOut').textContent.trim(),
-      rows: document.querySelectorAll('#sourcesRows tr').length,
-      dest: document.querySelector('#sourcesRows tr .src-dest').textContent.trim(),
-      chip: document.querySelector('#sourcesRows tr .src-state').textContent.trim(),
+      rows: document.querySelectorAll('#sourcesRows tr.src-binding').length,
+      groupHeads: document.querySelectorAll('#sourcesRows tr.src-group-head').length,
+      dest: document.querySelector('#sourcesRows tr.src-binding .src-dest').textContent.trim(),
+      chip: document.querySelector('#sourcesRows tr.src-binding .src-state').textContent.trim(),
       hex: document.getElementById('hex').textContent.trim()
     })`));
     assert(state.rows === 6, `source rows: ${state.rows}`);
+    assert(state.groupHeads === 3, `source lane groups: ${state.groupHeads}`);
     assert(state.dest.includes('A') && state.dest.includes('payload'), `row label: ${state.dest}`);
     assert(state.chip === 'data', `row state: ${state.chip}`);
     assert(state.hex === csvPayload, `A after import: ${state.hex}`);
@@ -1345,56 +1538,106 @@ try {
     return `announced "${announced}" · quiet during LFO`;
   });
 
-  await runCheck('a11y · lane set is a radiogroup with arrow-key selection', async () => {
+  await runCheck('a11y · lane selection is a native dropdown with live options', async () => {
     await loadApp();
     const before = JSON.parse(await evaluate(`JSON.stringify((() => {
-      const seg = document.querySelector('#stageBar .pane-head:not([hidden]) .seg[role="radiogroup"]');
+      const select = document.querySelector('#stageBar .pane-head:not([hidden]) .lane-select');
       return {
-        role: seg.getAttribute('role'),
-        radios: [...seg.querySelectorAll('[data-lane]')].map((b) => ({
-          role: b.getAttribute('role'),
-          checked: b.getAttribute('aria-checked'),
-          tab: b.getAttribute('tabindex')
-        }))
+        tag: select ? select.tagName : null,
+        options: select ? [...select.options].map((option) => ({ value: option.value, label: option.textContent.trim() })) : [],
+        selected: select ? select.value : null,
+        radioGroups: document.querySelectorAll('#stageBar [role="radiogroup"]').length,
+        agentLanes: [...document.querySelectorAll('#stageBar [data-agent-lane]')].map((el) => el.dataset.agentLane),
       };
     })())`));
-    assert(before.role === 'radiogroup', `lane set role: ${before.role}`);
-    assert(before.radios.every((r) => r.role === 'radio'), `lane roles: ${JSON.stringify(before.radios.map((r) => r.role))}`);
-    assert(before.radios.filter((r) => r.checked === 'true').length === 1, 'exactly one lane checked');
-    assert(before.radios.filter((r) => r.tab === '0').length === 1, 'roving tab stop on the lane set');
+    assert(before.tag === 'SELECT', `lane control is not a native select: ${before.tag}`);
+    assert(
+      JSON.stringify(before.options) === JSON.stringify([
+        { value: '1', label: 'Lane 1' },
+        { value: '2', label: 'Lane 2' },
+        { value: '3', label: 'Lane 3' },
+      ]),
+      `lane option labels: ${JSON.stringify(before.options)}`,
+    );
+    assert(before.selected === '1', `selected lane: ${before.selected}`);
+    assert(before.radioGroups === 0, 'the old lane radiogroup is still in the stage bar');
+    assert(JSON.stringify(before.agentLanes) === JSON.stringify(['1']), `data-agent-lane: ${JSON.stringify(before.agentLanes)}`);
 
-    await evaluate(`document.querySelector('#stageBar .pane-head:not([hidden]) [data-lane="1"]').focus()`);
-    await keydown('ArrowRight');
-    const after = JSON.parse(await evaluate(`JSON.stringify({
+    /* Select by change (the native keyboard path is arrows/Home/End). */
+    await selectLaneInPane('2', 0);
+    let after = JSON.parse(await evaluate(`JSON.stringify({
       lane: window.BitWave.state().lane,
-      checked: [...document.querySelectorAll('#stageBar .pane-head:not([hidden]) [data-lane]')].map((b) => b.getAttribute('aria-checked')),
-      focused: document.activeElement.dataset.lane
+      selected: document.querySelector('#stageBar .pane-head:not([hidden]) .lane-select').value,
+      strip: document.getElementById('strip').dataset.edit
     })`));
-    assert(after.lane === 2, `arrow-right selected lane ${after.lane}`);
-    assert(JSON.stringify(after.checked) === JSON.stringify(['false', 'true', 'false']), `aria-checked: ${JSON.stringify(after.checked)}`);
-    assert(after.focused === '2', `focus follows selection: ${after.focused}`);
-    return 'radiogroup · one checked · arrows move selection, focus follows';
+    assert(after.lane === 2 && after.selected === '2', `select did not pick lane 2: ${JSON.stringify(after)}`);
+    assert(after.strip === 'C', `strip did not follow the second lane: ${after.strip}`);
+
+    /* Alt+3 selects a live lane by its stable key. */
+    await pressAltDigit(3);
+    after = JSON.parse(await evaluate(`JSON.stringify({
+      lane: window.BitWave.state().lane,
+      selected: document.querySelector('#stageBar .pane-head:not([hidden]) .lane-select').value
+    })`));
+    assert(after.lane === 3 && after.selected === '3', `Alt+3 did not select lane 3: ${JSON.stringify(after)}`);
+
+    /* Split has two selects; the second is named for its pane. */
+    await click('#depthBtn');
+    await sleep(200);
+    await click('#stageBar .op.mini');
+    await sleep(250);
+    const split = JSON.parse(await evaluate(`JSON.stringify({
+      selects: [...document.querySelectorAll('#stageBar .pane-head:not([hidden]) .lane-select')].map((select) => ({
+        label: select.getAttribute('aria-label'),
+        value: select.value
+      }))
+    })`));
+    assert(split.selects.length === 2, `split selects: ${JSON.stringify(split.selects)}`);
+    assert(split.selects[0].label === 'Lane', `first pane label: ${split.selects[0].label}`);
+    assert(split.selects[1].label === 'Lane (second pane)', `second pane label: ${split.selects[1].label}`);
+    await selectLaneInPane('1', 1);
+    const panes = JSON.parse(await evaluate(`JSON.stringify(window.BitWave.state().view.splitPair)`));
+    assert(panes[1] === 1, `second pane did not select lane 1: ${JSON.stringify(panes)}`);
+    return 'native select per pane · Lane 1…N labels · change selects · Alt+3 · split second-pane label';
   });
 
   await runCheck('a11y · all interactive targets are at least 24px', async () => {
     await loadApp();
     await click('#depthBtn');   // stage-bar mini controls only exist in 3-D
     await sleep(200);
-    const sizes = JSON.parse(await evaluate(`JSON.stringify((() => {
+    const stageSizes = JSON.parse(await evaluate(`JSON.stringify((() => {
       const rect = (el) => { const r = el.getBoundingClientRect(); return { w: r.width, h: r.height }; };
       const minis = [...document.querySelectorAll('.op.mini, .seg.mini .op')]
         .filter((el) => el.offsetParent !== null);
+      const laneSelect = document.querySelector('#stageBar .lane-select');
       return {
         miniCount: minis.length,
         minW: minis.length ? Math.min(...minis.map((el) => rect(el).w)) : 0,
         minH: minis.length ? Math.min(...minis.map((el) => rect(el).h)) : 0,
+        selectW: rect(laneSelect).w,
+        selectH: rect(laneSelect).h,
         rangeH: rect(document.getElementById('size')).h,
       };
     })())`));
-    assert(sizes.miniCount > 0, 'no stage-bar mini controls found');
-    assert(sizes.minW >= 24 && sizes.minH >= 24, `mini controls ${sizes.minW.toFixed(1)}×${sizes.minH.toFixed(1)} < 24`);
-    assert(sizes.rangeH >= 24, `width slider target height ${sizes.rangeH}`);
-    return `stage-bar minis ≥ ${sizes.minW.toFixed(0)}×${sizes.minH.toFixed(0)}px · width target ${sizes.rangeH}px`;
+    assert(stageSizes.miniCount > 0, 'no stage-bar mini controls found');
+    assert(stageSizes.minW >= 24 && stageSizes.minH >= 24, `mini controls ${stageSizes.minW.toFixed(1)}×${stageSizes.minH.toFixed(1)} < 24`);
+    assert(stageSizes.selectW >= 24 && stageSizes.selectH >= 24, `lane select ${stageSizes.selectW.toFixed(1)}×${stageSizes.selectH.toFixed(1)} < 24`);
+    assert(stageSizes.rangeH >= 24, `width slider target height ${stageSizes.rangeH}`);
+
+    /* The frames view's lane-head controls are only laid out while it is open. */
+    await openFramesView();
+    const laneHead = JSON.parse(await evaluate(`JSON.stringify((() => {
+      const rect = (el) => { const r = el.getBoundingClientRect(); return { w: r.width, h: r.height }; };
+      const actions = [...document.querySelectorAll('#framesGrid .lane-act')];
+      return {
+        count: actions.length,
+        minW: actions.length ? Math.min(...actions.map((el) => rect(el).w)) : 0,
+        minH: actions.length ? Math.min(...actions.map((el) => rect(el).h)) : 0,
+      };
+    })())`));
+    assert(laneHead.count >= 6, `lane-head controls: ${laneHead.count}`);
+    assert(laneHead.minW >= 24 && laneHead.minH >= 24, `lane head controls ${laneHead.minW.toFixed(1)}×${laneHead.minH.toFixed(1)} < 24`);
+    return `minis ≥ ${stageSizes.minW.toFixed(0)}×${stageSizes.minH.toFixed(0)}px · lane select ${stageSizes.selectW.toFixed(0)}×${stageSizes.selectH.toFixed(0)}px · lane acts ≥ ${laneHead.minW.toFixed(0)}×${laneHead.minH.toFixed(0)}px`;
   });
 
   await runCheck('a11y · prefers-reduced-motion removes transitions and keeps the LFO usable', async () => {
@@ -1429,7 +1672,8 @@ try {
     let bar = JSON.parse(await evaluate(`JSON.stringify({
       visible: document.getElementById('stageBar').offsetParent !== null,
       hasFrames: document.getElementById('stageBar').contains(document.getElementById('framesBtn')),
-      laneRadios: document.querySelectorAll('#stageBar .pane-head:not([hidden]) [data-lane]').length,
+      laneSelects: document.querySelectorAll('#stageBar .pane-head:not([hidden]) .lane-select').length,
+      laneOptions: [...document.querySelectorAll('#stageBar .pane-head:not([hidden]) .lane-select option')].length,
       splitDisabled: document.querySelector('#stageBar .op.mini').getAttribute('aria-disabled'),
       expr: document.querySelector('#stageBar .stage-expr').textContent,
       controlsHasLane: document.querySelectorAll('.controls [data-lane]').length,
@@ -1437,7 +1681,8 @@ try {
     })`));
     assert(bar.visible, 'stage bar is hidden in 2-D');
     assert(bar.hasFrames, 'frames opener is not in the stage bar');
-    assert(bar.laneRadios === 3, `stage-bar lane radios: ${bar.laneRadios}`);
+    assert(bar.laneSelects === 1, `stage-bar lane selects: ${bar.laneSelects}`);
+    assert(bar.laneOptions === 3, `stage-bar lane options: ${bar.laneOptions}`);
     assert(bar.splitDisabled === 'true', `split should be aria-disabled in 2-D: ${bar.splitDisabled}`);
     assert(/LANE 1 · A ⊕ B → Z1/.test(bar.expr), `stage expression: ${JSON.stringify(bar.expr)}`);
     assert(bar.controlsHasLane === 0, 'lane set is duplicated in the controls row');
@@ -1534,7 +1779,10 @@ try {
       focused: document.activeElement.getAttribute('role')
     })`));
     assert(menu.open && menu.role === 'menu', 'copy menu did not open as a menu');
-    assert(JSON.stringify(menu.items) === JSON.stringify(['lane 1', 'lane 2', 'lane 3']), `menu items: ${JSON.stringify(menu.items)}`);
+    assert(
+      JSON.stringify(menu.items) === JSON.stringify(['lane 2', 'lane 3']),
+      `menu items exclude the focused lane: ${JSON.stringify(menu.items)}`,
+    );
     assert(menu.expanded === 'true', 'copy button aria-expanded is not true');
     assert(menu.focused === 'menuitem', `focus did not move into the menu: ${menu.focused}`);
     assert((await evaluate(`window.BitWave.state().editing.copyArmed`)) === true, 'copyArmed not reported while open');
@@ -1872,12 +2120,22 @@ try {
 
 
   const axeSource = readFileSync(resolve(ROOT, 'node_modules/axe-core/axe.min.js'), 'utf8');
-  await runCheck('axe · zero critical/serious in 2-D, A·B 3-D, source table and navigator', async () => {
+  await runCheck('axe · zero critical/serious across 2-D, 3-D, split, tables and frames views', async () => {
     const states = [
       { name: '2-D', prepare: async () => { await loadApp(); } },
       {
         name: 'A·B 3-D',
         prepare: async () => { await loadApp(); await click('#depthBtn'); await sleep(250); },
+      },
+      {
+        name: 'split 3-D',
+        prepare: async () => {
+          await loadApp();
+          await click('#depthBtn');
+          await sleep(200);
+          await click('#stageBar .op.mini');
+          await sleep(300);
+        },
       },
       {
         name: 'source table',
@@ -1894,6 +2152,16 @@ try {
           await loadApp();
           await click('#framesBtn');
           await waitFor(`!document.getElementById('framesView').hidden`, 'frames view');
+        },
+      },
+      {
+        name: 'frames 8-lane',
+        prepare: async () => {
+          await loadApp();
+          await click('#framesBtn');
+          await waitFor(`!document.getElementById('framesView').hidden`, 'frames view');
+          for (let i = 0; i < 5; i += 1) await click('#framesGrid .frame-add');
+          await sleep(200);
         },
       },
     ];
@@ -1926,6 +2194,76 @@ try {
     }
     assert(found.length === 0, `axe critical/serious — ${found.join(' | ')}`);
     return `0 critical/serious · advisory: ${counts.join(' · ')}`;
+  });
+
+  await runCheck('lanes · an 8-lane 256-bit compact share round-trips within the budget', async () => {
+    await loadApp();
+    await openFramesView();
+    for (let i = 0; i < 5; i += 1) await click('#framesGrid .frame-add');
+    await sleep(250);
+    await click('#lanesBtn');
+    await sleep(200);
+    await evaluate(`(() => {
+      const el = document.getElementById('size');
+      el.value = '5';
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+      return el.value;
+    })()`);
+    await sleep(400);
+    const sized = JSON.parse(await evaluate(`JSON.stringify({
+      width: window.BitWave.state().registers.width,
+      lanes: Object.keys(window.bitwave.getState().lanes).length
+    })`));
+    assert(sized.width === 256, `width after resize: ${sized.width}`);
+    assert(sized.lanes === 8, `live lanes before sharing: ${sized.lanes}`);
+
+    const link = await evaluate(`window.bitwave.getDeeplink()`);
+    const hash = String(link).slice(String(link).indexOf('#'));
+    assert(hash.startsWith('#bw='), `share fragment: ${String(hash).slice(0, 40)}`);
+    const payloadChars = hash.length - '#bw='.length;
+    assert(payloadChars <= 2000, `8-lane 256-bit payload is ${payloadChars} chars (budget 2000)`);
+
+    /* Reloading the compact link reproduces the eight-lane, 256-bit document. */
+    await loadPage(artifactUrl + hash);
+    await waitFor(`typeof window.bitwave === 'object'`, 'agent bridge');
+    const reloaded = JSON.parse(await evaluate(`JSON.stringify({
+      lanes: Object.keys(window.bitwave.getState().lanes).sort((a, b) => Number(a) - Number(b)),
+      width: window.bitwave.getState().width,
+      lane: window.bitwave.getState().lane,
+      names: window.bitwave.getState().lanes["8"].frames
+    })`));
+    assert(reloaded.width === 256, `reloaded width: ${reloaded.width}`);
+    assert(reloaded.lanes.length === 8, `reloaded lanes: ${JSON.stringify(reloaded.lanes)}`);
+    assert(reloaded.names.O !== undefined && reloaded.names.P !== undefined && reloaded.names.Z8 !== undefined, `lane 8 frames: ${JSON.stringify(reloaded.names)}`);
+    return `8 lanes · 256-bit · compact payload ${payloadChars} chars (≤2000) · reload restores`;
+  });
+
+  await runCheck('sources · the table shows 2L rows grouped by live lane', async () => {
+    await loadApp();
+    await openFramesView();
+    for (let i = 0; i < 5; i += 1) await click('#framesGrid .frame-add');
+    await sleep(250);
+    await click('#lanesBtn');
+    await sleep(200);
+    await click('#sourcesBtn');
+    await waitFor(`!document.getElementById('sourcesPanel').hidden`, 'source table');
+    const table = JSON.parse(await evaluate(`JSON.stringify({
+      rows: document.querySelectorAll('#sourcesRows tr.src-binding').length,
+      groups: [...document.querySelectorAll('#sourcesRows tr.src-group-head th')].map((th) => th.textContent.trim()),
+      labels: [...document.querySelectorAll('#sourcesRows .src-pick')].map((select) => select.getAttribute('aria-label')),
+      lastDest: [...document.querySelectorAll('#sourcesRows .src-dest')].at(-1).textContent.trim(),
+      overflow: getComputedStyle(document.querySelector('.src-body')).overflowY
+    })`));
+    assert(table.rows === 16, `2L rows for 8 lanes: ${table.rows}`);
+    assert(table.groups.length === 8, `lane group headers: ${table.groups.length}`);
+    assert(/Lane 1 · A\/B\/Z1/.test(table.groups[0]), `first group header: ${table.groups[0]}`);
+    assert(/Lane 8 · O\/P\/Z8/.test(table.groups[7]), `last group header: ${table.groups[7]}`);
+    assert(table.labels[0] === 'Lane 1 A source', `first source label: ${table.labels[0]}`);
+    assert(table.labels.at(-1) === 'Lane 8 P source', `last source label: ${table.labels.at(-1)}`);
+    assert(table.lastDest.includes('O') || table.lastDest.includes('P'), `last destination: ${table.lastDest}`);
+    assert(table.overflow === 'auto' || table.overflow === 'scroll', `source body is not scrollable: ${table.overflow}`);
+    await click('#sourcesClose');
+    return '16 rows · 8 lane groups · O/P labels · scrollable body';
   });
 
   await runCheck('sources · frame binding drives the input, labels it, and unbinds', async () => {
@@ -1995,11 +2333,13 @@ try {
     await waitFor(`!document.getElementById('sourcesPanel').hidden`, 'source table');
     const state = JSON.parse(await evaluate(`JSON.stringify({
       size: document.getElementById('sizeOut').textContent.trim(),
-      rows: document.querySelectorAll('#sourcesRows tr').length,
+      rows: document.querySelectorAll('#sourcesRows tr.src-binding').length,
+      groupHeads: document.querySelectorAll('#sourcesRows tr.src-group-head').length,
       dests: [...document.querySelectorAll('#sourcesRows .src-dest')].map((el) => el.textContent.trim()),
       chips: [...document.querySelectorAll('#sourcesRows .src-state')].map((el) => el.textContent.trim())
     })`));
     assert(state.rows === 6, `source rows: ${state.rows}`);
+    assert(state.groupHeads === 3, `source lane groups: ${state.groupHeads}`);
     assert(
       state.dests[0].includes('A') && state.dests[0].includes('Hex 1'),
       `first row label: ${state.dests[0]}`

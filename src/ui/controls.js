@@ -13,7 +13,7 @@ import { DEMO } from "../state/dataset.ts";
 import {
   S,
   SIZES,
-  LANE_KEYS,
+  liveLaneKeys,
   curLane,
   editReg,
   focusEditable,
@@ -59,7 +59,7 @@ export function createControls(deps) {
     if (S.lfo.mode === "csvStep" && (!DEMO.rows || !DEMO.rows.length)) return;
     store.patch(() => {
       const base = {};
-      for (const k of LANE_KEYS) {
+      for (const k of liveLaneKeys()) {
         const sl = S.lanes[k];
         base[k] = { a: sl.A.bits.slice(), b: sl.B.bits.slice() };
       }
@@ -79,7 +79,7 @@ export function createControls(deps) {
       const snap = S.lfo.base;
       if (snap) {
         if (S.lfo.mode !== "csvStep") {
-          for (const k of LANE_KEYS) {
+          for (const k of liveLaneKeys()) {
             const sl = S.lanes[k];
             if (snap[k]) {
               if (!isInputDriven(sl, "a")) sl.A.bits = snap[k].a.slice();
@@ -139,7 +139,7 @@ export function createControls(deps) {
         shift = (p <= maxSteps ? p : 2 * maxSteps - p) * k;
       }
 
-      for (const sk of LANE_KEYS) {
+      for (const sk of liveLaneKeys()) {
         const sl = S.lanes[sk];
         const sb = base[sk];
         if (!sb) continue;

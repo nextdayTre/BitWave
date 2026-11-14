@@ -3,13 +3,13 @@ import {
   OPSYM,
   S,
   SIZES,
-  LANE_KEYS,
   curLane,
   editKey,
   editReg,
   focusEditable,
   focusKey,
   frameName,
+  liveLaneKeys,
   nibAt,
   nibCount,
   nibValue,
@@ -18,8 +18,11 @@ import {
   syncTarget,
 } from "./state/instrument.ts";
 import {
+  addLane,
   applyPreset,
   copyLane,
+  deleteLane,
+  duplicateLane,
   setBinop,
   setFocus,
   setLiveNibble,
@@ -150,7 +153,7 @@ import { toHexOf, updateReadouts } from "./render/readouts.js";
       };
 
       const mapped = {};
-      for (const k of LANE_KEYS) {
+      for (const k of liveLaneKeys()) {
         mapped[k] = {
           a: remap(S.lanes[k].A),
           b: remap(S.lanes[k].B),
@@ -159,7 +162,7 @@ import { toHexOf, updateReadouts } from "./render/readouts.js";
 
       S.N = newN;
 
-      for (const k of LANE_KEYS) {
+      for (const k of liveLaneKeys()) {
         const sl = S.lanes[k];
         for (const [r, vals] of [[sl.A, mapped[k].a], [sl.B, mapped[k].b]]) {
           r.bits = new Uint8Array(newN);
@@ -532,7 +535,7 @@ import { toHexOf, updateReadouts } from "./render/readouts.js";
   });
 
   /* ══════════════════════════════════════════════════════════
-     LANE — 2-D canvas, lanes 1/2/3 & parallel 3-D split
+     LANE — 2-D canvas, the live lane set & parallel 3-D split
      ══════════════════════════════════════════════════════════ */
 
   const depthBtn = document.getElementById("depthBtn");
@@ -548,6 +551,11 @@ import { toHexOf, updateReadouts } from "./render/readouts.js";
     updateReadouts,
     unpairB,
     laneExprText,
+    addLaneFromUi,
+    duplicateLaneFromUi,
+    deleteLaneFromUi,
+    renderSources: () => sources.render(),
+    lfoStop: (...args) => controls.lfoStop(...args),
   });
 
   /* D41: the A/B/Z1 readout labels are buttons, not text. Same focus lens as
@@ -680,6 +688,58 @@ import { toHexOf, updateReadouts } from "./render/readouts.js";
     updateReadouts();
   }
 
+  /* ── lane management (D46) ──────────────────────────────────────────────
+     The frames view owns the add/duplicate/delete controls, but these
+     composition-root functions own the transactions so every surface — the
+     stage-bar selects, source table, copy menu and readouts — refreshes in
+     one pass. Each returns the new/removed lane key (or a refusal). */
+
+  function addLaneFromUi() {
+    controls.lfoStop();
+    let key = null;
+    store.patch(() => {
+      if (S.copyArmed) copyMenu.close(false);
+      key = addLane();
+      if (!key) return;
+      S.laneKey = key;
+      if (S.view3d && S.split3d) S.splitPair[S.activePane] = key;
+      evaluate(true);
+      refreshActiveLaneUi();
+    });
+    if (key && sources.isOpen()) sources.render();
+    return key;
+  }
+
+  function duplicateLaneFromUi(srcKey) {
+    controls.lfoStop();
+    let key = null;
+    store.patch(() => {
+      if (S.copyArmed) copyMenu.close(false);
+      key = duplicateLane(srcKey);
+      if (!key) return;
+      S.laneKey = key;
+      if (S.view3d && S.split3d) S.splitPair[S.activePane] = key;
+      evaluate(true);
+      refreshActiveLaneUi();
+    });
+    if (key && sources.isOpen()) sources.render();
+    return key;
+  }
+
+  function deleteLaneFromUi(key) {
+    controls.lfoStop();
+    let result = { ok: false, reason: "unknown" };
+    store.patch(() => {
+      if (S.copyArmed) copyMenu.close(false);
+      result = deleteLane(key);
+      if (!result.ok) return;
+      evaluate(true);
+      refreshActiveLaneUi();
+    });
+    if (result.ok && sources.isOpen()) sources.render();
+    return result;
+  }
+
   function focusSplitPane(paneIdx) {
     store.patch(() => {
       S.activePane = paneIdx === 1 ? 1 : 0;
@@ -721,19 +781,22 @@ import { toHexOf, updateReadouts } from "./render/readouts.js";
 
   function setSplitMode(on) {
     if (S.copyArmed) copyMenu.close(false);
+    /* Split is exactly two panes: it needs at least two live lanes (D46). */
+    if (on && liveLaneKeys().length < 2) return;
     store.patch(() => {
+      const keys = liveLaneKeys();
       if (on) {
         S.view3d = true;
         S.split3d = true;
         if (!S.splitPair.includes(S.laneKey)) {
-          const other = S.splitPair[0] === S.laneKey ? LANE_KEYS[1] : S.splitPair[0];
-          S.splitPair = [other === S.laneKey ? LANE_KEYS[0] : other, S.laneKey];
+          const other = S.splitPair[0] === S.laneKey ? keys[1] : S.splitPair[0];
+          S.splitPair = [other === S.laneKey ? keys[0] : other, S.laneKey];
           S.activePane = 1;
         } else {
           S.activePane = S.splitPair[0] === S.laneKey ? 0 : 1;
         }
         if (S.splitPair[0] === S.splitPair[1]) {
-          S.splitPair[1] = S.splitPair[0] === LANE_KEYS[0] ? LANE_KEYS[1] : LANE_KEYS[0];
+          S.splitPair[1] = S.splitPair[0] === keys[0] ? keys[1] : keys[0];
         }
         enableBOnLane(S.lanes[S.splitPair[0]]);
         enableBOnLane(S.lanes[S.splitPair[1]]);
@@ -969,7 +1032,7 @@ import { toHexOf, updateReadouts } from "./render/readouts.js";
       }
     }
 
-    for (const k of LANE_KEYS) {
+    for (const k of liveLaneKeys()) {
       const sl = S.lanes[k];
       if (reduce) {
         /* No easing: the wave snaps to its committed state. */
@@ -1162,7 +1225,7 @@ import { toHexOf, updateReadouts } from "./render/readouts.js";
     applyPreset(S.lanes["3"].B, "sine");
     S.lanes["3"].seededB = true;
 
-    for (const k of LANE_KEYS) {
+    for (const k of liveLaneKeys()) {
       const sl = S.lanes[k];
       syncTarget(sl.A, true);
       syncTarget(sl.B, true);
@@ -1212,7 +1275,7 @@ import { toHexOf, updateReadouts } from "./render/readouts.js";
 
   function snapshotState() {
     const lanes = {};
-    for (const key of LANE_KEYS) {
+    for (const key of liveLaneKeys()) {
       const sl = S.lanes[key];
       const lane = Number(key);
       const names = FRAME_NAMES[key];
@@ -1301,7 +1364,7 @@ import { toHexOf, updateReadouts } from "./render/readouts.js";
 
   function snapshotFrames() {
     const lanes = {};
-    for (const key of LANE_KEYS) {
+    for (const key of liveLaneKeys()) {
       const names = FRAME_NAMES[key];
       const lane = Number(key);
       lanes[String(lane)] = { lane, operands: [names.a, names.b], derived: names.z };

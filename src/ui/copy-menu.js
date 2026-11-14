@@ -6,10 +6,14 @@
  * items, and the copy itself is one `copyLane` transaction (the live region
  * reports the destination state). The copy belongs to the rack, not the lane.
  *
- * D43: an item is labelled and identified by its stable lane key.
+ * D43/D46: items are labelled and identified by their stable lane key, and the
+ * list is built from the **live** lane set on every open (excluding the focused
+ * lane itself), so adding or deleting lanes keeps the menu truthful. Copying
+ * needs a distinct destination lane that already exists; duplicating creates a
+ * new lane and lives in the frames view.
  */
 
-import { LANE_KEYS, S } from "../state/instrument.ts";
+import { S, liveLaneKeys } from "../state/instrument.ts";
 
 export function createCopyMenu(deps) {
   const { store, button, onCopy } = deps;
@@ -20,22 +24,29 @@ export function createCopyMenu(deps) {
   menu.setAttribute("role", "menu");
   menu.setAttribute("aria-label", "copy the focused lane to");
 
-  const items = LANE_KEYS.map((key) => {
-    const item = document.createElement("button");
-    item.type = "button";
-    item.className = "op";
-    item.setAttribute("role", "menuitem");
-    item.setAttribute("tabindex", "-1");
-    item.dataset.lane = key;
-    item.textContent = `lane ${key}`;
-    item.title = `Copy lane ${S.laneKey} into lane ${key}`;
-    item.addEventListener("click", () => activate(key));
-    menu.appendChild(item);
-    return item;
-  });
-  document.body.appendChild(menu);
-
+  let items = [];
   let open = false;
+
+  function rebuildItems() {
+    menu.textContent = "";
+    const destinations = liveLaneKeys().filter((key) => key !== S.laneKey);
+    items = destinations.map((key) => {
+      const item = document.createElement("button");
+      item.type = "button";
+      item.className = "op";
+      item.setAttribute("role", "menuitem");
+      item.setAttribute("tabindex", "-1");
+      item.dataset.lane = key;
+      item.textContent = `lane ${key}`;
+      item.title = `Copy lane ${S.laneKey} into lane ${key}`;
+      item.addEventListener("click", () => activate(key));
+      menu.appendChild(item);
+      return item;
+    });
+    return destinations;
+  }
+
+  document.body.appendChild(menu);
 
   function position() {
     menu.hidden = false;
@@ -50,16 +61,16 @@ export function createCopyMenu(deps) {
   }
 
   function focusItem(index) {
+    if (items.length === 0) return;
     const n = items.length;
     items[((index % n) + n) % n].focus();
   }
 
   function openMenu() {
     if (open) return;
+    /* Nothing to copy into when the lane set holds a single lane. */
+    if (rebuildItems().length === 0) return;
     open = true;
-    items.forEach((item, i) => {
-      item.title = `Copy lane ${S.laneKey} into lane ${LANE_KEYS[i]}`;
-    });
     store.patch(() => { S.copyArmed = true; });
     position();
     button.setAttribute("aria-expanded", "true");

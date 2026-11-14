@@ -9,13 +9,15 @@
 import { test, after } from "node:test";
 import assert from "node:assert/strict";
 
-import { S, SIZES } from "../src/state/instrument.ts";
+import { S, SIZES, liveLaneKeys } from "../src/state/instrument.ts";
 import { DEMO } from "../src/state/dataset.ts";
-import { evaluate, routing } from "../src/state/routing.ts";
-import { setHexWord } from "../src/state/actions.ts";
+import { coreLanes, evaluate, routing } from "../src/state/routing.ts";
+import { addRoute } from "../src/core/routing.ts";
+import { addLane, deleteLane, setHexWord } from "../src/state/actions.ts";
 import {
   clearRecording,
   recordCount,
+  recordCsv,
   recordSnapshot,
   readLog,
   startRecording,
@@ -233,75 +235,160 @@ test("every supported width is representable", () => {
 });
 
 /* ---------------------------------------------------------------------------
- * Schema 4 (D44): the document is a lane map keyed by stable lane key; this
- * build's live tree still ships the three default lanes.
+ * Schema 4 (D44) + the dynamic-lane live tree (D46): the document is a lane map
+ * keyed by stable lane key, and the live instrument now holds exactly the
+ * document's lanes (one to eight, gaps allowed).
  * ------------------------------------------------------------------------- */
 
-test("a schema-4 document wider than the live tree loads the lanes it can represent", () => {
-  const base = doc();
-  const extraLane = { ...base.lanes["1"], binop: "xor" as const };
-  const wide = {
-    ...base,
-    schema: 4,
-    view: { ...base.view, lane: "7", splitPair: ["7", "3"] as [string, string] },
-    lanes: {
-      ...base.lanes,
-      "4": { ...extraLane },
-      "7": { ...extraLane },
-    },
-    routes: [
-      { from: "1.z", to: "3.a", mix: "set" },
-      { from: "7.z", to: "2.a", mix: "set" }, // source lane 7 is not in the live tree
-    ],
-    parked: { "3.a": "89AB", "2.a": "0123" },
+/** A schema-4 lane record at width `N`; `index` is the 1-based lane number. */
+function wideLane(index: number, N = 8): Record<string, unknown> {
+  const hex = (value: number) => value.toString(16).toUpperCase().padStart(N / 4, "0");
+  return {
+    a: hex(index * 2),
+    b: hex(index * 2 + 1),
+    showB: true,
+    binop: "xor",
+    edit: "a",
+    seededB: true,
+    lfoB: "0",
+    colA: -1,
+    colB: -1,
+    focus: "a",
+    frameVis: { a: true, b: true, z: true },
   };
-  const result = applyProject(wide);
+}
+
+function wideDoc({
+  keys = [1, 2, 3, 4, 5, 6, 7, 8],
+  N = 8,
+  viewLane = "8",
+  splitPair = ["8", "7"] as [string, string],
+  routes = [] as Array<{ from: string; to: string; mix: "set" }>,
+  parked = {} as Record<string, string>,
+  lane8Expressions,
+}: {
+  keys?: number[];
+  N?: number;
+  viewLane?: string;
+  splitPair?: [string, string];
+  routes?: Array<{ from: string; to: string; mix: "set" }>;
+  parked?: Record<string, string>;
+  lane8Expressions?: { a?: string; b?: string };
+} = {}) {
+  const lanes: Record<string, Record<string, unknown>> = {};
+  for (const index of keys) lanes[String(index)] = wideLane(index, N);
+  if (lane8Expressions && lanes["8"]) lanes["8"].expressions = { ...lane8Expressions };
+  return {
+    schema: 4,
+    app: "bitwave" as const,
+    savedAt: "2026-11-06T00:00:00.000Z",
+    N,
+    view: { lane: viewLane, view3d: false, split3d: false, splitPair, activePane: 0 as const },
+    lanes,
+    routes,
+    parked,
+  };
+}
+
+test("an eight-lane schema-4 document widens the live tree and round-trips", () => {
+  const N = 8;
+  const result = applyProject(
+    wideDoc({
+      N,
+      viewLane: "8",
+      splitPair: ["8", "7"],
+      routes: [{ from: "7.z", to: "1.a", mix: "set" }],
+      parked: { "1.a": wideLane(1, N).a },
+    }),
+  );
   assert.equal(result.ok, true, result.message);
 
-  /* Only the three shipped lanes exist; the rest are ignored until the UI slice. */
-  assert.deepEqual(Object.keys(S.lanes), ["1", "2", "3"]);
-  /* A view reference to an unrepresentable lane falls back to a live lane. */
-  assert.equal(S.laneKey, "1");
-  assert.deepEqual(S.splitPair, ["1", "3"]);
-  /* The lane-7 route and its parked base are dropped together. */
-  assert.equal(routing.routes.length, 1);
-  assert.equal(routing.routes[0].from.lane, "1");
-  assert.deepEqual([...routing.parked.keys()], ["3:a"]);
-  assert.equal(toHex(S.lanes["2"].A.bits, S.N), "0123", "lane 2 keeps its base value");
+  assert.deepEqual(Object.keys(S.lanes), ["1", "2", "3", "4", "5", "6", "7", "8"]);
+  assert.deepEqual(liveLaneKeys(), ["1", "2", "3", "4", "5", "6", "7", "8"]);
+  assert.equal(S.laneKey, "8", "the document's focused lane loads");
+  assert.deepEqual(S.splitPair, ["8", "7"]);
+  assert.equal(toHex(S.lanes["8"].A.bits, N), "10");
+  assert.equal(toHex(S.lanes["8"].Z.bits, N), "01", "Z is derived for lane 8");
 
-  /* Capture is the shipped three-lane schema-4 document and round-trips. */
+  /* A cross-lane route from lane 7 drives lane 1; its parked base is preserved. */
+  assert.equal(routing.routes.length, 1);
+  assert.equal(toHex(S.lanes["1"].A.bits, N), toHex(S.lanes["7"].Z.bits, N));
+  assert.equal(routing.parked.size, 1);
+
+  /* Capture writes every live lane, in ascending key order, and round-trips. */
   const captured = captureProject("2026-11-06T01:00:00.000Z");
   assert.equal(captured.schema, 4);
-  assert.deepEqual(Object.keys(captured.lanes), ["1", "2", "3"]);
-  assert.equal(captured.view.lane, "1");
+  assert.deepEqual(Object.keys(captured.lanes), ["1", "2", "3", "4", "5", "6", "7", "8"]);
+  assert.equal(captured.view.lane, "8");
   assert.equal(captured.routes.length, 1);
-  assert.deepEqual(Object.keys(captured.parked), ["3.a"]);
+  assert.equal(applyProject(captured).ok, true);
+  assert.deepEqual(Object.keys(S.lanes), ["1", "2", "3", "4", "5", "6", "7", "8"]);
+});
+
+test("a gapped schema-4 document keeps exactly its live lanes, without renumbering", () => {
+  const result = applyProject(wideDoc({ keys: [1, 3, 4], viewLane: "4", splitPair: ["4", "1"] }));
+  assert.equal(result.ok, true, result.message);
+  assert.deepEqual(Object.keys(S.lanes), ["1", "3", "4"]);
+  assert.equal(S.laneKey, "4");
+  assert.equal(frameNameForTest("3", "z"), "Z3", "names derive from the stable key, not position");
+  assert.equal(toHex(S.lanes["4"].A.bits, 8), "08");
+
+  /* The freed middle key is reused; existing lanes are never renumbered. */
+  assert.equal(addLane(), "2");
+  assert.deepEqual(Object.keys(S.lanes), ["1", "2", "3", "4"]);
+  assert.equal(toHex(S.lanes["3"].A.bits, 8), "06", "lane 3 kept its own value");
+
+  const captured = captureProject("2026-11-06T01:00:00.000Z");
+  assert.deepEqual(Object.keys(captured.lanes), ["1", "2", "3", "4"]);
   assert.equal(applyProject(captured).ok, true);
 });
 
-test("a schema-4 document with gaps resets an omitted live lane to boot", () => {
-  const base = doc();
-  const gapped = {
-    ...base,
-    schema: 4,
-    lanes: { "1": { ...base.lanes["1"] }, "3": { ...base.lanes["3"] } },
+test("routing and expression environments follow all eight live lanes", () => {
+  const N = 8;
+  const doc8 = wideDoc({
+    N,
+    lane8Expressions: { a: "Z7 + 1" },
     routes: [],
-    parked: {},
-    dataset: undefined,
-  };
-  const result = applyProject(gapped);
-  assert.equal(result.ok, true, result.message);
-  assert.deepEqual(Object.keys(S.lanes), ["1", "2", "3"]);
-  assert.equal(toHex(S.lanes["1"].A.bits, 16), "DEAD");
-  assert.equal(toHex(S.lanes["3"].A.bits, 16), "89AB");
-  const boot = makeBootLanes(S.N);
-  assert.equal(
-    toHex(S.lanes["2"].A.bits, S.N),
-    toHex(boot["2"].A.bits, S.N),
-    "an omitted live lane falls back to its boot value",
-  );
-  const captured = captureProject("2026-11-06T01:00:00.000Z");
-  assert.deepEqual(Object.keys(captured.lanes), ["1", "2", "3"]);
+  });
+  assert.equal(applyProject(doc8).ok, true);
+
+  /* The expression on lane 8 A sees lane 7's derived frame (Z7). */
+  evaluate();
+  const expectedZ7 = BigInt(0x0e ^ 0x0f); // lane 7 is 0E xor 0F
+  assert.equal(toHex(S.lanes["8"].A.bits, N), (expectedZ7 + 1n).toString(16).padStart(2, "0").toUpperCase());
+
+  /* A route from lane 8 to lane 2 is applied and delays are recomputed. */
+  addRoute(routing, coreLanes(), { lane: "8", frame: "z" }, { lane: "2", frame: "b" });
+  evaluate(true);
+  assert.equal(toHex(S.lanes["2"].B.bits, N), toHex(S.lanes["8"].Z.bits, N));
+  assert.equal(routing.routes.length, 1);
+});
+
+test("Record rows carry 3L frames (three per live lane), not a fixed nine", () => {
+  assert.equal(applyProject(wideDoc()).ok, true);
+  evaluate(true);
+  startRecording();
+  recordSnapshot();
+  const row = readLog()[0];
+  assert.equal(Object.keys(row.frames).length, 24, "eight lanes × three frames");
+  for (const name of ["A", "B", "Z1", "O", "P", "Z8"]) {
+    assert.equal(typeof row.frames[name], "string", `recorded frame ${name}`);
+  }
+  const header = recordCsv().split("\n")[0].split(",");
+  assert.equal(header.length, 25, "step + 3L frame columns");
+  assert.deepEqual(header.slice(-3), ["O", "P", "Z8"]);
+  stopRecording();
+  clearRecording();
+
+  /* A three-lane live set records exactly nine frame columns. */
+  assert.equal(applyProject(pristineThreeLaneDoc()).ok, true);
+  startRecording();
+  recordSnapshot();
+  const narrow = readLog()[0];
+  assert.equal(Object.keys(narrow.frames).length, 9);
+  assert.equal(recordCsv().split("\n")[0].split(",").length, 10);
+  stopRecording();
+  clearRecording();
 });
 
 test("legacy schema-1/2/3 documents still load and capture as schema 4", () => {
@@ -310,6 +397,23 @@ test("legacy schema-1/2/3 documents still load and capture as schema 4", () => {
     assert.equal(result.ok, true, `schema ${schema}: ${result.message}`);
     assert.equal(S.N, 16);
     assert.equal(S.laneKey, "2");
+    assert.deepEqual(liveLaneKeys(), ["1", "2", "3"], "the closed three-lane object is still the live set");
   }
   assert.equal(captureProject().schema, 4);
 });
+
+function frameNameForTest(lane: string, frame: "a" | "b" | "z"): string {
+  const names: Record<string, { a: string; b: string; z: string }> = {
+    "1": { a: "A", b: "B", z: "Z1" },
+    "2": { a: "C", b: "D", z: "Z2" },
+    "3": { a: "E", b: "F", z: "Z3" },
+    "4": { a: "G", b: "H", z: "Z4" },
+    "8": { a: "O", b: "P", z: "Z8" },
+  };
+  return names[lane][frame];
+}
+
+/** The captured boot document (three lanes) — the D46 "narrow" baseline. */
+function pristineThreeLaneDoc() {
+  return pristine;
+}

@@ -6,21 +6,26 @@
   self-contained file at the repo root; open that file directly.
 
   Engine, visual system and feature set are unchanged. Interface changes:
-    · lanes are numbered 1 / 2 / 3 (letters now mean frames/operands only)
-    · frame names are global: lane 1 A/B/Z1, lane 2 C/D/Z2, lane 3 E/F/Z3
-    · the frames button swaps the stage to a card view of every lane/frame with
-      static mini-curves; choosing a card focuses that frame and returns to the
-      lanes view, and a per-card eye shows/hides that frame in the 2D view (D42)
+    · lanes are numbered by their stable key 1…8 (letters mean frames/operands
+      only); the boot instrument ships three and the frames view adds/duplicates
+      lanes up to the eight-lane cap
+    · frame names are global: lane 1 A/B/Z1, lane 2 C/D/Z2, … lane 8 O/P/Z8
+    · the frames button swaps the stage to a card view of every live lane/frame
+      with static mini-curves; choosing a card focuses that frame and returns to
+      the lanes view, a per-card eye shows/hides that frame in the 2D view
+      (D42), the live + tile adds a blank lane (disabled at the cap), and each
+      lane head duplicates or deletes the lane (D46)
     · focus is a lens; a derived frame focuses read-only; the frames view's
       `Lanes` button (or Esc) returns without choosing
-    · the six-input source table (data columns or frame outputs) is the routing
-      housing: labels carry the assignment and driven inputs are locked
+    · the source table (data columns, frame outputs or expressions, one row per
+      live operand, grouped by lane) is the routing housing: labels carry the
+      assignment and driven inputs are locked
     · F4 IA (author-approved 2026-11-06): stable module order
       source | width·edit | operate | derive | motion | view; an always-visible
-      stage bar is the single home of lane, frames and split; `copy to…` is an
-      explicit menu; `width` replaces `register`; a whole-word hex entry sits
-      beside the edit target; inapplicable controls stay in place (aria-disabled)
-      instead of disappearing
+      stage bar is the single home of lane (a native per-pane select), frames
+      and split; `copy to…` is an explicit menu; `width` replaces `register`; a
+      whole-word hex entry sits beside the edit target; inapplicable controls
+      stay in place (aria-disabled) instead of disappearing
     · F4 accessibility: every operand nibble is a focusable spinbutton (keyboard
       editing), the canvas has a live text alternative, there is one polite live
       region for committed changes, reduced motion is honoured and targets are
@@ -74,13 +79,14 @@
       </table>
     </div>
     <div class="fp-foot">
-      <span id="sourcesStatus" role="status" aria-live="polite">six inputs · one source each</span>
+      <span id="sourcesStatus" role="status" aria-live="polite">one source per input</span>
     </div>
   </aside>
 
-  <!-- D42: the frames view replaces the pop-out navigator. The stage swaps to a
-       card grid (one column per lane, one equal card per frame); `Lanes` in the
-       stage bar returns. Cards are buttons; eyes keep 2-D visibility. -->
+  <!-- D42/D46: the frames view replaces the pop-out navigator. The stage swaps to
+       a card grid (one column per live lane, one equal card per frame); `Lanes`
+       in the stage bar returns. Cards are buttons; eyes keep 2-D visibility;
+       the + tile adds a lane and each lane head duplicates/deletes. -->
   <div class="frames-view" id="framesView" hidden role="region" aria-label="Frames — every lane and frame">
     <div class="frames-scroll" id="framesScroll" tabindex="0" role="group"
          aria-label="Frame cards — arrow keys scroll">
@@ -131,7 +137,7 @@
       <button class="op" id="nextEx" title="Next example (→)" aria-label="▶ next example">▶</button>
     </div>
     <span class="excount" id="exCount">— / —</span>
-    <button class="op" id="sourcesBtn" aria-expanded="false" aria-controls="sourcesPanel" title="Show the six input bindings">sources</button>
+    <button class="op" id="sourcesBtn" aria-expanded="false" aria-controls="sourcesPanel" title="Show the live operand bindings">sources</button>
     <div class="seg" id="obsSeg" role="group" aria-label="observation logger">
       <button class="op" id="logObsBtn" title="Log current observation">log</button>
       <button class="op" id="exportObsBtn" title="Export observations to CSV">export</button>
@@ -244,7 +250,7 @@
       <dt>0–9, a–f</dt><dd>set the focused nibble to that digit</dd>
       <dt>Enter</dt><dd>hex entry: commit the whole word</dd>
       <dt>Esc</dt><dd>cancel hex entry, a menu or a panel</dd>
-      <dt>Alt+1/2/3</dt><dd>select lane 1, 2 or 3</dd>
+      <dt>Alt+1…8</dt><dd>select a live lane by its number (if it exists)</dd>
       <dt>Alt+S</dt><dd>split the 3-D view</dd>
       <dt>← / →</dt><dd>step CSV examples when focus is outside the controls and the strip</dd>
       <dt>?</dt><dd>this help panel</dd>

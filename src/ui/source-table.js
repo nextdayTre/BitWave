@@ -1,5 +1,5 @@
 /**
- * Input source table — the six fixed bindings, one row per operand frame A–F.
+ * Input source table — two rows per live lane, one row per operand frame.
  *
  * Moved out of the spike and into the instrument for F3, extended with the
  * external-routing `expr` source (EXTERNAL-ROUTING §4/§6). A row reads one
@@ -7,6 +7,11 @@
  * validated one-line expression (`expr`), or nothing. The label carries the
  * assignment (D15 / author note): a data-bound row reads `A · sine`, matching
  * the column name the import dropdown shows.
+ *
+ * D46: the table follows the live lane set — `2L` rows for `L` lanes, grouped
+ * under a per-lane header row and scrollable in the panel body. Expression
+ * labels, the frame source lists and the state chips derive from each binding,
+ * so extra lanes need no table changes.
  *
  * Expressions are validated with the shared core evaluator before they reach
  * the state tree; invalid text restores the previous valid expression and is
@@ -26,7 +31,7 @@ import {
   listInputs,
 } from "../state/bindings.ts";
 import { DEMO } from "../state/dataset.ts";
-import { S } from "../state/instrument.ts";
+import { S, frameName } from "../state/instrument.ts";
 
 const EXPR_PLACEHOLDER = "round(1.2599210498948732 * C)";
 
@@ -186,6 +191,7 @@ export function createSourceTable(deps) {
     const sl = S.lanes[binding.lane];
     const key = draftKey(binding);
     const tr = document.createElement("tr");
+    tr.className = "src-binding";
 
     const dest = document.createElement("td");
     dest.className = "src-dest";
@@ -215,7 +221,7 @@ export function createSourceTable(deps) {
     const sourceCell = document.createElement("td");
     const select = document.createElement("select");
     select.className = "src-pick";
-    select.setAttribute("aria-label", `Lane ${binding.laneNumber} ${binding.operand.toUpperCase()} source`);
+    select.setAttribute("aria-label", `Lane ${binding.laneNumber} ${binding.frame} source`);
     select.appendChild(option("", "—"));
 
     if (DEMO.cols.length) {
@@ -318,8 +324,21 @@ export function createSourceTable(deps) {
     return tr;
   }
 
+  function laneGroupRow(laneKey, laneNumber) {
+    const tr = document.createElement("tr");
+    tr.className = "src-group-head";
+    tr.dataset.lane = laneKey;
+    const th = document.createElement("th");
+    th.scope = "rowgroup";
+    th.colSpan = 3;
+    const names = ["a", "b"].map((frame) => frameName(laneKey, frame));
+    th.textContent = `Lane ${laneNumber} · ${names[0]}/${names[1]}/${frameName(laneKey, "z")}`;
+    tr.appendChild(th);
+    return tr;
+  }
+
   function focusRow(index, target = "select") {
-    const rows = rowsEl.querySelectorAll("tr");
+    const rows = rowsEl.querySelectorAll("tr.src-binding");
     const row = rows[index];
     if (!row) return;
     const el = target === "expr" ? row.querySelector(".src-expr") : row.querySelector("select");
@@ -332,10 +351,18 @@ export function createSourceTable(deps) {
     try {
       rowsEl.textContent = "";
       const bindings = listInputs();
-      bindings.forEach((binding, index) => rowsEl.appendChild(buildRow(binding, index)));
+      let lane = null;
+      bindings.forEach((binding, index) => {
+        if (binding.lane !== lane) {
+          lane = binding.lane;
+          rowsEl.appendChild(laneGroupRow(binding.lane, binding.laneNumber));
+        }
+        rowsEl.appendChild(buildRow(binding, index));
+      });
       const bound = bindings.filter((binding) => binding.source.kind !== "none").length;
       if (statusEl && !statusEl.dataset.userMessage) {
-        statusEl.textContent = `${bound} / ${bindings.length} bound · one source each`;
+        const lanes = new Set(bindings.map((binding) => binding.lane)).size;
+        statusEl.textContent = `${bound} / ${bindings.length} bound · ${lanes} lane${lanes === 1 ? "" : "s"} · one source each`;
       }
     } finally {
       suppressBlur = false;

@@ -6,21 +6,26 @@
   self-contained file at the repo root; open that file directly.
 
   Engine, visual system and feature set are unchanged. Interface changes:
-    · lanes are numbered 1 / 2 / 3 (letters now mean frames/operands only)
-    · frame names are global: lane 1 A/B/Z1, lane 2 C/D/Z2, lane 3 E/F/Z3
-    · the frames button swaps the stage to a card view of every lane/frame with
-      static mini-curves; choosing a card focuses that frame and returns to the
-      lanes view, and a per-card eye shows/hides that frame in the 2D view (D42)
+    · lanes are numbered by their stable key 1…8 (letters mean frames/operands
+      only); the boot instrument ships three and the frames view adds/duplicates
+      lanes up to the eight-lane cap
+    · frame names are global: lane 1 A/B/Z1, lane 2 C/D/Z2, … lane 8 O/P/Z8
+    · the frames button swaps the stage to a card view of every live lane/frame
+      with static mini-curves; choosing a card focuses that frame and returns to
+      the lanes view, a per-card eye shows/hides that frame in the 2D view
+      (D42), the live + tile adds a blank lane (disabled at the cap), and each
+      lane head duplicates or deletes the lane (D46)
     · focus is a lens; a derived frame focuses read-only; the frames view's
       `Lanes` button (or Esc) returns without choosing
-    · the six-input source table (data columns or frame outputs) is the routing
-      housing: labels carry the assignment and driven inputs are locked
+    · the source table (data columns, frame outputs or expressions, one row per
+      live operand, grouped by lane) is the routing housing: labels carry the
+      assignment and driven inputs are locked
     · F4 IA (author-approved 2026-11-06): stable module order
       source | width·edit | operate | derive | motion | view; an always-visible
-      stage bar is the single home of lane, frames and split; `copy to…` is an
-      explicit menu; `width` replaces `register`; a whole-word hex entry sits
-      beside the edit target; inapplicable controls stay in place (aria-disabled)
-      instead of disappearing
+      stage bar is the single home of lane (a native per-pane select), frames
+      and split; `copy to…` is an explicit menu; `width` replaces `register`; a
+      whole-word hex entry sits beside the edit target; inapplicable controls
+      stay in place (aria-disabled) instead of disappearing
     · F4 accessibility: every operand nibble is a focusable spinbutton (keyboard
       editing), the canvas has a live text alternative, there is one polite live
       region for committed changes, reduced motion is honoured and targets are
@@ -336,11 +341,11 @@ var LANE_KEYS = laneDefs(3).map((def) => def.key);
 */
 /** One register size domain for the whole instrument (DESIGN §10.10). */
 var SIZES = SIZES$1;
-var FRAME_NAMES$1 = frameNamesFor(3);
+var FRAME_NAMES$1 = frameNamesFor(8);
 /**
 * The global display name of a lane/frame pair. Names derive from the lane key,
-* so a widened tree (lane "4") still names its frames G/H/Z4 even before its
-* entry reaches `FRAME_NAMES`; unknown keys fall back to the bare frame letter.
+* so lane "4" names its frames G/H/Z4; unknown keys fall back to the bare frame
+* letter.
 */
 var frameName$1 = (laneKey, frame) => {
 	const names = FRAME_NAMES$1[laneKey];
@@ -348,6 +353,20 @@ var frameName$1 = (laneKey, frame) => {
 	const index = laneIndex(laneKey);
 	if (index >= 0) return laneDef(index)[frame];
 	return frame.toUpperCase();
+};
+/** The live lane keys in canonical ascending numeric order (never array position). */
+var liveLaneKeys = () => Object.keys(S.lanes).sort(compareLaneKeys);
+/**
+* The lowest free stable lane key ("1".."13") not currently live. `null` only
+* when all thirteen name indices are taken (unreachable under the eight-lane
+* app cap, but the grammar ceiling is the real allocator bound).
+*/
+var nextFreeLaneKey = () => {
+	for (let index = 0; index < 13; index += 1) {
+		const key = laneDef(index).key;
+		if (!S.lanes[key]) return key;
+	}
+	return null;
 };
 var makeReg = (N) => ({
 	bits: new Uint8Array(N),
@@ -390,6 +409,9 @@ LANE_KEYS.forEach((key, index) => {
 var S = {
 	N: 64,
 	lanes: initialLanes,
+	get laneKeys() {
+		return Object.keys(this.lanes).sort(compareLaneKeys);
+	},
 	laneKey: LANE_KEYS[0],
 	split3d: false,
 	splitPair: [LANE_KEYS[0], LANE_KEYS[1]],
@@ -559,100 +581,6 @@ function tableValues(name, N) {
 	const out = new Array(n);
 	for (let j = 0; j < n; j++) out[j] = fn(n, j);
 	return out;
-}
-// src/state/actions.ts
-/**
-* Commands — the only places the app mutates the state tree.
-*
-* Each command is a pure state transition: no DOM, no rendering, no
-* transactions of its own. Callers run one or more commands inside
-* `store.patch(...)`, then the renderers read the settled tree. Unary ops and
-* presets delegate to `src/core` so the live instrument runs the tested engine.
-*/
-var UNARY = {
-	rol: rotateLeft,
-	ror: rotateRight,
-	shl: shiftLeft,
-	shr: shiftRight,
-	not: (bits, n) => invert(bits, n),
-	fold: (bits, n) => fold(bits, n),
-	bswap: (bits, n) => byteSwap(bits, n)
-};
-/** Applies a unary op to a register's truth bits (target resync is the caller's). */
-function applyUnary(reg, op, amount = 0) {
-	reg.bits = UNARY[op](reg.bits, S.N, amount);
-}
-/** Loads a wavetable preset into a register's truth bits. */
-function applyPreset(reg, name) {
-	const n = S.N >> 2;
-	const values = new Array(n);
-	for (let j = 0; j < n; j++) values[j] = TABLES[name](n, j);
-	reg.bits = nibblesToBits(values, S.N);
-}
-function setBinop(sl, op) {
-	sl.binop = op;
-}
-/** Focus and edit travel together for operands; a derived frame is a lens. */
-function setFocus(sl, frame) {
-	sl.focus = frame;
-	if (frame !== "z") sl.edit = frame;
-}
-function toggleFrameVisibility(sl, frame) {
-	sl.frameVis[frame] = !sl.frameVis[frame];
-	return sl.frameVis[frame];
-}
-/** Flips one bit and returns its nibble index (for the strip's fast patch). */
-function toggleBit(reg, bitIndex) {
-	reg.bits[bitIndex] ^= 1;
-	const j = Math.floor((S.N - 1 - bitIndex) / 4);
-	reg.target[j] = nibValue(reg, j);
-	return j;
-}
-/** Writes a nibble into truth and target; returns the clamped value. */
-function setNibble(reg, j, value) {
-	const v = clampNib(value);
-	setNibAt$1(reg.bits, S.N, j, v);
-	reg.target[j] = v;
-	return v;
-}
-/** 1:1 drag write: truth, target and the eared value update together. */
-function setLiveNibble(reg, j, value) {
-	const v = setNibble(reg, j, value);
-	reg.anim[j] = v;
-	return v;
-}
-/** Writes a whole hex word, right-aligned into the register (the CSV rule). */
-function setHexWord(reg, hex) {
-	const n = S.N >> 2;
-	const digits = hex.replace(/[^0-9a-f]/gi, "").toUpperCase().slice(-n).padStart(n, "0");
-	for (let j = 0; j < n; j++) {
-		const v = parseInt(digits[j], 16);
-		setNibAt$1(reg.bits, S.N, j, v);
-		reg.target[j] = v;
-	}
-}
-/** Copies a lane's model state (not its parked route bases). */
-function copyLane(src, dst) {
-	dst.A.bits = src.A.bits.slice();
-	dst.B.bits = src.B.bits.slice();
-	dst.Z.bits = src.Z.bits.slice();
-	dst.showB = src.showB;
-	dst.seededB = src.seededB;
-	dst.binop = src.binop;
-	dst.edit = src.edit;
-	dst.focus = src.focus;
-	dst.frameVis = { ...src.frameVis };
-	dst.lfoB = src.lfoB;
-	dst.fold = src.fold;
-	dst.expressions = { ...src.expressions };
-	dst.colA = src.colA;
-	dst.colB = src.colB;
-}
-/** Removes the second operand from a lane (the old unpair-B action). */
-function unpair(sl) {
-	sl.showB = false;
-	sl.edit = "a";
-	sl.focus = "a";
 }
 // src/core/routing.ts
 var createRouting = () => ({
@@ -1403,7 +1331,7 @@ function stopRecording() {
 function recordSnapshot() {
 	if (!S.record.on || S.drag >= 0) return false;
 	const frames = {};
-	for (const key of LANE_KEYS) {
+	for (const key of liveLaneKeys()) {
 		const sl = S.lanes[key];
 		const names = FRAME_NAMES$1[key];
 		frames[names.a] = toHex(sl.A.bits, S.N);
@@ -1436,20 +1364,13 @@ function readLog() {
 		frames: { ...row.frames }
 	}));
 }
-/** Deterministic CSV of the recorded rows (no timestamps). */
+/** Deterministic CSV of the recorded rows (no timestamps). One column per frame. */
 function recordCsv() {
-	const header = [
-		"step",
-		"A",
-		"B",
-		"Z1",
-		"C",
-		"D",
-		"Z2",
-		"E",
-		"F",
-		"Z3"
-	];
+	const header = ["step"];
+	for (const key of liveLaneKeys()) {
+		const names = FRAME_NAMES$1[key];
+		header.push(names.a, names.b, names.z);
+	}
 	const lines = [header.join(",")];
 	for (const row of S.record.rows) lines.push([String(row.step), ...header.slice(1).map((name) => row.frames[name] ?? "")].join(","));
 	return `${lines.join("\n")}\n`;
@@ -1486,15 +1407,16 @@ function laneView(sl, key) {
 /** Core lane map view over the app tree: stable lane keys, shared registers. */
 function coreLanes() {
 	const lanes = {};
-	for (const key of LANE_KEYS) lanes[key] = laneView(S.lanes[key], key);
+	for (const key of liveLaneKeys()) lanes[key] = laneView(S.lanes[key], key);
 	return lanes;
 }
 /** Every current frame as a name -> BigInt map (for expression environments). */
 function frameWords(lanes, N) {
 	const out = {};
-	for (const laneKey of LANE_KEYS) {
+	for (const laneKey of Object.keys(lanes).sort((a, b) => Number(a) - Number(b))) {
 		const lane = lanes[laneKey];
 		const names = FRAME_NAMES$1[laneKey];
+		if (!names) continue;
 		out[names.a] = regToBig$1(lane.A.bits, N);
 		out[names.b] = regToBig$1(lane.B.bits, N);
 		out[names.z] = regToBig$1(lane.Z.bits, N);
@@ -1518,12 +1440,184 @@ function applyExpression(laneKey, frame, lanes, N) {
 /** The single evaluation entry point for the app. Writes state only. */
 function evaluate(instant = false) {
 	evaluateAll(routing, coreLanes(), S.N, { applyExpression });
-	for (const key of LANE_KEYS) {
+	for (const key of liveLaneKeys()) {
 		const sl = S.lanes[key];
 		if (isDriven(routing, key, "a") || sl.expressions.a.trim() !== "") syncTarget(sl.A, instant);
 		if (isDriven(routing, key, "b") || sl.expressions.b.trim() !== "") syncTarget(sl.B, instant);
 		syncTarget(sl.Z, instant);
 	}
+}
+// src/state/actions.ts
+/**
+* Commands — the only places the app mutates the state tree.
+*
+* Each command is a pure state transition: no DOM, no rendering, no
+* transactions of its own. Callers run one or more commands inside
+* `store.patch(...)`, then the renderers read the settled tree. Unary ops and
+* presets delegate to `src/core` so the live instrument runs the tested engine.
+*/
+var UNARY = {
+	rol: rotateLeft,
+	ror: rotateRight,
+	shl: shiftLeft,
+	shr: shiftRight,
+	not: (bits, n) => invert(bits, n),
+	fold: (bits, n) => fold(bits, n),
+	bswap: (bits, n) => byteSwap(bits, n)
+};
+/** Applies a unary op to a register's truth bits (target resync is the caller's). */
+function applyUnary(reg, op, amount = 0) {
+	reg.bits = UNARY[op](reg.bits, S.N, amount);
+}
+/** Loads a wavetable preset into a register's truth bits. */
+function applyPreset(reg, name) {
+	const n = S.N >> 2;
+	const values = new Array(n);
+	for (let j = 0; j < n; j++) values[j] = TABLES[name](n, j);
+	reg.bits = nibblesToBits(values, S.N);
+}
+function setBinop(sl, op) {
+	sl.binop = op;
+}
+/** Focus and edit travel together for operands; a derived frame is a lens. */
+function setFocus(sl, frame) {
+	sl.focus = frame;
+	if (frame !== "z") sl.edit = frame;
+}
+function toggleFrameVisibility(sl, frame) {
+	sl.frameVis[frame] = !sl.frameVis[frame];
+	return sl.frameVis[frame];
+}
+/** Flips one bit and returns its nibble index (for the strip's fast patch). */
+function toggleBit(reg, bitIndex) {
+	reg.bits[bitIndex] ^= 1;
+	const j = Math.floor((S.N - 1 - bitIndex) / 4);
+	reg.target[j] = nibValue(reg, j);
+	return j;
+}
+/** Writes a nibble into truth and target; returns the clamped value. */
+function setNibble(reg, j, value) {
+	const v = clampNib(value);
+	setNibAt$1(reg.bits, S.N, j, v);
+	reg.target[j] = v;
+	return v;
+}
+/** 1:1 drag write: truth, target and the eared value update together. */
+function setLiveNibble(reg, j, value) {
+	const v = setNibble(reg, j, value);
+	reg.anim[j] = v;
+	return v;
+}
+/** Writes a whole hex word, right-aligned into the register (the CSV rule). */
+function setHexWord(reg, hex) {
+	const n = S.N >> 2;
+	const digits = hex.replace(/[^0-9a-f]/gi, "").toUpperCase().slice(-n).padStart(n, "0");
+	for (let j = 0; j < n; j++) {
+		const v = parseInt(digits[j], 16);
+		setNibAt$1(reg.bits, S.N, j, v);
+		reg.target[j] = v;
+	}
+}
+/** Copies a lane's model state (not its parked route bases). */
+function copyLane(src, dst) {
+	dst.A.bits = src.A.bits.slice();
+	dst.B.bits = src.B.bits.slice();
+	dst.Z.bits = src.Z.bits.slice();
+	dst.showB = src.showB;
+	dst.seededB = src.seededB;
+	dst.binop = src.binop;
+	dst.edit = src.edit;
+	dst.focus = src.focus;
+	dst.frameVis = { ...src.frameVis };
+	dst.lfoB = src.lfoB;
+	dst.fold = src.fold;
+	dst.expressions = { ...src.expressions };
+	dst.colA = src.colA;
+	dst.colB = src.colB;
+}
+/** Removes the second operand from a lane (the old unpair-B action). */
+function unpair(sl) {
+	sl.showB = false;
+	sl.edit = "a";
+	sl.focus = "a";
+}
+/**
+* Add a blank lane at the lowest free stable key, focusing nothing.
+*
+* A new lane is truly blank: zeroed registers, XOR, focus on A, every frame
+* visible, no expression sources and no CSV columns. It never renumbers an
+* existing lane, and the app cap (8) is the only refusal — the grammar ceiling
+* (13) merely bounds the allocator. Returns the new lane key, or `null` at the
+* cap. The caller focuses the lane (the add is a user action, not a state
+* migration).
+*/
+function addLane() {
+	if (liveLaneKeys().length >= 8) return null;
+	const key = nextFreeLaneKey();
+	if (key === null) return null;
+	S.lanes[key] = makeLaneState(key, S.N);
+	return key;
+}
+/**
+* Duplicate a lane as a new lane at the lowest free stable key. The copy takes
+* the source lane's model state — register bits/targets, `showB`, operator,
+* edit/focus lenses, B phase, seeded flag, frame visibility, expressions, fold
+* and CSV column mapping — but **not** its route edges or parked bases: routing
+* belongs to the rack, not the lane (D43). Returns the new lane key, or `null`
+* when the source is unknown or the app cap is reached.
+*/
+function duplicateLane(srcKey) {
+	const src = S.lanes[srcKey];
+	if (!src) return null;
+	if (liveLaneKeys().length >= 8) return null;
+	const key = nextFreeLaneKey();
+	if (key === null) return null;
+	const dst = makeLaneState(key, S.N);
+	copyLane(src, dst);
+	S.lanes[key] = dst;
+	return key;
+}
+/**
+* Delete a live lane. Never deletes the last lane; never renumbers the rest.
+*
+* Every route touching the lane is removed. A route *leaving* the deleted lane
+* unplugs its surviving destination, restoring the parked pre-patch base
+* byte-identically exactly as an explicit unplug would; a route *entering* the
+* deleted lane has no surviving destination, so it is dropped with its parked
+* base. The freed key becomes reusable. If the deleted lane was focused, focus
+* falls to the lowest remaining lane; `splitPair` is repaired (and split exits
+* when fewer than two lanes remain).
+*/
+function deleteLane(key) {
+	if (!S.lanes[key]) return {
+		ok: false,
+		reason: "unknown"
+	};
+	const remaining = liveLaneKeys().filter((candidate) => candidate !== key);
+	if (remaining.length === 0) return {
+		ok: false,
+		reason: "last"
+	};
+	const lanes = coreLanes();
+	for (const route of [...routing.routes]) {
+		if (route.from.lane !== key && route.to.lane !== key) continue;
+		if (route.to.lane === key) {
+			routing.routes = routing.routes.filter((candidate) => candidate.id !== route.id);
+			routing.parked.delete(portKey(key, route.to.frame));
+		} else removeRoute(routing, lanes, route.id);
+	}
+	for (const frame of ["a", "b"]) routing.parked.delete(portKey(key, frame));
+	delete S.lanes[key];
+	if (S.lfo.base) delete S.lfo.base[key];
+	if (S.laneKey === key) S.laneKey = remaining[0];
+	const repair = (current) => remaining.includes(current) ? current : remaining[0];
+	S.splitPair = [repair(S.splitPair[0]), repair(S.splitPair[1])];
+	if (S.splitPair[0] === S.splitPair[1]) S.splitPair = [S.splitPair[0], remaining.find((candidate) => candidate !== S.splitPair[0]) ?? S.splitPair[0]];
+	if (S.split3d && remaining.length < 2) {
+		S.split3d = false;
+		S.activePane = 0;
+	}
+	return { ok: true };
 }
 // src/state/store.ts
 function createStore(initial) {
@@ -1561,7 +1655,7 @@ var DEMO = {
 };
 // src/state/bindings.ts
 /**
-* Input bindings — the six operand inputs and what drives them.
+* Input bindings — the live operand inputs and what drives them.
 *
 * One fixed row per input (lane 1/2/3 × operand a/b). A row's source is either
 * an imported CSV column (`data`), a frame output (`1:1` / `z⁻¹`), or nothing.
@@ -1569,8 +1663,8 @@ var DEMO = {
 * incoming route, choosing a frame clears the column, and the core parks and
 * restores the pre-patch base (DESIGN §10.8, D2).
 *
-* Names follow D15: the six operand frames are A–F; source frames are A–F plus
-* Z1–Z3. The assignment is the label: a data-bound row reads `A · sine`. D43:
+* Names follow D15/D46: the live operand frames are A–P; source frames add
+* Z1–Z8. The assignment is the label: a data-bound row reads `A · sine`. D43:
 * a row is identified by its lane key, and names derive from that key.
 */
 var columnIndexOf = (sl, operand) => operand === "a" ? sl.colA : sl.colB;
@@ -1627,7 +1721,7 @@ function describeInput(sl, operand) {
 }
 function listInputs() {
 	const out = [];
-	for (const key of LANE_KEYS) for (const operand of ["a", "b"]) out.push(describeInput(S.lanes[key], operand));
+	for (const key of liveLaneKeys()) for (const operand of ["a", "b"]) out.push(describeInput(S.lanes[key], operand));
 	return out;
 }
 /** Is the focused frame an input that a route or expression drives? (editing is locked) */
@@ -1646,7 +1740,7 @@ function inputLabel(binding) {
 function availableSources(sl, operand) {
 	const destLane = sl.key;
 	const out = [];
-	for (const lane of LANE_KEYS) for (const frame of [
+	for (const lane of liveLaneKeys()) for (const frame of [
 		"a",
 		"b",
 		"z"
@@ -1696,7 +1790,7 @@ function bindExpression(sl, operand, text) {
 /** Clear every route and column binding (used by a fresh CSV import). */
 function resetBindings() {
 	clearRoutes(routing, coreLanes());
-	for (const key of LANE_KEYS) {
+	for (const key of liveLaneKeys()) {
 		S.lanes[key].colA = -1;
 		S.lanes[key].colB = -1;
 		S.lanes[key].expressions = {
@@ -2004,15 +2098,20 @@ function updateReadouts(withDecimal = true) {
 * frame (operand A, operand B, derived Z), with the lane/frame names beside
 * each box and a mini spline of the settled register. Choosing a card focuses
 * that frame and returns to the Lanes view; the eyes keep per-frame 2-D
-* visibility, the lane heads keep lane focus and `unpair B`, and the footer
-* carries the horizontal scroll affordance for many lanes.
+* visibility, the lane heads keep lane focus, `unpair B`, and the lane
+* management controls (D46), and the footer carries the horizontal scroll
+* affordance for many lanes.
 *
-* The `+` tile is present at this build's 3-lane maximum: dynamic lanes are a
-* separate pass (docs/DYNAMIC-LANES.md), so the tile reports the cap instead of
-* silently doing nothing.
+* D46: the grid is built from the **live** lane set, and the `+` tile is the
+* live add-lane control (enabled below the eight-lane cap, `aria-disabled` and
+* explanatory at it). Each lane head gains compact `dup` and `del` controls:
+* duplicate creates a new lane and focuses the copy; delete shows an inline
+* confirmation that names how many routes/expressions reference the lane's
+* frames, needs a second confirming click, cancels on Esc, and reports the
+* result in the footer note.
 */
 function createFrameNavigator(deps) {
-	const { store, selectLane, enableBOnLane, syncEditUi, syncViewUi, renderStrip, updateReadouts, unpairB } = deps;
+	const { store, selectLane, enableBOnLane, syncEditUi, syncViewUi, renderStrip, updateReadouts, unpairB, addLaneFromUi, duplicateLaneFromUi, deleteLaneFromUi, renderSources, lfoStop } = deps;
 	const framesBtn = document.getElementById("framesBtn");
 	const stageEl = document.querySelector(".stage");
 	const framesView = document.getElementById("framesView");
@@ -2029,7 +2128,8 @@ function createFrameNavigator(deps) {
 		"b",
 		"z"
 	];
-	const ADD_CAP_NOTE = "3 lanes is this build's maximum — dynamic lanes are a separate pass";
+	/** Lane key whose delete button is showing its inline confirmation. */
+	let pendingDelete = null;
 	const prefersReducedMotion = () => window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 	function previewPoints(reg) {
 		const vals = reg.target;
@@ -2127,9 +2227,93 @@ function createFrameNavigator(deps) {
 		wrap.append(btn, eye);
 		return wrap;
 	}
+	const escapeRe = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+	/** How many live routes/expressions reference this lane's frames. */
+	function laneReferences(laneKey) {
+		let routes = 0;
+		for (const route of routing.routes) if (route.from.lane === laneKey || route.to.lane === laneKey) routes += 1;
+		const names = FRAME_ORDER.map((frame) => escapeRe(frameName$1(laneKey, frame)));
+		const matcher = new RegExp(`(^|[^A-Za-z0-9_])(${names.join("|")})([^A-Za-z0-9_]|$)`);
+		let expressions = 0;
+		for (const key of liveLaneKeys()) {
+			const lane = S.lanes[key];
+			if (!lane) continue;
+			for (const operand of ["a", "b"]) {
+				const text = lane.expressions[operand];
+				if (text && text.trim() !== "" && matcher.test(text)) expressions += 1;
+			}
+		}
+		return {
+			routes,
+			expressions,
+			total: routes + expressions
+		};
+	}
+	function describeReferences({ routes, expressions }) {
+		const parts = [];
+		if (routes > 0) parts.push(`${routes} route${routes === 1 ? "" : "s"}`);
+		if (expressions > 0) parts.push(`${expressions} expression${expressions === 1 ? "" : "s"}`);
+		return parts.join(" and ");
+	}
+	function reportNote(text) {
+		framesNote.textContent = text;
+	}
+	function focusLaneHead(laneKey, selector = ".lane-btn") {
+		const target = framesGrid.querySelector(`[data-lane="${laneKey}"] ${selector}`);
+		if (target) target.focus({ preventScroll: true });
+	}
+	function buildDeleteConfirm(laneKey, head) {
+		head.classList.add("is-confirming");
+		const refs = laneReferences(laneKey);
+		const refText = refs.total > 0 ? ` — ${describeReferences(refs)} reference ${refs.total === 1 ? "it" : "its frames"}` : "";
+		const text = document.createElement("span");
+		text.className = "lane-confirm-text";
+		text.id = `laneConfirm${laneKey}`;
+		text.textContent = `delete lane ${laneKey}?${refText}`;
+		const confirm = document.createElement("button");
+		confirm.type = "button";
+		confirm.className = "lane-act is-danger";
+		confirm.dataset.act = "confirm";
+		confirm.textContent = "delete";
+		confirm.title = `Confirm: delete lane ${laneKey}`;
+		confirm.setAttribute("aria-label", `Confirm delete lane ${laneKey}`);
+		const cancel = document.createElement("button");
+		cancel.type = "button";
+		cancel.className = "lane-act";
+		cancel.dataset.act = "cancel";
+		cancel.textContent = "cancel";
+		cancel.title = "Cancel (Esc)";
+		cancel.setAttribute("aria-label", `Cancel deleting lane ${laneKey}`);
+		const actions = document.createElement("span");
+		actions.className = "lane-confirm-actions";
+		actions.append(confirm, cancel);
+		head.append(text, actions);
+		confirm.addEventListener("click", (ev) => {
+			ev.stopPropagation();
+			pendingDelete = null;
+			const result = deleteLaneFromUi(laneKey);
+			renderGrid();
+			if (!result || !result.ok) {
+				reportNote(result && result.reason === "last" ? "cannot delete the only lane — the instrument needs at least one" : `could not delete lane ${laneKey}`);
+				focusLaneHead(laneKey);
+				return;
+			}
+			reportNote(`deleted lane ${laneKey} — its routes are cleared and parked bases restored`);
+			focusLaneHead(liveLaneKeys()[0] ?? S.laneKey);
+		});
+		cancel.addEventListener("click", (ev) => {
+			ev.stopPropagation();
+			pendingDelete = null;
+			renderGrid();
+			reportNote(`delete lane ${laneKey} cancelled`);
+			focusLaneHead(laneKey, "[data-act=\"del\"]");
+		});
+		return head;
+	}
 	function buildLaneHead(laneKey) {
 		const head = document.createElement("div");
 		head.className = "lane-head";
+		if (pendingDelete === laneKey) return buildDeleteConfirm(laneKey, head);
 		const btn = document.createElement("button");
 		btn.type = "button";
 		btn.className = "lane-btn";
@@ -2160,6 +2344,56 @@ function createFrameNavigator(deps) {
 			unpairBtn.addEventListener("click", () => unpairB());
 			head.appendChild(unpairBtn);
 		}
+		const actions = document.createElement("span");
+		actions.className = "lane-actions";
+		const atCap = liveLaneKeys().length >= 8;
+		const dup = document.createElement("button");
+		dup.type = "button";
+		dup.className = "lane-act";
+		dup.dataset.act = "dup";
+		dup.dataset.lane = laneKey;
+		dup.textContent = "dup";
+		dup.setAttribute("aria-disabled", String(atCap));
+		dup.title = atCap ? `Duplicate lane ${laneKey} — 8 lanes is this build's maximum` : `Duplicate lane ${laneKey} as a new lane (values, operator, expressions — not routes)`;
+		dup.setAttribute("aria-label", `dup lane ${laneKey}`);
+		dup.addEventListener("click", (ev) => {
+			ev.stopPropagation();
+			pendingDelete = null;
+			if (atCap) {
+				reportNote(`8 lanes is this build's maximum — delete a lane to duplicate`);
+				return;
+			}
+			const key = duplicateLaneFromUi(laneKey);
+			renderGrid();
+			if (!key) {
+				reportNote(`could not duplicate lane ${laneKey}`);
+				focusLaneHead(laneKey, "[data-act=\"dup\"]");
+				return;
+			}
+			reportNote(`duplicated lane ${laneKey} as lane ${key} — focused`);
+			focusLaneHead(key);
+		});
+		actions.appendChild(dup);
+		if (liveLaneKeys().length > 1) {
+			const del = document.createElement("button");
+			del.type = "button";
+			del.className = "lane-act";
+			del.dataset.act = "del";
+			del.dataset.lane = laneKey;
+			del.textContent = "del";
+			del.title = `Delete lane ${laneKey} (asks for confirmation)`;
+			del.setAttribute("aria-label", `del lane ${laneKey}`);
+			del.addEventListener("click", (ev) => {
+				ev.stopPropagation();
+				pendingDelete = laneKey;
+				renderGrid();
+				const confirm = framesGrid.querySelector(`[data-lane="${laneKey}"] [data-act="confirm"]`);
+				if (confirm) confirm.focus({ preventScroll: true });
+				else reportNote(`delete lane ${laneKey}? press delete again to confirm`);
+			});
+			actions.appendChild(del);
+		}
+		head.appendChild(actions);
 		return head;
 	}
 	function buildLaneColumn(laneKey) {
@@ -2179,42 +2413,67 @@ function createFrameNavigator(deps) {
 		head.className = "lane-head";
 		head.setAttribute("aria-hidden", "true");
 		col.appendChild(head);
+		const atCap = liveLaneKeys().length >= 8;
+		const capNote = `8 lanes is this build's maximum — delete a lane to add another`;
+		const label = atCap ? `Add lane — 8 lanes is this build's maximum` : "Add lane — create a blank lane and focus it";
 		const btn = document.createElement("button");
 		btn.type = "button";
 		btn.className = "frame-add";
-		btn.setAttribute("aria-disabled", "true");
+		btn.setAttribute("aria-disabled", String(atCap));
 		btn.textContent = "+";
-		btn.setAttribute("aria-label", "Add lane — 3 lanes is this build's maximum");
-		btn.title = ADD_CAP_NOTE;
+		btn.setAttribute("aria-label", label);
+		btn.title = atCap ? capNote : "Add a blank lane (zero registers, XOR, no routes or expressions)";
 		btn.addEventListener("click", () => {
-			framesNote.textContent = ADD_CAP_NOTE;
+			if (atCap) {
+				reportNote(capNote);
+				return;
+			}
+			pendingDelete = null;
+			const key = addLaneFromUi();
+			renderGrid();
+			if (!key) {
+				reportNote(`8 lanes is this build's maximum`);
+				return;
+			}
+			reportNote(`added lane ${key} — blank lane, focused`);
+			focusLaneHead(key);
 		});
 		const hint = document.createElement("span");
 		hint.className = "frame-add-hint";
-		hint.textContent = "next lane";
+		hint.textContent = "add lane";
 		col.append(btn, hint);
 		return col;
 	}
 	function renderGrid() {
 		if (!S.framesView) return;
+		if (pendingDelete !== null && !S.lanes[pendingDelete]) pendingDelete = null;
 		const active = document.activeElement;
-		const host = active && active.closest ? active.closest("[data-lane][data-frame]") : null;
-		const keep = host ? {
-			lane: host.dataset.lane,
-			frame: host.dataset.frame,
+		const card = active && active.closest ? active.closest("[data-lane][data-frame]") : null;
+		const headControl = active && active.closest ? active.closest(".lane-act, .lane-btn") : null;
+		const keepCard = card ? {
+			lane: card.dataset.lane,
+			frame: card.dataset.frame,
 			eye: active.classList.contains("eye-btn")
 		} : null;
+		const keepHead = headControl ? {
+			lane: headControl.closest("[data-lane]")?.dataset.lane,
+			act: headControl.classList.contains("lane-btn") ? "lane-btn" : headControl.dataset.act
+		} : null;
 		framesGrid.textContent = "";
-		for (const laneKey of LANE_KEYS) framesGrid.appendChild(buildLaneColumn(laneKey));
+		for (const laneKey of liveLaneKeys()) framesGrid.appendChild(buildLaneColumn(laneKey));
 		framesGrid.appendChild(buildAddColumn());
 		const fa = frameName$1(curLane().key, "a");
 		const fb = frameName$1(curLane().key, "b");
 		const fz = frameName$1(curLane().key, "z");
 		framesLegend.textContent = `${fa} solid · ${fz} glow · ${fb} dashed`;
 		updateScrollbar();
-		if (keep) {
-			const selector = `[data-lane="${keep.lane}"][data-frame="${keep.frame}"]`;
-			const target = keep.eye ? framesGrid.querySelector(`${selector} .eye-btn`) : framesGrid.querySelector(`${selector} .frame-card`);
+		if (keepCard) {
+			const selector = `[data-lane="${keepCard.lane}"][data-frame="${keepCard.frame}"]`;
+			const target = keepCard.eye ? framesGrid.querySelector(`${selector} .eye-btn`) : framesGrid.querySelector(`${selector} .frame-card`);
+			if (target) target.focus({ preventScroll: true });
+		} else if (keepHead && keepHead.lane) {
+			const selector = keepHead.act === "lane-btn" ? ".lane-btn" : `[data-act="${keepHead.act}"]`;
+			const target = framesGrid.querySelector(`[data-lane="${keepHead.lane}"] ${selector}`);
 			if (target) target.focus({ preventScroll: true });
 		}
 	}
@@ -2263,6 +2522,7 @@ function createFrameNavigator(deps) {
 	function setOpen(open, { returnFocus = true } = {}) {
 		if (S.framesView === open) return;
 		S.copyArmed = false;
+		pendingDelete = null;
 		store.patch(() => {
 			S.framesView = open;
 			syncViewUi();
@@ -2333,6 +2593,16 @@ function createFrameNavigator(deps) {
 	store.subscribe(() => {
 		if (S.framesView) renderGrid();
 	});
+	document.addEventListener("keydown", (e) => {
+		if (e.key !== "Escape" || pendingDelete === null || !S.framesView) return;
+		const laneKey = pendingDelete;
+		pendingDelete = null;
+		e.preventDefault();
+		e.stopPropagation();
+		renderGrid();
+		reportNote(`delete lane ${laneKey} cancelled`);
+		focusLaneHead(laneKey, "[data-act=\"del\"]");
+	}, true);
 	function setFrameVis(laneKey, frame, visible) {
 		const sl = S.lanes[laneKey];
 		if (!sl || sl.frameVis[frame] === visible) return;
@@ -2354,17 +2624,36 @@ function createFrameNavigator(deps) {
 * Stage bar — the single canonical home of lane selection, the frames view toggle
 * and `split` (F4 IA, DESIGN §8).
 *
-* Always visible: in 2-D it shows the lane set, `frames`, a disabled `split`
+* Always visible: in 2-D it shows the live lane set, `frames`, a disabled `split`
 * and `LANE 1 · A ⊕ B → Z1`; in 3-D it adds the per-pane focus dots and, in
 * split mode, a second pane head. While the frames view is open it shrinks to
-* `Lanes` (D42). Reads the state tree; writes only this DOM.
+* `Lanes` (D42).
 *
-* D43: each lane button carries its stable lane key (`data-lane="1"`), which is
-* also its displayed number.
+* D46: with a dynamic lane set the old `1 | 2 | 3` radiogroup is now one native
+* `<select class="op lane-select">` per pane — options are the live lanes,
+* labelled `Lane 1`…`Lane 8` and valued by the stable lane key. A native select
+* brings its own declared keyboard path (arrows/Home/End/type-ahead) and cannot
+* grow the bar sideways as lanes are added; split has two selects and the
+* second is named "Lane (second pane)". Selection writes only through the
+* instrument's own lane commands.
 */
 function createStageBar(deps) {
 	const { element, framesBtn, selectLane, selectLaneInPane, setSplitMode, focusSplitPane, laneExprText, closeFrames } = deps;
 	let stageDom = null;
+	function makeSelect(paneIdx) {
+		const select = document.createElement("select");
+		select.className = "op lane-select";
+		select.dataset.paneSelect = String(paneIdx);
+		select.setAttribute("aria-label", paneIdx === 1 ? "Lane (second pane)" : "Lane");
+		select.title = paneIdx === 1 ? "Select the lane shown in the second pane" : "Select the lane shown in this pane";
+		select.addEventListener("change", (ev) => {
+			ev.stopPropagation();
+			const key = select.value;
+			if (S.split3d) selectLaneInPane(paneIdx, key);
+			else selectLane(key);
+		});
+		return select;
+	}
 	function buildStageBar() {
 		const keep = [...element.children];
 		const makePane = (paneIdx) => {
@@ -2376,46 +2665,8 @@ function createStageBar(deps) {
 			dot.title = "Focused lane (controls & strip edit this lane)";
 			dot.setAttribute("aria-hidden", "true");
 			wrap.appendChild(dot);
-			const seg = document.createElement("div");
-			seg.className = "seg mini";
-			seg.setAttribute("role", "radiogroup");
-			seg.setAttribute("aria-label", `Lane${paneIdx === 1 ? " (second pane)" : ""}`);
-			const btns = {};
-			for (const k of LANE_KEYS) {
-				const b = document.createElement("button");
-				b.type = "button";
-				b.className = "op";
-				b.dataset.lane = k;
-				b.setAttribute("role", "radio");
-				b.setAttribute("aria-checked", "false");
-				b.setAttribute("tabindex", "-1");
-				b.textContent = k;
-				b.title = `Lane ${k}`;
-				b.setAttribute("aria-label", `Lane ${k}`);
-				b.addEventListener("click", (ev) => {
-					ev.stopPropagation();
-					if (S.split3d) selectLaneInPane(paneIdx, k);
-					else selectLane(k);
-				});
-				seg.appendChild(b);
-				btns[k] = b;
-			}
-			seg.addEventListener("keydown", (e) => {
-				const current = S.split3d ? paneIdx === 0 ? S.splitPair[0] : S.splitPair[1] : S.laneKey;
-				let next = LANE_KEYS.indexOf(current);
-				if (e.key === "ArrowLeft" || e.key === "ArrowUp") next = (next + LANE_KEYS.length - 1) % LANE_KEYS.length;
-				else if (e.key === "ArrowRight" || e.key === "ArrowDown") next = (next + 1) % LANE_KEYS.length;
-				else if (e.key === "Home") next = 0;
-				else if (e.key === "End") next = LANE_KEYS.length - 1;
-				else return;
-				e.preventDefault();
-				e.stopPropagation();
-				const chosen = LANE_KEYS[next];
-				if (S.split3d) selectLaneInPane(paneIdx, chosen);
-				else selectLane(chosen);
-				seg.querySelector(`[data-lane="${chosen}"]`)?.focus();
-			});
-			wrap.appendChild(seg);
+			const select = makeSelect(paneIdx);
+			wrap.appendChild(select);
 			if (paneIdx === 0 && framesBtn) wrap.appendChild(framesBtn);
 			const spBtn = document.createElement("button");
 			spBtn.type = "button";
@@ -2438,7 +2689,7 @@ function createStageBar(deps) {
 			return {
 				wrap,
 				dot,
-				btns,
+				select,
 				expr,
 				spBtn
 			};
@@ -2461,13 +2712,27 @@ function createStageBar(deps) {
 		stageDom.lanesBtn = lanesBtn;
 		for (const node of keep) if (node !== framesBtn && node.parentNode !== element) node.remove();
 	}
-	function syncRadio(btns, active) {
-		for (const k of LANE_KEYS) {
-			const on = k === active;
-			btns[k].classList.toggle("on", on);
-			btns[k].setAttribute("aria-checked", String(on));
-			btns[k].setAttribute("tabindex", on ? "0" : "-1");
+	/** Keep one pane's native select in step with the live lane set and value. */
+	function syncSelect(select, active, laneKeys) {
+		const wanted = laneKeys.map((key) => ({
+			value: key,
+			label: `Lane ${key}`
+		}));
+		const current = [...select.options].map((option) => ({
+			value: option.value,
+			label: option.textContent
+		}));
+		if (!(current.length === wanted.length && current.every((option, i) => option.value === wanted[i].value && option.label === wanted[i].label))) {
+			select.textContent = "";
+			for (const option of wanted) {
+				const el = document.createElement("option");
+				el.value = option.value;
+				el.textContent = option.label;
+				select.appendChild(el);
+			}
 		}
+		if (select.value !== active) select.value = active;
+		if (select.dataset.lane !== active) select.dataset.lane = active;
 	}
 	function setSplitEnabled(btn, enabled) {
 		btn.setAttribute("aria-disabled", String(!enabled));
@@ -2476,6 +2741,7 @@ function createStageBar(deps) {
 	function syncStageBar() {
 		if (!stageDom) return;
 		const { p0, p1 } = stageDom;
+		const laneKeys = liveLaneKeys();
 		element.classList.toggle("is-split", S.split3d);
 		element.dataset.view = S.view3d ? S.split3d ? "split" : "3d" : "2d";
 		const framesOn = S.framesView === true;
@@ -2494,7 +2760,7 @@ function createStageBar(deps) {
 			p0.spBtn.setAttribute("aria-pressed", "false");
 			p0.spBtn.classList.remove("on");
 			setSplitEnabled(p0.spBtn, false);
-			syncRadio(p0.btns, S.laneKey);
+			syncSelect(p0.select, S.laneKey, laneKeys);
 			p0.expr.textContent = laneExprText(curLane(), true);
 			p1.wrap.hidden = true;
 			return;
@@ -2508,7 +2774,7 @@ function createStageBar(deps) {
 			p0.spBtn.setAttribute("aria-pressed", "false");
 			p0.spBtn.classList.remove("on");
 			setSplitEnabled(p0.spBtn, true);
-			syncRadio(p0.btns, S.laneKey);
+			syncSelect(p0.select, S.laneKey, laneKeys);
 			p0.expr.textContent = laneExprText(sl, true);
 			p1.wrap.hidden = true;
 		} else {
@@ -2517,7 +2783,7 @@ function createStageBar(deps) {
 			p0.wrap.hidden = false;
 			p0.spBtn.hidden = true;
 			p0.wrap.classList.toggle("focused", S.activePane === 0);
-			syncRadio(p0.btns, k0);
+			syncSelect(p0.select, k0, laneKeys);
 			p0.expr.textContent = laneExprText(S.lanes[k0], false);
 			p1.wrap.hidden = false;
 			p1.dot.hidden = false;
@@ -2526,7 +2792,7 @@ function createStageBar(deps) {
 			p1.spBtn.classList.add("on");
 			setSplitEnabled(p1.spBtn, true);
 			p1.wrap.classList.toggle("focused", S.activePane === 1);
-			syncRadio(p1.btns, k1);
+			syncSelect(p1.select, k1, laneKeys);
 			p1.expr.textContent = laneExprText(S.lanes[k1], false);
 		}
 	}
@@ -2540,43 +2806,35 @@ function createStageBar(deps) {
 * Keyboard map and file drop — global shortcuts for the instrument.
 *
 * Moved out of main.js in F2. Escape closes the navigator or copy mode,
-* Alt+1/2/3 select a lane (by its stable lane key), Alt+S toggles split;
-* arrows step the dataset.
+* Alt+1..8 selects a live lane (by its stable lane key; an absent key is a
+* no-op), Alt+S toggles split; arrows step the dataset. The stage-bar lane
+* dropdown is the declared lane-selection keyboard path; Alt+digit is the
+* shortcut beside it.
 */
 function attachKeyboard(deps) {
-	const { frameNav, syncViewUi, selectLane, setSplitMode, applyExample, loadCSV, copyMenu, onDropError, S, DEMO } = deps;
+	const { frameNav, syncViewUi, selectLane, setSplitMode, applyExample, loadCSV, copyMenu, onDropError, S: liveState, DEMO } = deps;
 	document.addEventListener("keydown", (e) => {
 		if (e.key === "Escape" && frameNav.isOpen()) {
 			frameNav.close(true);
 			e.preventDefault();
 			return;
 		}
-		if (e.key === "Escape" && S.copyArmed) {
+		if (e.key === "Escape" && liveState.copyArmed) {
 			copyMenu.close(true);
 			e.preventDefault();
 			return;
 		}
 		if (e.altKey && !e.ctrlKey && !e.metaKey) {
-			if (e.key === "1" || e.code === "Digit1") {
-				selectLane("1");
-				if (frameNav.isOpen()) frameNav.render();
-				e.preventDefault();
-				return;
-			}
-			if (e.key === "2" || e.code === "Digit2") {
-				selectLane("2");
-				if (frameNav.isOpen()) frameNav.render();
-				e.preventDefault();
-				return;
-			}
-			if (e.key === "3" || e.code === "Digit3") {
-				selectLane("3");
+			const digit = /^(?:Digit([1-9])|([1-9]))$/.exec(e.code || "") || /^([1-9])$/.exec(e.key || "");
+			const laneKey = digit ? digit[1] || digit[2] : null;
+			if (laneKey) {
+				if (liveState.lanes[laneKey]) selectLane(laneKey);
 				if (frameNav.isOpen()) frameNav.render();
 				e.preventDefault();
 				return;
 			}
 			if (e.key === "s" || e.key === "S" || e.code === "KeyS") {
-				if (S.view3d) setSplitMode(!S.split3d);
+				if (liveState.view3d) setSplitMode(!liveState.split3d);
 				e.preventDefault();
 				return;
 			}
@@ -2637,7 +2895,7 @@ function createControls(deps) {
 		if (S.lfo.mode === "csvStep" && (!DEMO.rows || !DEMO.rows.length)) return;
 		store.patch(() => {
 			const base = {};
-			for (const k of LANE_KEYS) {
+			for (const k of liveLaneKeys()) {
 				const sl = S.lanes[k];
 				base[k] = {
 					a: sl.A.bits.slice(),
@@ -2659,7 +2917,7 @@ function createControls(deps) {
 			const snap = S.lfo.base;
 			if (snap) {
 				if (S.lfo.mode !== "csvStep") {
-					for (const k of LANE_KEYS) {
+					for (const k of liveLaneKeys()) {
 						const sl = S.lanes[k];
 						if (snap[k]) {
 							if (!isInputDriven(sl, "a")) sl.A.bits = snap[k].a.slice();
@@ -2707,7 +2965,7 @@ function createControls(deps) {
 				const p = t % (2 * maxSteps);
 				shift = (p <= maxSteps ? p : 2 * maxSteps - p) * k;
 			}
-			for (const sk of LANE_KEYS) {
+			for (const sk of liveLaneKeys()) {
 				const sl = S.lanes[sk];
 				const sb = base[sk];
 				if (!sb) continue;
@@ -3080,7 +3338,7 @@ if (exportObsBtn) exportObsBtn.addEventListener("click", exportObservationsCSV);
 * CSV import + example stepper.
 *
 * Moved out of main.js in F2, and re-housed as the source table's data path in
-* F3: an import fills the six bindings with columns, then steps write each
+* F3: an import fills the live bindings with columns, then steps write each
 * bound input. Driven inputs are left to the routing engine.
 */
 function createCsvImport(deps) {
@@ -3102,7 +3360,7 @@ function createCsvImport(deps) {
 	}
 	function fitToMappedColumns() {
 		let maxBits = 8;
-		for (const k of LANE_KEYS) {
+		for (const k of liveLaneKeys()) {
 			const sl = S.lanes[k];
 			if (sl.colA >= 0) maxBits = Math.max(maxBits, columnWidth(DEMO.rows, sl.colA));
 			if (sl.colB >= 0) maxBits = Math.max(maxBits, columnWidth(DEMO.rows, sl.colB));
@@ -3125,7 +3383,7 @@ function createCsvImport(deps) {
 			const n = DEMO.rows.length;
 			DEMO.i = (idx % n + n) % n;
 			const row = DEMO.rows[DEMO.i];
-			for (const k of LANE_KEYS) {
+			for (const k of liveLaneKeys()) {
 				const sl = S.lanes[k];
 				if (sl.colA >= 0 && !isInputDriven(sl, "a")) {
 					const a = cellToBits(row[sl.colA], columnMode(DEMO.rows, sl.colA));
@@ -3202,10 +3460,13 @@ function createCsvImport(deps) {
 		}
 		if (!payload.length) payload = [primary];
 		const ordered = [primary, ...payload.filter((c) => c !== primary)];
-		const slA = S.lanes["1"], slB = S.lanes["2"], slC = S.lanes["3"];
+		const laneKeys = liveLaneKeys();
+		const slA = S.lanes[laneKeys[0]];
+		const slB = laneKeys[1] ? S.lanes[laneKeys[1]] : null;
+		const slC = laneKeys[2] ? S.lanes[laneKeys[2]] : null;
 		slA.colA = primary;
 		slA.colB = (S.view3d || slA.showB) && ordered.length >= 2 ? ordered[1] : -1;
-		if (ordered.length >= 4) {
+		if (slB && slC && ordered.length >= 4) {
 			const off = slA.colB >= 0 ? 2 : 1;
 			slB.colA = ordered[off] ?? ordered[0];
 			slB.colB = ordered[off + 1] ?? ordered[1];
@@ -3213,14 +3474,14 @@ function createCsvImport(deps) {
 			slC.colA = ordered[off + 2] ?? ordered[0];
 			slC.colB = ordered[off + 3] ?? ordered[ordered.length - 1];
 			slC.showB = true;
-		} else if (ordered.length === 3) {
+		} else if (slB && slC && ordered.length === 3) {
 			slB.colA = slA.colB >= 0 ? ordered[0] : ordered[1];
 			slB.colB = ordered[2];
 			slB.showB = true;
 			slC.colA = ordered[1];
 			slC.colB = ordered[2];
 			slC.showB = true;
-		} else if (ordered.length === 2) {
+		} else if (slB && slC && ordered.length === 2) {
 			slB.colA = ordered[0];
 			slB.colB = ordered[1];
 			slB.showB = true;
@@ -3228,11 +3489,23 @@ function createCsvImport(deps) {
 			slC.colA = ordered[1];
 			slC.colB = ordered[0];
 			slC.showB = true;
-		} else {
+		} else if (slB && slC) {
 			slB.colA = primary;
 			slB.colB = -1;
 			slC.colA = primary;
 			slC.colB = -1;
+		}
+		for (let index = 3; index < laneKeys.length; index += 1) {
+			const sl = S.lanes[laneKeys[index]];
+			if (!sl) continue;
+			if (ordered.length >= 2) {
+				sl.colA = ordered[index * 2 % ordered.length];
+				sl.colB = ordered[(index * 2 + 1) % ordered.length];
+				sl.showB = true;
+			} else {
+				sl.colA = primary;
+				sl.colB = -1;
+			}
 		}
 		fitToMappedColumns();
 		applyExample(0, true);
@@ -3265,7 +3538,7 @@ function createCsvImport(deps) {
 }
 // src/ui/source-table.js
 /**
-* Input source table — the six fixed bindings, one row per operand frame A–F.
+* Input source table — two rows per live lane, one row per operand frame.
 *
 * Moved out of the spike and into the instrument for F3, extended with the
 * external-routing `expr` source (EXTERNAL-ROUTING §4/§6). A row reads one
@@ -3273,6 +3546,11 @@ function createCsvImport(deps) {
 * validated one-line expression (`expr`), or nothing. The label carries the
 * assignment (D15 / author note): a data-bound row reads `A · sine`, matching
 * the column name the import dropdown shows.
+*
+* D46: the table follows the live lane set — `2L` rows for `L` lanes, grouped
+* under a per-lane header row and scrollable in the panel body. Expression
+* labels, the frame source lists and the state chips derive from each binding,
+* so extra lanes need no table changes.
 *
 * Expressions are validated with the shared core evaluator before they reach
 * the state tree; invalid text restores the previous valid expression and is
@@ -3408,6 +3686,7 @@ function createSourceTable(deps) {
 		const sl = S.lanes[binding.lane];
 		const key = draftKey(binding);
 		const tr = document.createElement("tr");
+		tr.className = "src-binding";
 		const dest = document.createElement("td");
 		dest.className = "src-dest";
 		const lane = document.createElement("span");
@@ -3435,7 +3714,7 @@ function createSourceTable(deps) {
 		const sourceCell = document.createElement("td");
 		const select = document.createElement("select");
 		select.className = "src-pick";
-		select.setAttribute("aria-label", `Lane ${binding.laneNumber} ${binding.operand.toUpperCase()} source`);
+		select.setAttribute("aria-label", `Lane ${binding.laneNumber} ${binding.frame} source`);
 		select.appendChild(option("", "—"));
 		if (DEMO.cols.length) {
 			const dataGroup = document.createElement("optgroup");
@@ -3509,8 +3788,20 @@ function createSourceTable(deps) {
 		tr.appendChild(state);
 		return tr;
 	}
+	function laneGroupRow(laneKey, laneNumber) {
+		const tr = document.createElement("tr");
+		tr.className = "src-group-head";
+		tr.dataset.lane = laneKey;
+		const th = document.createElement("th");
+		th.scope = "rowgroup";
+		th.colSpan = 3;
+		const names = ["a", "b"].map((frame) => frameName$1(laneKey, frame));
+		th.textContent = `Lane ${laneNumber} · ${names[0]}/${names[1]}/${frameName$1(laneKey, "z")}`;
+		tr.appendChild(th);
+		return tr;
+	}
 	function focusRow(index, target = "select") {
-		const row = rowsEl.querySelectorAll("tr")[index];
+		const row = rowsEl.querySelectorAll("tr.src-binding")[index];
 		if (!row) return;
 		const el = target === "expr" ? row.querySelector(".src-expr") : row.querySelector("select");
 		if (el) el.focus();
@@ -3521,9 +3812,19 @@ function createSourceTable(deps) {
 		try {
 			rowsEl.textContent = "";
 			const bindings = listInputs();
-			bindings.forEach((binding, index) => rowsEl.appendChild(buildRow(binding, index)));
+			let lane = null;
+			bindings.forEach((binding, index) => {
+				if (binding.lane !== lane) {
+					lane = binding.lane;
+					rowsEl.appendChild(laneGroupRow(binding.lane, binding.laneNumber));
+				}
+				rowsEl.appendChild(buildRow(binding, index));
+			});
 			const bound = bindings.filter((binding) => binding.source.kind !== "none").length;
-			if (statusEl && !statusEl.dataset.userMessage) statusEl.textContent = `${bound} / ${bindings.length} bound · one source each`;
+			if (statusEl && !statusEl.dataset.userMessage) {
+				const lanes = new Set(bindings.map((binding) => binding.lane)).size;
+				statusEl.textContent = `${bound} / ${bindings.length} bound · ${lanes} lane${lanes === 1 ? "" : "s"} · one source each`;
+			}
 		} finally {
 			suppressBlur = false;
 		}
@@ -3714,7 +4015,11 @@ function createLiveStatus(store) {
 * items, and the copy itself is one `copyLane` transaction (the live region
 * reports the destination state). The copy belongs to the rack, not the lane.
 *
-* D43: an item is labelled and identified by its stable lane key.
+* D43/D46: items are labelled and identified by their stable lane key, and the
+* list is built from the **live** lane set on every open (excluding the focused
+* lane itself), so adding or deleting lanes keeps the menu truthful. Copying
+* needs a distinct destination lane that already exists; duplicating creates a
+* new lane and lives in the frames view.
 */
 function createCopyMenu(deps) {
 	const { store, button, onCopy } = deps;
@@ -3723,21 +4028,27 @@ function createCopyMenu(deps) {
 	menu.hidden = true;
 	menu.setAttribute("role", "menu");
 	menu.setAttribute("aria-label", "copy the focused lane to");
-	const items = LANE_KEYS.map((key) => {
-		const item = document.createElement("button");
-		item.type = "button";
-		item.className = "op";
-		item.setAttribute("role", "menuitem");
-		item.setAttribute("tabindex", "-1");
-		item.dataset.lane = key;
-		item.textContent = `lane ${key}`;
-		item.title = `Copy lane ${S.laneKey} into lane ${key}`;
-		item.addEventListener("click", () => activate(key));
-		menu.appendChild(item);
-		return item;
-	});
-	document.body.appendChild(menu);
+	let items = [];
 	let open = false;
+	function rebuildItems() {
+		menu.textContent = "";
+		const destinations = liveLaneKeys().filter((key) => key !== S.laneKey);
+		items = destinations.map((key) => {
+			const item = document.createElement("button");
+			item.type = "button";
+			item.className = "op";
+			item.setAttribute("role", "menuitem");
+			item.setAttribute("tabindex", "-1");
+			item.dataset.lane = key;
+			item.textContent = `lane ${key}`;
+			item.title = `Copy lane ${S.laneKey} into lane ${key}`;
+			item.addEventListener("click", () => activate(key));
+			menu.appendChild(item);
+			return item;
+		});
+		return destinations;
+	}
+	document.body.appendChild(menu);
 	function position() {
 		menu.hidden = false;
 		const r = button.getBoundingClientRect();
@@ -3750,15 +4061,14 @@ function createCopyMenu(deps) {
 		menu.style.top = `${top}px`;
 	}
 	function focusItem(index) {
+		if (items.length === 0) return;
 		const n = items.length;
 		items[(index % n + n) % n].focus();
 	}
 	function openMenu() {
 		if (open) return;
+		if (rebuildItems().length === 0) return;
 		open = true;
-		items.forEach((item, i) => {
-			item.title = `Copy lane ${S.laneKey} into lane ${LANE_KEYS[i]}`;
-		});
 		store.patch(() => {
 			S.copyArmed = true;
 		});
@@ -5963,14 +6273,14 @@ function buildUiState(doc, options = {}) {
 * `ProjectDoc`. It is DOM-free so the round trip is testable in Node and the
 * desktop shell can reuse it.
 *
-* D43/D44: the live tree and the document are both keyed by stable lane keys
-* ("1".."13"), so the mapping is the identity for the lanes the app ships. The
-* document format (schema 4) can carry up to `APP_LANE_CAP` lanes; this build's
-* tree still ships the default three, so `applyProject` loads the lanes it can
-* represent by key and ignores the rest (they are not lost from an untouched
-* file — the dynamic-lanes UI slice widens the tree). View fields and extras are
-* mapped only for live lanes; routes/parked bases outside the live tree are
-* dropped together.
+* D43/D44/D46: the live tree and the document are both keyed by stable lane
+* keys ("1".."13"), so the mapping is the identity. A schema-4 document carries
+* the whole live lane set (one to eight lanes, gaps allowed); `applyProject`
+* replaces the live lane map with exactly the document's lanes, so a wider
+* document widens the instrument and a narrower one narrows it. Capture writes
+* every live lane. View fields and extras follow the same set. Routes and
+* parked bases name lanes the document carries (the core validates that), so
+* they transfer verbatim.
 *
 * Unknown top-level fields from a loaded document are remembered and merged
 * back on the next capture, so a file written by a newer build survives a
@@ -6006,7 +6316,7 @@ function captureProject(now = (/* @__PURE__ */ new Date()).toISOString()) {
 	const focus = {};
 	const frameVis = {};
 	const expressions = {};
-	for (const lane of LANE_KEYS) {
+	for (const lane of liveLaneKeys()) {
 		const sl = S.lanes[lane];
 		focus[lane] = sl.focus;
 		frameVis[lane] = { ...sl.frameVis };
@@ -6068,13 +6378,10 @@ function applyProject(raw) {
 	}
 	const { lanes, routing: loadedRouting, N, view, dataset, extras } = loaded;
 	S.N = N;
-	const boot = makeBootLanes(N);
-	for (const laneKey of LANE_KEYS) {
-		const sl = S.lanes[laneKey];
-		const src = lanes[laneKey] ?? boot[laneKey];
-		sl.A = makeReg(N);
-		sl.B = makeReg(N);
-		sl.Z = makeReg(N);
+	const nextLanes = {};
+	for (const laneKey of Object.keys(lanes)) {
+		const src = lanes[laneKey];
+		const sl = makeLaneState(laneKey, N);
 		sl.A.bits.set(src.A.bits);
 		sl.B.bits.set(src.B.bits);
 		sl.showB = src.showB;
@@ -6097,27 +6404,21 @@ function applyProject(raw) {
 		};
 		syncTarget(sl.A, true);
 		syncTarget(sl.B, true);
+		nextLanes[laneKey] = sl;
 	}
-	const liveRoutes = loadedRouting.routes.filter((route) => LANE_KEYS.includes(route.from.lane) && LANE_KEYS.includes(route.to.lane));
-	const routedDestinations = new Set(liveRoutes.map((route) => `${route.to.lane}:${route.to.frame}`));
-	routing.routes = liveRoutes;
-	routing.parked = new Map([...loadedRouting.parked].filter(([key]) => routedDestinations.has(key)));
-	for (const [key, bits] of loadedRouting.parked) {
-		if (routedDestinations.has(key)) continue;
-		const [lane, frame] = key.split(":");
-		if (!LANE_KEYS.includes(lane) || frame !== "a" && frame !== "b") continue;
-		const reg = frame === "a" ? S.lanes[lane].A : S.lanes[lane].B;
-		reg.bits.set(bits);
-		syncTarget(reg, true);
-	}
-	const fallbackLane = LANE_KEYS[0];
-	const focusLane = LANE_KEYS.includes(view.lane) ? view.lane : fallbackLane;
-	const splitPair = [LANE_KEYS.includes(view.splitPair[0]) ? view.splitPair[0] : fallbackLane, LANE_KEYS.includes(view.splitPair[1]) ? view.splitPair[1] : LANE_KEYS[1] ?? fallbackLane];
+	S.lanes = nextLanes;
+	const liveKeys = liveLaneKeys();
+	routing.routes = loadedRouting.routes;
+	routing.parked = new Map(loadedRouting.parked);
+	const fallbackLane = liveKeys[0];
+	const focusLane = liveKeys.includes(view.lane) ? view.lane : fallbackLane;
+	const secondLane = liveKeys[1] ?? fallbackLane;
+	const splitPair = [liveKeys.includes(view.splitPair[0]) ? view.splitPair[0] : fallbackLane, liveKeys.includes(view.splitPair[1]) ? view.splitPair[1] : secondLane];
 	S.laneKey = focusLane;
 	S.view3d = view.view3d;
-	S.split3d = view.split3d;
+	S.split3d = view.split3d && liveKeys.length >= 2;
 	S.splitPair = splitPair;
-	S.activePane = view.activePane === 1 ? 1 : 0;
+	S.activePane = S.split3d && view.activePane === 1 ? 1 : 0;
 	S.copyArmed = false;
 	S.drag = -1;
 	S.hoverReg = null;
@@ -7393,12 +7694,12 @@ var getPad = () => PAD;
 				return vals;
 			};
 			const mapped = {};
-			for (const k of LANE_KEYS) mapped[k] = {
+			for (const k of liveLaneKeys()) mapped[k] = {
 				a: remap(S.lanes[k].A),
 				b: remap(S.lanes[k].B)
 			};
 			S.N = newN;
-			for (const k of LANE_KEYS) {
+			for (const k of liveLaneKeys()) {
 				const sl = S.lanes[k];
 				for (const [r, vals] of [[sl.A, mapped[k].a], [sl.B, mapped[k].b]]) {
 					r.bits = new Uint8Array(newN);
@@ -7712,7 +8013,12 @@ var getPad = () => PAD;
 		renderStrip,
 		updateReadouts,
 		unpairB,
-		laneExprText
+		laneExprText,
+		addLaneFromUi,
+		duplicateLaneFromUi,
+		deleteLaneFromUi,
+		renderSources: () => sources.render(),
+		lfoStop: (...args) => controls.lfoStop(...args)
 	});
 	for (const id of [
 		"lblA",
@@ -7828,6 +8134,52 @@ var getPad = () => PAD;
 		renderStrip();
 		updateReadouts();
 	}
+	function addLaneFromUi() {
+		controls.lfoStop();
+		let key = null;
+		store.patch(() => {
+			if (S.copyArmed) copyMenu.close(false);
+			key = addLane();
+			if (!key) return;
+			S.laneKey = key;
+			if (S.view3d && S.split3d) S.splitPair[S.activePane] = key;
+			evaluate(true);
+			refreshActiveLaneUi();
+		});
+		if (key && sources.isOpen()) sources.render();
+		return key;
+	}
+	function duplicateLaneFromUi(srcKey) {
+		controls.lfoStop();
+		let key = null;
+		store.patch(() => {
+			if (S.copyArmed) copyMenu.close(false);
+			key = duplicateLane(srcKey);
+			if (!key) return;
+			S.laneKey = key;
+			if (S.view3d && S.split3d) S.splitPair[S.activePane] = key;
+			evaluate(true);
+			refreshActiveLaneUi();
+		});
+		if (key && sources.isOpen()) sources.render();
+		return key;
+	}
+	function deleteLaneFromUi(key) {
+		controls.lfoStop();
+		let result = {
+			ok: false,
+			reason: "unknown"
+		};
+		store.patch(() => {
+			if (S.copyArmed) copyMenu.close(false);
+			result = deleteLane(key);
+			if (!result.ok) return;
+			evaluate(true);
+			refreshActiveLaneUi();
+		});
+		if (result.ok && sources.isOpen()) sources.render();
+		return result;
+	}
 	function focusSplitPane(paneIdx) {
 		store.patch(() => {
 			S.activePane = paneIdx === 1 ? 1 : 0;
@@ -7862,16 +8214,18 @@ var getPad = () => PAD;
 	}
 	function setSplitMode(on) {
 		if (S.copyArmed) copyMenu.close(false);
+		if (on && liveLaneKeys().length < 2) return;
 		store.patch(() => {
+			const keys = liveLaneKeys();
 			if (on) {
 				S.view3d = true;
 				S.split3d = true;
 				if (!S.splitPair.includes(S.laneKey)) {
-					const other = S.splitPair[0] === S.laneKey ? LANE_KEYS[1] : S.splitPair[0];
-					S.splitPair = [other === S.laneKey ? LANE_KEYS[0] : other, S.laneKey];
+					const other = S.splitPair[0] === S.laneKey ? keys[1] : S.splitPair[0];
+					S.splitPair = [other === S.laneKey ? keys[0] : other, S.laneKey];
 					S.activePane = 1;
 				} else S.activePane = S.splitPair[0] === S.laneKey ? 0 : 1;
-				if (S.splitPair[0] === S.splitPair[1]) S.splitPair[1] = S.splitPair[0] === LANE_KEYS[0] ? LANE_KEYS[1] : LANE_KEYS[0];
+				if (S.splitPair[0] === S.splitPair[1]) S.splitPair[1] = S.splitPair[0] === keys[0] ? keys[1] : keys[0];
 				enableBOnLane(S.lanes[S.splitPair[0]]);
 				enableBOnLane(S.lanes[S.splitPair[1]]);
 			} else {
@@ -8054,7 +8408,7 @@ var getPad = () => PAD;
 				controls.lfoTick();
 			}
 		}
-		for (const k of LANE_KEYS) {
+		for (const k of liveLaneKeys()) {
 			const sl = S.lanes[k];
 			if (reduce) {
 				sl.A.anim = sl.A.target.slice();
@@ -8213,7 +8567,7 @@ var getPad = () => PAD;
 		applyPreset(S.lanes["3"].A, "sawUp");
 		applyPreset(S.lanes["3"].B, "sine");
 		S.lanes["3"].seededB = true;
-		for (const k of LANE_KEYS) {
+		for (const k of liveLaneKeys()) {
 			const sl = S.lanes[k];
 			syncTarget(sl.A, true);
 			syncTarget(sl.B, true);
@@ -8244,7 +8598,7 @@ var getPad = () => PAD;
 	const round3 = (value) => Math.round(value * 1e3) / 1e3;
 	function snapshotState() {
 		const lanes = {};
-		for (const key of LANE_KEYS) {
+		for (const key of liveLaneKeys()) {
 			const sl = S.lanes[key];
 			const lane = Number(key);
 			const names = FRAME_NAMES$1[key];
@@ -8351,7 +8705,7 @@ var getPad = () => PAD;
 	}
 	function snapshotFrames() {
 		const lanes = {};
-		for (const key of LANE_KEYS) {
+		for (const key of liveLaneKeys()) {
 			const names = FRAME_NAMES$1[key];
 			const lane = Number(key);
 			lanes[String(lane)] = {
@@ -8639,6 +8993,28 @@ var getPad = () => PAD;
     line-height: 1.35;
   }
 
+  /* D46: one native lane select per pane replaces the 1|2|3 radiogroup. It
+     carries its own keyboard path (arrows/Home/End/type-ahead) and cannot grow
+     the bar sideways as lanes are added. 24px target floor per DESIGN §9. */
+  .lane-select {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    line-height: 1.35;
+    padding: 2px 6px;
+    min-height: 24px;
+    min-width: 68px;
+    max-width: 112px;
+    background: var(--panel-hi);
+    border: 1px solid var(--line);
+    border-radius: 5px;
+    color: var(--text);
+    cursor: pointer;
+  }
+
+  .lane-select:hover { border-color: var(--line-hi); }
+
+  .pane-head.focused .lane-select { border-color: rgba(52,211,153,0.4); }
+
   .stage-expr {
     font-family: var(--mono);
     font-size: 10.5px;
@@ -8703,7 +9079,8 @@ var getPad = () => PAD;
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 8px;
+    flex-wrap: wrap;
+    gap: 4px 8px;
     min-height: 20px;
   }
 
@@ -8720,6 +9097,42 @@ var getPad = () => PAD;
   }
   .lane-btn:hover { color: var(--text); background: var(--panel-hover); }
   .lane-btn[aria-pressed="true"] { color: var(--accent); }
+
+  /* D46: compact duplicate/delete controls in each lane head. */
+  .lane-actions { display: inline-flex; align-items: center; gap: 2px; margin-left: auto; }
+
+  .lane-act {
+    min-width: 24px;
+    min-height: 24px;
+    padding: 2px 5px;
+    border: 0;
+    border-radius: 3px;
+    background: transparent;
+    color: var(--dimmer);
+    font-family: var(--sans);
+    font-size: 9px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    cursor: pointer;
+  }
+  .lane-act:hover { color: var(--text); background: var(--panel-hover); }
+  .lane-act:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .lane-act[aria-disabled="true"] { color: var(--dimmer); cursor: default; }
+  .lane-act.is-danger { color: var(--inf, #f5b544); }
+
+  .lane-head.is-confirming { gap: 6px; }
+
+  .lane-confirm-text {
+    flex: 1 1 auto;
+    min-width: 0;
+    font-family: var(--sans);
+    font-size: 9.5px;
+    line-height: 1.35;
+    color: var(--text);
+    overflow-wrap: anywhere;
+  }
+
+  .lane-confirm-actions { display: inline-flex; gap: 2px; flex: 0 0 auto; }
 
   .unpair-btn {
     padding: 2px 5px;
@@ -8955,7 +9368,7 @@ var getPad = () => PAD;
   .frame-card:focus-visible,
   .frame-add:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 
-  /* ── input source table — six fixed rows ───────────────── */
+  /* ── input source table — 2L rows grouped by lane (D46) ─── */
   .sources-panel {
     position: absolute;
     z-index: 3;
@@ -9007,6 +9420,22 @@ var getPad = () => PAD;
     letter-spacing: 0.05em;
     color: var(--dimmer);
     white-space: nowrap;
+  }
+
+  /* D46: one header row per live lane groups the 2L operand rows. */
+  .src-group-head th {
+    padding: 9px 4px 3px;
+    border-bottom: 1px solid var(--line-soft);
+    font-family: var(--mono);
+    font-size: 9px;
+    font-weight: 500;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    text-align: left;
+    color: var(--dim);
+    background: var(--panel);
+    position: sticky;
+    top: 0;
   }
 
   .src-dest {
@@ -9766,13 +10195,14 @@ var getPad = () => PAD;
       </table>
     </div>
     <div class="fp-foot">
-      <span id="sourcesStatus" role="status" aria-live="polite">six inputs · one source each</span>
+      <span id="sourcesStatus" role="status" aria-live="polite">one source per input</span>
     </div>
   </aside>
 
-  <!-- D42: the frames view replaces the pop-out navigator. The stage swaps to a
-       card grid (one column per lane, one equal card per frame); `Lanes` in the
-       stage bar returns. Cards are buttons; eyes keep 2-D visibility. -->
+  <!-- D42/D46: the frames view replaces the pop-out navigator. The stage swaps to
+       a card grid (one column per live lane, one equal card per frame); `Lanes`
+       in the stage bar returns. Cards are buttons; eyes keep 2-D visibility;
+       the + tile adds a lane and each lane head duplicates/deletes. -->
   <div class="frames-view" id="framesView" hidden role="region" aria-label="Frames — every lane and frame">
     <div class="frames-scroll" id="framesScroll" tabindex="0" role="group"
          aria-label="Frame cards — arrow keys scroll">
@@ -9823,7 +10253,7 @@ var getPad = () => PAD;
       <button class="op" id="nextEx" title="Next example (→)" aria-label="▶ next example">▶</button>
     </div>
     <span class="excount" id="exCount">— / —</span>
-    <button class="op" id="sourcesBtn" aria-expanded="false" aria-controls="sourcesPanel" title="Show the six input bindings">sources</button>
+    <button class="op" id="sourcesBtn" aria-expanded="false" aria-controls="sourcesPanel" title="Show the live operand bindings">sources</button>
     <div class="seg" id="obsSeg" role="group" aria-label="observation logger">
       <button class="op" id="logObsBtn" title="Log current observation">log</button>
       <button class="op" id="exportObsBtn" title="Export observations to CSV">export</button>
@@ -9936,7 +10366,7 @@ var getPad = () => PAD;
       <dt>0–9, a–f</dt><dd>set the focused nibble to that digit</dd>
       <dt>Enter</dt><dd>hex entry: commit the whole word</dd>
       <dt>Esc</dt><dd>cancel hex entry, a menu or a panel</dd>
-      <dt>Alt+1/2/3</dt><dd>select lane 1, 2 or 3</dd>
+      <dt>Alt+1…8</dt><dd>select a live lane by its number (if it exists)</dd>
       <dt>Alt+S</dt><dd>split the 3-D view</dd>
       <dt>← / →</dt><dd>step CSV examples when focus is outside the controls and the strip</dd>
       <dt>?</dt><dd>this help panel</dd>

@@ -32,7 +32,10 @@ import {
 import type { BinOp, LaneKey } from "../core/types.ts";
 import { LANE_KEYS } from "../core/types.ts";
 import {
+  APP_LANE_CAP,
   DEFAULT_LANE_COUNT,
+  NAME_CEILING,
+  compareLaneKeys,
   frameNamesFor,
   laneDef,
   laneIndex,
@@ -46,20 +49,25 @@ export type Fold = "a-far" | "b-far";
 /** The shipped lane keys in display order ("1", "2", "3"), from `lanedefs.ts`. */
 export { LANE_KEYS };
 
+/** The shipped app cap: at most eight live lanes (D43/D46). */
+export { APP_LANE_CAP };
+
 /** One register size domain for the whole instrument (DESIGN §10.10). */
 export const SIZES: readonly RegisterSize[] = CORE_SIZES;
 
 /* Global frame names (author, 2026-11-06): operands A/B, C/D, E/F and derived
-   Z1/Z2/Z3, keyed by stable lane key. Frames are unique across lanes, so the
-   source matrix can list six operand rows (A–F) and nine frame outputs. */
+   Z1/Z2/Z3, keyed by stable lane key. D46 generates the table for the whole
+   app cap (eight lanes: operands A–P, derived Z1–Z8) while the boot instrument
+   still ships the default three; a live lane beyond the cap falls back to the
+   derived name (`frameName`). */
 export const FRAME_NAMES: Record<LaneKey, Record<FrameKey, string>> = frameNamesFor(
-  DEFAULT_LANE_COUNT,
+  APP_LANE_CAP,
 ) as Record<LaneKey, Record<FrameKey, string>>;
 
 /**
  * The global display name of a lane/frame pair. Names derive from the lane key,
- * so a widened tree (lane "4") still names its frames G/H/Z4 even before its
- * entry reaches `FRAME_NAMES`; unknown keys fall back to the bare frame letter.
+ * so lane "4" names its frames G/H/Z4; unknown keys fall back to the bare frame
+ * letter.
  */
 export const frameName = (laneKey: LaneKey, frame: FrameKey): string => {
   const names = FRAME_NAMES[laneKey];
@@ -67,6 +75,22 @@ export const frameName = (laneKey: LaneKey, frame: FrameKey): string => {
   const index = laneIndex(laneKey);
   if (index >= 0) return laneDef(index)[frame];
   return frame.toUpperCase();
+};
+
+/** The live lane keys in canonical ascending numeric order (never array position). */
+export const liveLaneKeys = (): LaneKey[] => Object.keys(S.lanes).sort(compareLaneKeys);
+
+/**
+ * The lowest free stable lane key ("1".."13") not currently live. `null` only
+ * when all thirteen name indices are taken (unreachable under the eight-lane
+ * app cap, but the grammar ceiling is the real allocator bound).
+ */
+export const nextFreeLaneKey = (): LaneKey | null => {
+  for (let index = 0; index < NAME_CEILING; index += 1) {
+    const key = laneDef(index).key;
+    if (!S.lanes[key]) return key;
+  }
+  return null;
 };
 
 export interface Reg {
@@ -128,6 +152,8 @@ export interface Instrument {
   N: number;
   /** Lane map keyed by the stable lane key ("1".."13"), never by position. */
   lanes: Record<LaneKey, LaneState>;
+  /** The ordered live lane keys (ascending numeric), derived from `lanes`. */
+  readonly laneKeys: LaneKey[];
   /** The focused lane key; also its displayed lane number. */
   laneKey: LaneKey;
   split3d: boolean;
@@ -187,6 +213,7 @@ LANE_KEYS.forEach((key, index) => {
 export const S: Instrument = {
   N: 64,
   lanes: initialLanes,
+  get laneKeys(): LaneKey[] { return Object.keys(this.lanes).sort(compareLaneKeys); },
   laneKey: LANE_KEYS[0],
   split3d: false,
   splitPair: [LANE_KEYS[0], LANE_KEYS[1]],

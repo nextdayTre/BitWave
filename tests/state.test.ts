@@ -103,7 +103,14 @@ test("instrument: state lanes are keyed by the lane key, not by slot letter", ()
   assert.deepEqual(CORE_LANE_KEYS, laneDefs().map((def) => def.key));
   assert.equal(S.laneKey, "1");
   assert.deepEqual(Object.keys(S.lanes), ["1", "2", "3"]);
-  assert.deepEqual(Object.keys(FRAME_NAMES), ["1", "2", "3"]);
+  assert.deepEqual(S.laneKeys, ["1", "2", "3"], "the ordered live lane list is derived from the map");
+  /* D46: the frame-name table covers the whole eight-lane app cap so any live
+     lane key has global names; the boot instrument still ships three. */
+  assert.deepEqual(
+    Object.keys(FRAME_NAMES),
+    ["1", "2", "3", "4", "5", "6", "7", "8"],
+  );
+  assert.equal(FRAME_NAMES["8"].z, "Z8");
   for (const key of LANE_KEYS) {
     assert.equal(S.lanes[key].key, key, `lane ${key} carries its own key`);
   }

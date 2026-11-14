@@ -253,6 +253,28 @@
     line-height: 1.35;
   }
 
+  /* D46: one native lane select per pane replaces the 1|2|3 radiogroup. It
+     carries its own keyboard path (arrows/Home/End/type-ahead) and cannot grow
+     the bar sideways as lanes are added. 24px target floor per DESIGN §9. */
+  .lane-select {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    line-height: 1.35;
+    padding: 2px 6px;
+    min-height: 24px;
+    min-width: 68px;
+    max-width: 112px;
+    background: var(--panel-hi);
+    border: 1px solid var(--line);
+    border-radius: 5px;
+    color: var(--text);
+    cursor: pointer;
+  }
+
+  .lane-select:hover { border-color: var(--line-hi); }
+
+  .pane-head.focused .lane-select { border-color: rgba(52,211,153,0.4); }
+
   .stage-expr {
     font-family: var(--mono);
     font-size: 10.5px;
@@ -317,7 +339,8 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 8px;
+    flex-wrap: wrap;
+    gap: 4px 8px;
     min-height: 20px;
   }
 
@@ -334,6 +357,42 @@
   }
   .lane-btn:hover { color: var(--text); background: var(--panel-hover); }
   .lane-btn[aria-pressed="true"] { color: var(--accent); }
+
+  /* D46: compact duplicate/delete controls in each lane head. */
+  .lane-actions { display: inline-flex; align-items: center; gap: 2px; margin-left: auto; }
+
+  .lane-act {
+    min-width: 24px;
+    min-height: 24px;
+    padding: 2px 5px;
+    border: 0;
+    border-radius: 3px;
+    background: transparent;
+    color: var(--dimmer);
+    font-family: var(--sans);
+    font-size: 9px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    cursor: pointer;
+  }
+  .lane-act:hover { color: var(--text); background: var(--panel-hover); }
+  .lane-act:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .lane-act[aria-disabled="true"] { color: var(--dimmer); cursor: default; }
+  .lane-act.is-danger { color: var(--inf, #f5b544); }
+
+  .lane-head.is-confirming { gap: 6px; }
+
+  .lane-confirm-text {
+    flex: 1 1 auto;
+    min-width: 0;
+    font-family: var(--sans);
+    font-size: 9.5px;
+    line-height: 1.35;
+    color: var(--text);
+    overflow-wrap: anywhere;
+  }
+
+  .lane-confirm-actions { display: inline-flex; gap: 2px; flex: 0 0 auto; }
 
   .unpair-btn {
     padding: 2px 5px;
@@ -569,7 +628,7 @@
   .frame-card:focus-visible,
   .frame-add:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 
-  /* ── input source table — six fixed rows ───────────────── */
+  /* ── input source table — 2L rows grouped by lane (D46) ─── */
   .sources-panel {
     position: absolute;
     z-index: 3;
@@ -621,6 +680,22 @@
     letter-spacing: 0.05em;
     color: var(--dimmer);
     white-space: nowrap;
+  }
+
+  /* D46: one header row per live lane groups the 2L operand rows. */
+  .src-group-head th {
+    padding: 9px 4px 3px;
+    border-bottom: 1px solid var(--line-soft);
+    font-family: var(--mono);
+    font-size: 9px;
+    font-weight: 500;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    text-align: left;
+    color: var(--dim);
+    background: var(--panel);
+    position: sticky;
+    top: 0;
   }
 
   .src-dest {

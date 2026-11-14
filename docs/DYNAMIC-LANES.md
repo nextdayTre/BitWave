@@ -136,6 +136,17 @@ portable.
 
 ## 5. UI shape
 
+**Update 2026-11-14 (D46, UI shipped):** the plan below is kept as history; the landed
+shape is: stage bar = one native lane `<select>` per pane (`Lane 1`…`Lane 8`, value = stable
+key; split's second select named "Lane (second pane)"; `Alt+1…8` shortcut) instead of
+wrapping buttons; frames view = live columns, `+` **is** the add-lane control (blank lane,
+focused; `aria-disabled` only at the 8-lane cap) with compact `dup`/`del` in each lane head
+(`del` uses an inline reference-counted confirmation, second click, Esc cancels); source
+table = `2L` grouped/labelled scrollable rows; copy menu = live lanes except the focused
+one. The author's note (2026-11-14) says don't force all lanes onto the display: the
+split/staging stays, and the frames view remains the place every lane appears as an equal
+card. Share length stays a **measured** metric with no budget UI/components.
+
 ### FRAMES view
 
 **Update 2026-11-14 (D42):** the pop-out FRAMES panel is now the stage-level **frames view** —
@@ -221,8 +232,11 @@ minimally updated: `build_deeplink` accepts schema 1–4 and canonicalises to 4,
 example documents are schema 4, and the toolset is **1.2.0**; lane-count/selector enums
 stay three-lane until the agent-surface slice. The compact codec and its budget proof
 landed as **D45** (toolset **1.3.0**): canonical links are compact, legacy JSON links
-still load, and §4 records the measured payload table. Not yet shipped: the `fold`
-persistence/hinge UI and the live lane UI (UI slice).
+still load, and §4 records the measured payload table. The live lane UI landed as
+**D46** (see §5 update and §11): the app tree holds the document's whole lane set, the
+stage bar selects lanes with a native per-pane dropdown, and the frames view adds,
+duplicates and deletes lanes. Still deferred to the final slice: `fold` persistence, the
+agent lane-range/manifest/toolset bump, and the contract/docs sweep.
 
 Once lanes are dynamic, `.bitwave` cannot keep a closed three-key `lanes` object as the
 only shape. The pre-decision survey is kept here for the record; the shipped shape above
@@ -298,4 +312,17 @@ with the `+` tile naming the 3-lane cap.
 
 Slices (each a reviewed commit): **1** core naming primitives (behaviour-identical),
 **2** state + schema 4 + migration, **3** compact codec + budget (landed, D45),
-**4** UI + DESIGN amendment, **5** agent surface + manifest/toolset bump + docs + full `npm run verify`.
+**4** UI + DESIGN amendment (landed as **D46**: the live tree holds the document's whole
+lane set; the stage bar uses a native per-pane lane dropdown with `Alt+1…8`; the frames
+view `+` adds lanes and each lane head duplicates/deletes with an inline reference-counted
+confirmation; the source table shows `2L` grouped rows; Record rows are `3L`; copy menu
+lists live lanes except the focused one; no budget UI — share length is measured, an
+8-lane 256-bit live link is 1252 characters), **5** agent surface + manifest/toolset bump
++ docs + full `npm run verify`.
+
+Slice 4 deliberately changes the rendered instrument: the stage-bar lane control (native
+`<select>` labelled `Lane 1`…`Lane 8` instead of `1 | 2 | 3`) and the frames-view lane
+heads/hint (`dup`/`del`/`add lane`). `browser-check --compare` against the pre-slice
+artifact therefore reports those states as intentionally different; parity for the stage,
+strip and readouts otherwise holds (measured: the only differing regions are the stage
+bar's lane control and the frames-view lane head/hint areas).

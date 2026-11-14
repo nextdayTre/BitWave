@@ -1,5 +1,5 @@
 /**
- * Input bindings — the six operand inputs and what drives them.
+ * Input bindings — the live operand inputs and what drives them.
  *
  * One fixed row per input (lane 1/2/3 × operand a/b). A row's source is either
  * an imported CSV column (`data`), a frame output (`1:1` / `z⁻¹`), or nothing.
@@ -7,8 +7,8 @@
  * incoming route, choosing a frame clears the column, and the core parks and
  * restores the pre-patch base (DESIGN §10.8, D2).
  *
- * Names follow D15: the six operand frames are A–F; source frames are A–F plus
- * Z1–Z3. The assignment is the label: a data-bound row reads `A · sine`. D43:
+ * Names follow D15/D46: the live operand frames are A–P; source frames add
+ * Z1–Z8. The assignment is the label: a data-bound row reads `A · sine`. D43:
  * a row is identified by its lane key, and names derive from that key.
  */
 
@@ -23,11 +23,11 @@ import {
 import type { DestinationPort, FrameKey, LaneKey, SourcePort } from "../core/types.ts";
 import { DEMO } from "./dataset.ts";
 import {
-  LANE_KEYS,
   S,
   curLane,
   focusKey,
   frameName,
+  liveLaneKeys,
   type LaneState,
 } from "./instrument.ts";
 import { coreLanes, routing } from "./routing.ts";
@@ -59,7 +59,7 @@ export interface InputBinding {
   lane: LaneKey;
   laneNumber: number;
   operand: Operand;
-  /** Global frame name of the destination operand (A–F). */
+  /** Global frame name of the destination operand (A–P). */
   frame: string;
   /** What the input reads, named the way the CSV dropdown names it. */
   source: BindingSource;
@@ -128,7 +128,7 @@ export function describeInput(sl: LaneState, operand: Operand): InputBinding {
 
 export function listInputs(): InputBinding[] {
   const out: InputBinding[] = [];
-  for (const key of LANE_KEYS) {
+  for (const key of liveLaneKeys()) {
     for (const operand of ["a", "b"] as const) out.push(describeInput(S.lanes[key], operand));
   }
   return out;
@@ -165,7 +165,7 @@ export function availableSources(sl: LaneState, operand: Operand): Array<{
 }> {
   const destLane = sl.key;
   const out = [];
-  for (const lane of LANE_KEYS) {
+  for (const lane of liveLaneKeys()) {
     for (const frame of ["a", "b", "z"] as const) {
       out.push({
         lane,
@@ -222,7 +222,7 @@ export function bindExpression(sl: LaneState, operand: Operand, text: string): v
 /** Clear every route and column binding (used by a fresh CSV import). */
 export function resetBindings(): void {
   clearRoutes(routing, coreLanes());
-  for (const key of LANE_KEYS) {
+  for (const key of liveLaneKeys()) {
     S.lanes[key].colA = -1;
     S.lanes[key].colB = -1;
     S.lanes[key].expressions = { a: "", b: "" };

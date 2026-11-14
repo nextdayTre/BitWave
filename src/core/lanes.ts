@@ -13,6 +13,7 @@
 
 import type { BinOp, Lane, LaneKey, LaneMap } from "./types.ts";
 import { LANE_KEYS } from "./types.ts";
+import { compareLaneKeys } from "./lanedefs.ts";
 import {
   DEFAULT_N,
   bitsToNibbles,
@@ -91,9 +92,10 @@ export function makeBootLanes(N: number = DEFAULT_N): LaneMap {
  */
 export function resizeLanes(lanes: LaneMap, oldN: number, newN: number): void {
   if (oldN === newN) return;
+  const laneKeys = Object.keys(lanes).sort(compareLaneKeys);
   const mapped = {} as Record<LaneKey, { a: number[]; b: number[] }>;
 
-  for (const key of LANE_KEYS) {
+  for (const key of laneKeys) {
     const lane = lanes[key];
     mapped[key] = {
       a: remapNibbles(bitsToNibbles(lane.A.bits, oldN), oldN, newN),
@@ -101,7 +103,7 @@ export function resizeLanes(lanes: LaneMap, oldN: number, newN: number): void {
     };
   }
 
-  for (const key of LANE_KEYS) {
+  for (const key of laneKeys) {
     const lane = lanes[key];
     for (const [reg, values] of [
       [lane.A, mapped[key].a],

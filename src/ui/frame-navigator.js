@@ -6,17 +6,24 @@
  * frame (operand A, operand B, derived Z), with the lane/frame names beside
  * each box and a mini spline of the settled register. Choosing a card focuses
  * that frame and returns to the Lanes view; the eyes keep per-frame 2-D
- * visibility, the lane heads keep lane focus and `unpair B`, and the footer
- * carries the horizontal scroll affordance for many lanes.
+ * visibility, the lane heads keep lane focus, `unpair B`, and the lane
+ * management controls (D46), and the footer carries the horizontal scroll
+ * affordance for many lanes.
  *
- * The `+` tile is present at this build's 3-lane maximum: dynamic lanes are a
- * separate pass (docs/DYNAMIC-LANES.md), so the tile reports the cap instead of
- * silently doing nothing.
+ * D46: the grid is built from the **live** lane set, and the `+` tile is the
+ * live add-lane control (enabled below the eight-lane cap, `aria-disabled` and
+ * explanatory at it). Each lane head gains compact `dup` and `del` controls:
+ * duplicate creates a new lane and focuses the copy; delete shows an inline
+ * confirmation that names how many routes/expressions reference the lane's
+ * frames, needs a second confirming click, cancels on Esc, and reports the
+ * result in the footer note.
  */
 
 import { buildSpline, evalSpline } from "../core/spline.ts";
+import { APP_LANE_CAP } from "../core/lanedefs.ts";
 import { setFocus, toggleFrameVisibility } from "../state/actions.ts";
-import { LANE_KEYS, S, curLane, focusKey, frameName } from "../state/instrument.ts";
+import { liveLaneKeys, S, curLane, focusKey, frameName } from "../state/instrument.ts";
+import { routing } from "../state/routing.ts";
 import { toHexOf } from "../render/readouts.js";
 
 export function createFrameNavigator(deps) {
@@ -29,6 +36,11 @@ export function createFrameNavigator(deps) {
     renderStrip,
     updateReadouts,
     unpairB,
+    addLaneFromUi,
+    duplicateLaneFromUi,
+    deleteLaneFromUi,
+    renderSources,
+    lfoStop,
   } = deps;
 
   const framesBtn = document.getElementById("framesBtn");
@@ -43,7 +55,8 @@ export function createFrameNavigator(deps) {
   const framesThumb = document.getElementById("framesThumb");
   const SVG_NS = "http://www.w3.org/2000/svg";
   const FRAME_ORDER = ["a", "b", "z"];
-  const ADD_CAP_NOTE = "3 lanes is this build's maximum — dynamic lanes are a separate pass";
+  /** Lane key whose delete button is showing its inline confirmation. */
+  let pendingDelete = null;
 
   const prefersReducedMotion = () =>
     window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -167,9 +180,113 @@ export function createFrameNavigator(deps) {
     return wrap;
   }
 
+  /* ── lane management (D46) ────────────────────────────────────────────── */
+
+  const escapeRe = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+  /** How many live routes/expressions reference this lane's frames. */
+  function laneReferences(laneKey) {
+    let routes = 0;
+    for (const route of routing.routes) {
+      if (route.from.lane === laneKey || route.to.lane === laneKey) routes += 1;
+    }
+    const names = FRAME_ORDER.map((frame) => escapeRe(frameName(laneKey, frame)));
+    const matcher = new RegExp(`(^|[^A-Za-z0-9_])(${names.join("|")})([^A-Za-z0-9_]|$)`);
+    let expressions = 0;
+    for (const key of liveLaneKeys()) {
+      const lane = S.lanes[key];
+      if (!lane) continue;
+      for (const operand of ["a", "b"]) {
+        const text = lane.expressions[operand];
+        if (text && text.trim() !== "" && matcher.test(text)) expressions += 1;
+      }
+    }
+    return { routes, expressions, total: routes + expressions };
+  }
+
+  function describeReferences({ routes, expressions }) {
+    const parts = [];
+    if (routes > 0) parts.push(`${routes} route${routes === 1 ? "" : "s"}`);
+    if (expressions > 0) parts.push(`${expressions} expression${expressions === 1 ? "" : "s"}`);
+    return parts.join(" and ");
+  }
+
+  function reportNote(text) {
+    framesNote.textContent = text;
+  }
+
+  function focusLaneHead(laneKey, selector = ".lane-btn") {
+    const target = framesGrid.querySelector(`[data-lane="${laneKey}"] ${selector}`);
+    if (target) target.focus({ preventScroll: true });
+  }
+
+  function buildDeleteConfirm(laneKey, head) {
+    head.classList.add("is-confirming");
+    const refs = laneReferences(laneKey);
+    const refText = refs.total > 0
+      ? ` — ${describeReferences(refs)} reference ${refs.total === 1 ? "it" : "its frames"}`
+      : "";
+
+    const text = document.createElement("span");
+    text.className = "lane-confirm-text";
+    text.id = `laneConfirm${laneKey}`;
+    text.textContent = `delete lane ${laneKey}?${refText}`;
+
+    const confirm = document.createElement("button");
+    confirm.type = "button";
+    confirm.className = "lane-act is-danger";
+    confirm.dataset.act = "confirm";
+    confirm.textContent = "delete";
+    confirm.title = `Confirm: delete lane ${laneKey}`;
+    confirm.setAttribute("aria-label", `Confirm delete lane ${laneKey}`);
+
+    const cancel = document.createElement("button");
+    cancel.type = "button";
+    cancel.className = "lane-act";
+    cancel.dataset.act = "cancel";
+    cancel.textContent = "cancel";
+    cancel.title = "Cancel (Esc)";
+    cancel.setAttribute("aria-label", `Cancel deleting lane ${laneKey}`);
+
+    const actions = document.createElement("span");
+    actions.className = "lane-confirm-actions";
+    actions.append(confirm, cancel);
+
+    head.append(text, actions);
+
+    confirm.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      /* Clear the confirmation before the transaction re-renders the grid. */
+      pendingDelete = null;
+      const result = deleteLaneFromUi(laneKey);
+      renderGrid();
+      if (!result || !result.ok) {
+        reportNote(result && result.reason === "last"
+          ? "cannot delete the only lane — the instrument needs at least one"
+          : `could not delete lane ${laneKey}`);
+        focusLaneHead(laneKey);
+        return;
+      }
+      reportNote(`deleted lane ${laneKey} — its routes are cleared and parked bases restored`);
+      const remaining = liveLaneKeys();
+      focusLaneHead(remaining[0] ?? S.laneKey);
+    });
+
+    cancel.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      pendingDelete = null;
+      renderGrid();
+      reportNote(`delete lane ${laneKey} cancelled`);
+      focusLaneHead(laneKey, '[data-act="del"]');
+    });
+
+    return head;
+  }
+
   function buildLaneHead(laneKey) {
     const head = document.createElement("div");
     head.className = "lane-head";
+    if (pendingDelete === laneKey) return buildDeleteConfirm(laneKey, head);
 
     const btn = document.createElement("button");
     btn.type = "button";
@@ -202,6 +319,63 @@ export function createFrameNavigator(deps) {
       unpairBtn.addEventListener("click", () => unpairB());
       head.appendChild(unpairBtn);
     }
+
+    const actions = document.createElement("span");
+    actions.className = "lane-actions";
+
+    const atCap = liveLaneKeys().length >= APP_LANE_CAP;
+    const dup = document.createElement("button");
+    dup.type = "button";
+    dup.className = "lane-act";
+    dup.dataset.act = "dup";
+    dup.dataset.lane = laneKey;
+    dup.textContent = "dup";
+    dup.setAttribute("aria-disabled", String(atCap));
+    dup.title = atCap
+      ? `Duplicate lane ${laneKey} — ${APP_LANE_CAP} lanes is this build's maximum`
+      : `Duplicate lane ${laneKey} as a new lane (values, operator, expressions — not routes)`;
+    dup.setAttribute("aria-label", `dup lane ${laneKey}`);
+    dup.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      pendingDelete = null;
+      if (atCap) {
+        reportNote(`${APP_LANE_CAP} lanes is this build's maximum — delete a lane to duplicate`);
+        return;
+      }
+      const key = duplicateLaneFromUi(laneKey);
+      renderGrid();
+      if (!key) {
+        reportNote(`could not duplicate lane ${laneKey}`);
+        focusLaneHead(laneKey, '[data-act="dup"]');
+        return;
+      }
+      reportNote(`duplicated lane ${laneKey} as lane ${key} — focused`);
+      focusLaneHead(key);
+    });
+    actions.appendChild(dup);
+
+    if (liveLaneKeys().length > 1) {
+      const del = document.createElement("button");
+      del.type = "button";
+      del.className = "lane-act";
+      del.dataset.act = "del";
+      del.dataset.lane = laneKey;
+      del.textContent = "del";
+      del.title = `Delete lane ${laneKey} (asks for confirmation)`;
+      del.setAttribute("aria-label", `del lane ${laneKey}`);
+      del.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        pendingDelete = laneKey;
+        renderGrid();
+        const confirm = framesGrid.querySelector(
+          `[data-lane="${laneKey}"] [data-act="confirm"]`
+        );
+        if (confirm) confirm.focus({ preventScroll: true });
+        else reportNote(`delete lane ${laneKey}? press delete again to confirm`);
+      });
+      actions.appendChild(del);
+    }
+    head.appendChild(actions);
     return head;
   }
 
@@ -216,8 +390,9 @@ export function createFrameNavigator(deps) {
     return col;
   }
 
-  /* The next-lane tile is present at every width (the mockup's perpetual `+`);
-     at this build's 3-lane cap it reports the cap instead of inventing lanes. */
+  /* The `+` tile is the live add-lane control (D46): it creates a blank lane at
+     the lowest free stable key and focuses it. It is `aria-disabled` only at
+     the eight-lane cap, where its name and title explain why. */
   function buildAddColumn() {
     const col = document.createElement("div");
     col.className = "lane-col is-add";
@@ -227,19 +402,37 @@ export function createFrameNavigator(deps) {
     head.setAttribute("aria-hidden", "true");
     col.appendChild(head);
 
+    const atCap = liveLaneKeys().length >= APP_LANE_CAP;
+    const capNote = `${APP_LANE_CAP} lanes is this build's maximum — delete a lane to add another`;
+    const label = atCap
+      ? `Add lane — ${APP_LANE_CAP} lanes is this build's maximum`
+      : "Add lane — create a blank lane and focus it";
+
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className = "frame-add";
-    btn.setAttribute("aria-disabled", "true");
+    btn.setAttribute("aria-disabled", String(atCap));
     btn.textContent = "+";
-    btn.setAttribute("aria-label", "Add lane — 3 lanes is this build's maximum");
-    btn.title = ADD_CAP_NOTE;
+    btn.setAttribute("aria-label", label);
+    btn.title = atCap ? capNote : "Add a blank lane (zero registers, XOR, no routes or expressions)";
     btn.addEventListener("click", () => {
-      framesNote.textContent = ADD_CAP_NOTE;
+      if (atCap) {
+        reportNote(capNote);
+        return;
+      }
+      pendingDelete = null;
+      const key = addLaneFromUi();
+      renderGrid();
+      if (!key) {
+        reportNote(`${APP_LANE_CAP} lanes is this build's maximum`);
+        return;
+      }
+      reportNote(`added lane ${key} — blank lane, focused`);
+      focusLaneHead(key);
     });
     const hint = document.createElement("span");
     hint.className = "frame-add-hint";
-    hint.textContent = "next lane";
+    hint.textContent = "add lane";
     col.append(btn, hint);
     return col;
   }
@@ -248,14 +441,24 @@ export function createFrameNavigator(deps) {
 
   function renderGrid() {
     if (!S.framesView) return;
+    /* A lane deleted elsewhere (bridge/document load) cannot keep its confirm. */
+    if (pendingDelete !== null && !S.lanes[pendingDelete]) pendingDelete = null;
+
     const active = document.activeElement;
-    const host = active && active.closest ? active.closest("[data-lane][data-frame]") : null;
-    const keep = host
-      ? { lane: host.dataset.lane, frame: host.dataset.frame, eye: active.classList.contains("eye-btn") }
+    const card = active && active.closest ? active.closest("[data-lane][data-frame]") : null;
+    const headControl = active && active.closest ? active.closest(".lane-act, .lane-btn") : null;
+    const keepCard = card
+      ? { lane: card.dataset.lane, frame: card.dataset.frame, eye: active.classList.contains("eye-btn") }
+      : null;
+    const keepHead = headControl
+      ? {
+          lane: headControl.closest("[data-lane]")?.dataset.lane,
+          act: headControl.classList.contains("lane-btn") ? "lane-btn" : headControl.dataset.act,
+        }
       : null;
 
     framesGrid.textContent = "";
-    for (const laneKey of LANE_KEYS) framesGrid.appendChild(buildLaneColumn(laneKey));
+    for (const laneKey of liveLaneKeys()) framesGrid.appendChild(buildLaneColumn(laneKey));
     framesGrid.appendChild(buildAddColumn());
 
     const fa = frameName(curLane().key, "a");
@@ -265,11 +468,17 @@ export function createFrameNavigator(deps) {
 
     updateScrollbar();
 
-    if (keep) {
-      const selector = `[data-lane="${keep.lane}"][data-frame="${keep.frame}"]`;
-      const target = keep.eye
+    if (keepCard) {
+      const selector = `[data-lane="${keepCard.lane}"][data-frame="${keepCard.frame}"]`;
+      const target = keepCard.eye
         ? framesGrid.querySelector(`${selector} .eye-btn`)
         : framesGrid.querySelector(`${selector} .frame-card`);
+      if (target) target.focus({ preventScroll: true });
+    } else if (keepHead && keepHead.lane) {
+      const selector = keepHead.act === "lane-btn"
+        ? ".lane-btn"
+        : `[data-act="${keepHead.act}"]`;
+      const target = framesGrid.querySelector(`[data-lane="${keepHead.lane}"] ${selector}`);
       if (target) target.focus({ preventScroll: true });
     }
   }
@@ -328,6 +537,7 @@ export function createFrameNavigator(deps) {
   function setOpen(open, { returnFocus = true } = {}) {
     if (S.framesView === open) return;
     S.copyArmed = false;
+    pendingDelete = null;
     store.patch(() => {
       S.framesView = open;
       syncViewUi();
@@ -414,6 +624,23 @@ export function createFrameNavigator(deps) {
   store.subscribe(() => {
     if (S.framesView) renderGrid();
   });
+
+  /* Esc cancels a pending inline delete confirmation *before* the global Esc
+     handler closes the frames view (capture phase + stopPropagation). */
+  document.addEventListener(
+    "keydown",
+    (e) => {
+      if (e.key !== "Escape" || pendingDelete === null || !S.framesView) return;
+      const laneKey = pendingDelete;
+      pendingDelete = null;
+      e.preventDefault();
+      e.stopPropagation();
+      renderGrid();
+      reportNote(`delete lane ${laneKey} cancelled`);
+      focusLaneHead(laneKey, '[data-act="del"]');
+    },
+    true,
+  );
 
   /* 2-D canvas legend eye: toggle one frame's visibility by lane key. The rAF
      render loop redraws the wave/legend; the frames view, if open, re-renders

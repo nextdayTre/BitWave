@@ -6,14 +6,14 @@
  * `ProjectDoc`. It is DOM-free so the round trip is testable in Node and the
  * desktop shell can reuse it.
  *
- * D43/D44: the live tree and the document are both keyed by stable lane keys
- * ("1".."13"), so the mapping is the identity for the lanes the app ships. The
- * document format (schema 4) can carry up to `APP_LANE_CAP` lanes; this build's
- * tree still ships the default three, so `applyProject` loads the lanes it can
- * represent by key and ignores the rest (they are not lost from an untouched
- * file — the dynamic-lanes UI slice widens the tree). View fields and extras are
- * mapped only for live lanes; routes/parked bases outside the live tree are
- * dropped together.
+ * D43/D44/D46: the live tree and the document are both keyed by stable lane
+ * keys ("1".."13"), so the mapping is the identity. A schema-4 document carries
+ * the whole live lane set (one to eight lanes, gaps allowed); `applyProject`
+ * replaces the live lane map with exactly the document's lanes, so a wider
+ * document widens the instrument and a narrower one narrows it. Capture writes
+ * every live lane. View fields and extras follow the same set. Routes and
+ * parked bases name lanes the document carries (the core validates that), so
+ * they transfer verbatim.
  *
  * Unknown top-level fields from a loaded document are remembered and merged
  * back on the next capture, so a file written by a newer build survives a
@@ -29,13 +29,12 @@ import {
   type ProjectViewState,
 } from "../core/project.ts";
 import type { FrameKey, LaneKey } from "../core/types.ts";
-import { makeBootLanes } from "../core/lanes.ts";
 import { DEMO } from "./dataset.ts";
 import {
-  LANE_KEYS,
   S,
   SIZES,
-  makeReg,
+  liveLaneKeys,
+  makeLaneState,
   syncTarget,
 } from "./instrument.ts";
 import { coreLanes, evaluate, routing } from "./routing.ts";
@@ -68,7 +67,7 @@ export function captureProject(now = new Date().toISOString()): ProjectDoc {
   const focus: NonNullable<ProjectExtras["focus"]> = {};
   const frameVis: NonNullable<ProjectExtras["frameVis"]> = {};
   const expressions: NonNullable<ProjectExtras["expressions"]> = {};
-  for (const lane of LANE_KEYS) {
+  for (const lane of liveLaneKeys()) {
     const sl = S.lanes[lane];
     focus[lane] = sl.focus;
     frameVis[lane] = { ...sl.frameVis };
@@ -141,16 +140,14 @@ export function applyProject(raw: unknown): ApplyResult {
   const { lanes, routing: loadedRouting, N, view, dataset, extras } = loaded;
   S.N = N;
 
-  /* The live tree still ships the default three lanes; a schema-4 document may
-     carry more. Load by lane key, and reset a live lane the document omits to
-     its boot value (the file is the whole description of the lanes it holds). */
-  const boot = makeBootLanes(N);
-  for (const laneKey of LANE_KEYS) {
-    const sl = S.lanes[laneKey];
-    const src = lanes[laneKey] ?? boot[laneKey];
-    sl.A = makeReg(N);
-    sl.B = makeReg(N);
-    sl.Z = makeReg(N);
+  /* D46: the document defines the whole live lane set (one to eight lanes,
+     gaps allowed). Rebuild the map from the document's lanes, so a wider
+     document widens the instrument and a narrower one narrows it; an omitted
+     key simply stops being live (and its freed key is reusable). */
+  const nextLanes: Record<LaneKey, ReturnType<typeof makeLaneState>> = {};
+  for (const laneKey of Object.keys(lanes)) {
+    const src = lanes[laneKey];
+    const sl = makeLaneState(laneKey, N);
     sl.A.bits.set(src.A.bits);
     sl.B.bits.set(src.B.bits);
     sl.showB = src.showB;
@@ -169,41 +166,29 @@ export function applyProject(raw: unknown): ApplyResult {
     };
     syncTarget(sl.A, true);
     syncTarget(sl.B, true);
+    nextLanes[laneKey] = sl;
   }
+  S.lanes = nextLanes;
+  const liveKeys = liveLaneKeys();
 
-  /* Routes and parked bases that reference a lane this build cannot show are
-     dropped together (a parked base without its route would be malformed on the
-     next save). A dropped route's live destination is unplugged: its parked
-     pre-patch base is restored, exactly as removing the route in the UI would.
-     For every schema 1-3 document this is the identity. */
-  const liveRoutes = loadedRouting.routes.filter(
-    (route) => LANE_KEYS.includes(route.from.lane) && LANE_KEYS.includes(route.to.lane),
-  );
-  const routedDestinations = new Set(liveRoutes.map((route) => `${route.to.lane}:${route.to.frame}`));
-  routing.routes = liveRoutes;
-  routing.parked = new Map(
-    [...loadedRouting.parked].filter(([key]) => routedDestinations.has(key)),
-  );
-  for (const [key, bits] of loadedRouting.parked) {
-    if (routedDestinations.has(key)) continue;
-    const [lane, frame] = key.split(":");
-    if (!LANE_KEYS.includes(lane) || (frame !== "a" && frame !== "b")) continue;
-    const reg = frame === "a" ? S.lanes[lane].A : S.lanes[lane].B;
-    reg.bits.set(bits);
-    syncTarget(reg, true);
-  }
+  /* Routes and parked bases name lanes the document carries, which is now the
+     live set, so they transfer verbatim. */
+  routing.routes = loadedRouting.routes;
+  routing.parked = new Map(loadedRouting.parked);
 
-  const fallbackLane = LANE_KEYS[0];
-  const focusLane = LANE_KEYS.includes(view.lane) ? view.lane : fallbackLane;
+  const fallbackLane = liveKeys[0];
+  const focusLane = liveKeys.includes(view.lane) ? view.lane : fallbackLane;
+  const secondLane = liveKeys[1] ?? fallbackLane;
   const splitPair = [
-    LANE_KEYS.includes(view.splitPair[0]) ? view.splitPair[0] : fallbackLane,
-    LANE_KEYS.includes(view.splitPair[1]) ? view.splitPair[1] : (LANE_KEYS[1] ?? fallbackLane),
+    liveKeys.includes(view.splitPair[0]) ? view.splitPair[0] : fallbackLane,
+    liveKeys.includes(view.splitPair[1]) ? view.splitPair[1] : secondLane,
   ] as [LaneKey, LaneKey];
   S.laneKey = focusLane;
   S.view3d = view.view3d;
-  S.split3d = view.split3d;
+  /* Split is exactly two panes: a one-lane document stays in a single view. */
+  S.split3d = view.split3d && liveKeys.length >= 2;
   S.splitPair = splitPair;
-  S.activePane = view.activePane === 1 ? 1 : 0;
+  S.activePane = S.split3d && view.activePane === 1 ? 1 : 0;
 
   /* Transient interaction state never comes from a document. */
   S.copyArmed = false;

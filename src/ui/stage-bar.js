@@ -2,20 +2,42 @@
  * Stage bar — the single canonical home of lane selection, the frames view toggle
  * and `split` (F4 IA, DESIGN §8).
  *
- * Always visible: in 2-D it shows the lane set, `frames`, a disabled `split`
+ * Always visible: in 2-D it shows the live lane set, `frames`, a disabled `split`
  * and `LANE 1 · A ⊕ B → Z1`; in 3-D it adds the per-pane focus dots and, in
  * split mode, a second pane head. While the frames view is open it shrinks to
- * `Lanes` (D42). Reads the state tree; writes only this DOM.
+ * `Lanes` (D42).
  *
- * D43: each lane button carries its stable lane key (`data-lane="1"`), which is
- * also its displayed number.
+ * D46: with a dynamic lane set the old `1 | 2 | 3` radiogroup is now one native
+ * `<select class="op lane-select">` per pane — options are the live lanes,
+ * labelled `Lane 1`…`Lane 8` and valued by the stable lane key. A native select
+ * brings its own declared keyboard path (arrows/Home/End/type-ahead) and cannot
+ * grow the bar sideways as lanes are added; split has two selects and the
+ * second is named "Lane (second pane)". Selection writes only through the
+ * instrument's own lane commands.
  */
 
-import { LANE_KEYS, S, curLane } from "../state/instrument.ts";
+import { S, curLane, liveLaneKeys } from "../state/instrument.ts";
 
 export function createStageBar(deps) {
   const { element, framesBtn, selectLane, selectLaneInPane, setSplitMode, focusSplitPane, laneExprText, closeFrames } = deps;
   let stageDom = null;
+
+  function makeSelect(paneIdx) {
+    const select = document.createElement("select");
+    select.className = "op lane-select";
+    select.dataset.paneSelect = String(paneIdx);
+    select.setAttribute("aria-label", paneIdx === 1 ? "Lane (second pane)" : "Lane");
+    select.title = paneIdx === 1
+      ? "Select the lane shown in the second pane"
+      : "Select the lane shown in this pane";
+    select.addEventListener("change", (ev) => {
+      ev.stopPropagation();
+      const key = select.value;
+      if (S.split3d) selectLaneInPane(paneIdx, key);
+      else selectLane(key);
+    });
+    return select;
+  }
 
   function buildStageBar() {
     /* The static `frames` opener lives in the stage-bar markup so it is found
@@ -33,50 +55,8 @@ export function createStageBar(deps) {
       dot.setAttribute("aria-hidden", "true");
       wrap.appendChild(dot);
 
-      const seg = document.createElement("div");
-      seg.className = "seg mini";
-      seg.setAttribute("role", "radiogroup");
-      seg.setAttribute("aria-label", `Lane${paneIdx === 1 ? " (second pane)" : ""}`);
-      const btns = {};
-      for (const k of LANE_KEYS) {
-        const b = document.createElement("button");
-        b.type = "button";
-        b.className = "op";
-        b.dataset.lane = k;
-        b.setAttribute("role", "radio");
-        b.setAttribute("aria-checked", "false");
-        b.setAttribute("tabindex", "-1");
-        b.textContent = k;
-        b.title = `Lane ${k}`;
-        b.setAttribute("aria-label", `Lane ${k}`);
-        b.addEventListener("click", (ev) => {
-          ev.stopPropagation();
-          if (S.split3d) selectLaneInPane(paneIdx, k);
-          else selectLane(k);
-        });
-        seg.appendChild(b);
-        btns[k] = b;
-      }
-      /* Radiogroup keyboard model (DESIGN §8): arrows move the lane selection,
-         Home/End jump to the ends, and the set is one Tab stop. */
-      seg.addEventListener("keydown", (e) => {
-        const current = S.split3d
-          ? (paneIdx === 0 ? S.splitPair[0] : S.splitPair[1])
-          : S.laneKey;
-        let next = LANE_KEYS.indexOf(current);
-        if (e.key === "ArrowLeft" || e.key === "ArrowUp") next = (next + LANE_KEYS.length - 1) % LANE_KEYS.length;
-        else if (e.key === "ArrowRight" || e.key === "ArrowDown") next = (next + 1) % LANE_KEYS.length;
-        else if (e.key === "Home") next = 0;
-        else if (e.key === "End") next = LANE_KEYS.length - 1;
-        else return;
-        e.preventDefault();
-        e.stopPropagation();
-        const chosen = LANE_KEYS[next];
-        if (S.split3d) selectLaneInPane(paneIdx, chosen);
-        else selectLane(chosen);
-        seg.querySelector(`[data-lane="${chosen}"]`)?.focus();
-      });
-      wrap.appendChild(seg);
+      const select = makeSelect(paneIdx);
+      wrap.appendChild(select);
 
       if (paneIdx === 0 && framesBtn) wrap.appendChild(framesBtn);
 
@@ -101,7 +81,7 @@ export function createStageBar(deps) {
       });
 
       element.appendChild(wrap);
-      return { wrap, dot, btns, expr, spBtn };
+      return { wrap, dot, select, expr, spBtn };
     };
 
     element.textContent = "";
@@ -127,13 +107,23 @@ export function createStageBar(deps) {
     }
   }
 
-  function syncRadio(btns, active) {
-    for (const k of LANE_KEYS) {
-      const on = k === active;
-      btns[k].classList.toggle("on", on);
-      btns[k].setAttribute("aria-checked", String(on));
-      btns[k].setAttribute("tabindex", on ? "0" : "-1");
+  /** Keep one pane's native select in step with the live lane set and value. */
+  function syncSelect(select, active, laneKeys) {
+    const wanted = laneKeys.map((key) => ({ value: key, label: `Lane ${key}` }));
+    const current = [...select.options].map((option) => ({ value: option.value, label: option.textContent }));
+    const same = current.length === wanted.length
+      && current.every((option, i) => option.value === wanted[i].value && option.label === wanted[i].label);
+    if (!same) {
+      select.textContent = "";
+      for (const option of wanted) {
+        const el = document.createElement("option");
+        el.value = option.value;
+        el.textContent = option.label;
+        select.appendChild(el);
+      }
     }
+    if (select.value !== active) select.value = active;
+    if (select.dataset.lane !== active) select.dataset.lane = active;
   }
 
   function setSplitEnabled(btn, enabled) {
@@ -147,6 +137,7 @@ export function createStageBar(deps) {
     if (!stageDom) return;
 
     const { p0, p1 } = stageDom;
+    const laneKeys = liveLaneKeys();
     element.classList.toggle("is-split", S.split3d);
     element.dataset.view = S.view3d ? (S.split3d ? "split" : "3d") : "2d";
 
@@ -169,7 +160,7 @@ export function createStageBar(deps) {
       p0.spBtn.setAttribute("aria-pressed", "false");
       p0.spBtn.classList.remove("on");
       setSplitEnabled(p0.spBtn, false);
-      syncRadio(p0.btns, S.laneKey);
+      syncSelect(p0.select, S.laneKey, laneKeys);
       p0.expr.textContent = laneExprText(curLane(), true);
       p1.wrap.hidden = true;
       return;
@@ -184,7 +175,7 @@ export function createStageBar(deps) {
       p0.spBtn.setAttribute("aria-pressed", "false");
       p0.spBtn.classList.remove("on");
       setSplitEnabled(p0.spBtn, true);
-      syncRadio(p0.btns, S.laneKey);
+      syncSelect(p0.select, S.laneKey, laneKeys);
       p0.expr.textContent = laneExprText(sl, true);
       p1.wrap.hidden = true;
     } else {
@@ -193,7 +184,7 @@ export function createStageBar(deps) {
       p0.wrap.hidden = false;
       p0.spBtn.hidden = true;
       p0.wrap.classList.toggle("focused", S.activePane === 0);
-      syncRadio(p0.btns, k0);
+      syncSelect(p0.select, k0, laneKeys);
       p0.expr.textContent = laneExprText(S.lanes[k0], false);
 
       p1.wrap.hidden = false;
@@ -203,7 +194,7 @@ export function createStageBar(deps) {
       p1.spBtn.classList.add("on");
       setSplitEnabled(p1.spBtn, true);
       p1.wrap.classList.toggle("focused", S.activePane === 1);
-      syncRadio(p1.btns, k1);
+      syncSelect(p1.select, k1, laneKeys);
       p1.expr.textContent = laneExprText(S.lanes[k1], false);
     }
   }

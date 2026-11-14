@@ -175,22 +175,29 @@ targets. The `width` range thumb is ≥24 px.
 These are mathematical invariants, not styling. Breaking one breaks the concept.
 
 ### Frames and their names
-Three lanes, each a three-frame device. Frame names are **global**, not per-lane
-(author, 2026-11-06):
+The instrument holds a **live lane set** of one to eight lanes (the boot instrument ships
+three). Lane identity is the stable **lane key** `"1"`…`"8"` — also the displayed lane
+number — and frame names are **global**, derived from that key, never from array position
+(author, 2026-11-06; dynamic lanes D43/D46):
 
 | Lane | Operands | Derived |
 |---|---|---|
 | 1 | A, B | Z1 |
 | 2 | C, D | Z2 |
 | 3 | E, F | Z3 |
+| … | … | … |
+| 8 | O, P | Z8 |
 
-The six operand frames A–F are the only routing destinations; the nine frame
-outputs A–F + Z1–Z3 are routing sources. Every surface that names a frame — strip
-label, legend, frames view, stage bar, truth header, 3-D plate label — uses the
+The operand frames are the routing destinations (two per live lane: A–P at the eight-lane
+cap); the outputs are the same operands plus every live lane's derived frame (A–P +
+Z1–Z8 at the cap). Names never shift when a lane is added or deleted: deleting lane 3
+leaves lanes 1/2/4 live and lane 4 remains G/H/Z4. Every surface that names a frame —
+strip label, legend, frames view, stage bar, truth header, 3-D plate label — uses the
 focused lane's global name, never a per-lane `A`/`B`/`Z`.
 
 ### Registers
-The focused lane's three frames (lane 1 shown; lane 2 is C/D/Z2, lane 3 E/F/Z3):
+The focused lane's three frames (lane 1 shown; a live lane's operands and derived frame
+are its own letters plus `Z<key>`):
 
 | | | |
 |---|---|---|
@@ -204,8 +211,8 @@ editable and labelled; a derived frame is shown **read-only**. With two operands
 grabbing picks whichever **curve is nearer the pointer** and focuses that operand — the
 instrument must never make you hunt for a knob.
 
-`Z1`/`Z2`/`Z3` are recomputed on every change and eased like a real register, so the
-result *moves* into place rather than snapping.
+Every live lane's derived frame is recomputed on every change and eased like a real
+register, so the result *moves* into place rather than snapping.
 
 ### Keyboard editing
 
@@ -388,15 +395,18 @@ The easing constant is deliberately high (`0.24`) — fast enough to feel like t
   `ROL(Z₀, s)` and its shape never changes (verified). Only **`anti`** (counter-rotation)
   makes Z genuinely reshape, because the two operands drift relative to each other.
 - **Input source table** (`.sources-panel`, `.src-table`, opened by `sources` in the
-  data group) — six fixed rows, one per operand frame A–F. DESTINATION shows the frame
-  and its label carries the assignment (`A · Hex 1` for a data column, `A · Z3` for a
-  frame), matching the column names the import dropdown shows. SOURCE is one native
-  select: `—`, `data · <column>`, `frame · A…Z3`, or `expr · expression`; STATE reads
-  `data`, `1:1`, `z⁻¹`, `expr` or `—`. Choosing `expr` reveals a one-line mono expression
-  editor (validated on Enter/blur; Esc reverts; invalid input restores the previous valid
-  text with an error in the panel status). It is a **transient panel, not a mode**: Esc or
-  an outside click closes it, and the stage view is unchanged. A fresh import rebuilds the
-  board; driven inputs are locked and unplugging restores the parked base (D2).
+  data group) — **`2L` rows for `L` live lanes**, one per operand frame, grouped under a
+  per-lane header row (`Lane 3 · E/F/Z3`) and scrollable in the panel body. DESTINATION
+  shows the frame and its label carries the assignment (`A · Hex 1` for a data column,
+  `A · Z3` for a frame), matching the column names the import dropdown shows. SOURCE is
+  one native select: `—`, `data · <column>`, `frame · A…Z8`, or `expr · expression`; STATE
+  reads `data`, `1:1`, `z⁻¹`, `expr` or `—`. Choosing `expr` reveals a one-line mono
+  expression editor (validated on Enter/blur; Esc reverts; invalid input restores the
+  previous valid text with an error in the panel status). It is a **transient panel, not a
+  mode**: Esc or an outside click closes it, and the stage view is unchanged. A fresh
+  import rebuilds the board across the live lane set (the shipped three lanes keep the
+  historical assignment); driven inputs are locked and unplugging restores the parked base
+  (D2).
 - **Example stepper** (`data` group) — `import csv`, `demo`, `project…`, `◀ n/total ▶`,
   `sources`, and an **Observation Logger** (`log` and `export`).
   Stepping writes the row's cells into A (and B if mapped) for **undriven** inputs.
@@ -406,9 +416,10 @@ The easing constant is deliberately high (`0.24`) — fast enough to feel like t
   Z hex, Pop-Z, truth table counts, timestamp) and downloads them directly as
   `bitwave_observations.csv`. To its right, **Record** (`#recordBtn`, `aria-pressed`) is a
   DAW-style take: starting clears the buffer, each settled evaluation appends one row of
-  all nine frame registers (no timestamps, in memory only), `export log` downloads
-  `bitwave_recording.csv`, and the row count sits beside it. This is the daily-use path,
-  so it is the first group in the controls row.
+  **`3L` frame registers** (three per live lane; nine at the boot three-lane set, no
+  timestamps, in memory only), `export log` downloads `bitwave_recording.csv`, and the row
+  count sits beside it. This is the daily-use path, so it is the first group in the
+  controls row.
 - **Demo dataset** (`demo`) — an embedded eight-row, four-column table (rotated sine,
   ramp, 16-bit mask). It goes through the same parser/typing/binding path as a CSV
   import, so it is data, not onboarding; the status line names it.
@@ -423,8 +434,9 @@ The easing constant is deliberately high (`0.24`) — fast enough to feel like t
   (`could not read <name>: no numeric columns`, `newer than supported`). Error text uses the
   existing `--inf` warmth; no third hue. It complements — not replaces — the sr-only
   committed-change region.
-- **Segmented control** (`.seg`) — a joined set of `button.op` (currently the lane set
-  `1 | 2 | 3`, the stepper's `◀ ▶`, and per-pane focus). **Mutually exclusive sets are
+- **Segmented control** (`.seg`) — a joined set of `button.op` (currently the stepper's
+  `◀ ▶` and per-pane focus). The lane selector is a native `<select class="op
+  lane-select">` per pane, not a segmented control (D46). **Mutually exclusive sets are
   `role="radiogroup"` with `role="radio"` + `aria-checked` and a roving `tabindex`**;
   true toggles keep `aria-pressed`. Visual `.on` may remain, but state is programmatic —
   a selected segment must never be colour-only (SC 1.4.1).
@@ -474,36 +486,54 @@ The easing constant is deliberately high (`0.24`) — fast enough to feel like t
   state; persisting `lanes.<n>.fold` belongs to the dynamic-lanes schema pass
   ([`docs/DYNAMIC-LANES.md`](docs/DYNAMIC-LANES.md)).
 - **Stage bar** (`.stage-bar`) — **always visible**, and the single canonical home of the
-  lane set, the `frames` view toggle (and `Lanes` while the frames view is open), `split`
-  and the routing-aware lane expression
-  (`LANE 1 · A ⊕ B → Z1`). Three lanes (`1`, `2`, `3`; internal keys `A`/`B`/`C`) share
-  register width `S.N`; each holds its own operand pair and derived frame (`A/B/Z1`,
-  `C/D/Z2`, `E/F/Z3`), binary/arithmetic operator, B-phase and the six source bindings.
-  In 2-D `split` stays in place `aria-disabled`; in 3-D it splits the stage into two
-  side-by-side axonometric visualizers separated by a `1px` `--line` rule while the strip,
-  truth table and controls stay bound to the focused lane (`S.slot`). Per-pane focus dots
-  and the second pane head only exist in split 3-D. Drawn exclusively from `--panel-hi`,
-  `--line`, `--text`, `--dim`, `--dimmer` and `--accent`.
+  lane selector, the `frames` view toggle (and `Lanes` while the frames view is open),
+  `split` and the routing-aware lane expression
+  (`LANE 1 · A ⊕ B → Z1`). The lane selector is one native
+  `<select class="op lane-select">` **per pane** (D46): options are the live lanes,
+  labelled `Lane 1`…`Lane 8` with the stable lane key as the value, so adding lanes
+  cannot grow the bar sideways. In split 3-D there are two selects and the second is
+  named **"Lane (second pane)"**; split stays exactly two panes. The native select is the
+  declared keyboard path (Tab to it, then arrows/Home/End/type-ahead); `Alt+1…8` selects
+  a live lane by its number as a shortcut (an absent/gapped key is a no-op). Every live
+  lane shares register width `S.N` and each holds its own operand pair and derived frame
+  (`A/B/Z1`, `C/D/Z2`, …, `O/P/Z8`), binary/arithmetic operator, B-phase and the source
+  bindings. In 2-D `split` stays in place `aria-disabled`; in 3-D it splits the stage into
+  two side-by-side axonometric visualizers separated by a `1px` `--line` rule while the
+  strip, truth table and controls stay bound to the focused lane. Per-pane focus dots and
+  the second pane head only exist in split 3-D. Drawn exclusively from `--panel-hi`,
+  `--line`, `--text`, `--dim`, `--dimmer` and `--accent`; the select uses the same tokens
+  and is at least 24 px tall.
 - **Frames view** (`.frames-view`) — the `frames` button swaps the **stage** to a card
   browser (`Lanes` in the stage bar returns; Esc also returns). The grid is one column per
-  lane, one **equal card per frame** (operand A, operand B, derived Z), each card a bordered
-  box holding a mini spline of the settled register with the frame's global name at its
-  left; a dim lane head carries the lane name and, for the focused lane in 2-D with B live,
-  `unpair B`; each card carries a 24 px visibility eye (2-D visibility only; disabled in
-  3-D). Choosing a card focuses that frame **and returns to the lanes view** — the one
-  deliberate exception to §10.24, because the view replaces the stage rather than floating
-  over it. The canvas and hint are hidden (`visibility`) while the view is open; the strip,
-  meta and controls stay live. The footer carries the legend and a horizontal scroll
-  affordance (arrow buttons + track/thumb) for many lanes; the scroll region is one Tab
-  stop and scrolls with `←/→`. A perpetual `+` tile closes the grid at every width; at this
-  build's 3-lane cap it is `aria-disabled` and names the cap instead of inventing lanes
-  (dynamic lanes are [`docs/DYNAMIC-LANES.md`](docs/DYNAMIC-LANES.md)). Cards are buttons
-  (Tab, `Enter`/`Space`); the view adds no hue and no motion beyond the scroll.
+  **live** lane, one **equal card per frame** (operand A, operand B, derived Z), each card
+  a bordered box holding a mini spline of the settled register with the frame's global name
+  at its left; a dim lane head carries the lane name, `unpair B` for the focused lane in
+  2-D with B live, and compact **`dup` / `del`** lane-management controls (D46); each card
+  carries a 24 px visibility eye (2-D visibility only; disabled in 3-D). Choosing a card
+  focuses that frame **and returns to the lanes view** — the one deliberate exception to
+  §10.24, because the view replaces the stage rather than floating over it. The `+` tile is
+  the **live add-lane** control: it allocates the lowest free stable key, creates a blank
+  lane (zero registers, XOR, focus A, all frames visible, no expressions or CSV columns) and
+  focuses it; it is `aria-disabled` only at the eight-lane cap, where its accessible name
+  and title explain that a lane must be deleted first. `dup` duplicates the lane's values,
+  operator, lenses, visibility, expressions and CSV mapping **but not routes or parked
+  bases**, then focuses the copy. `del` shows an **inline confirmation** naming how many
+  routes/expressions reference the lane's frames, needs a second confirming click, cancels
+  on Esc (without leaving the view) and reports the result in the footer note; the last
+  remaining lane cannot be deleted. The canvas and hint are hidden (`visibility`) while the
+  view is open; the strip, meta and controls stay live. The footer carries the legend and a
+  horizontal scroll affordance (arrow buttons + track/thumb) for many lanes; the scroll
+  region is one Tab stop and scrolls with `←/→`. Cards are buttons (Tab, `Enter`/`Space`);
+  the view adds no hue and no motion beyond the scroll. Closing returns to the exact
+  2-D/3-D view and focus; with the default three lanes the view keeps the same card
+  geometry (only the lane-head controls and the `+` hint are new).
 - **Copy menu** (`.copy-menu`) — `copy to…` opens an explicit `role="menu"` with one
-  `role="menuitem"` per lane (`lane 1/2/3`); focus moves into the menu, `↑/↓`/`Home`/`End`
-  move between items, `Enter` copies, `Escape` or an outside click closes and returns focus,
-  and the live status says `copied lane 1 → lane 2`. There is no invisible armed mode.
-  `copyLane` clones the focused lane's base registers; routes belong to the rack.
+  `role="menuitem"` per **live lane except the focused one** (built on every open); focus
+  moves into the menu, `↑/↓`/`Home`/`End` move between items, `Enter` copies, `Escape` or
+  an outside click closes and returns focus, and the live status says
+  `copied lane 1 → lane 2`. There is no invisible armed mode. `copyLane` clones the focused
+  lane's base registers; routes belong to the rack. Copying needs an existing destination
+  lane; creating one is the frames view's `dup`/`+`.
 - **Register edit module** (`.edit-target`, `.hex-entry`) — the read-only edit target
   (`edit · A`) plus the whole-word mono hex entry; the width slider itself stays in the
   header. The module is always present; the entry is disabled and explained when the
@@ -632,10 +662,11 @@ something that looked fine until it was measured.
 25. **A focused derived frame is read-only.** Focusing Z1/Z2/Z3 shows its 64/128/256 bits
     in the strip with no handles, no bit click, no wheel and no canvas drag; operands stay
     the only edit targets. A write path that ignores focus is a bug.
-26. **Frame names are global.** Six operand frames `A`–`F` (lane 1 A/B, lane 2 C/D, lane 3
-    E/F) and three derived `Z1`/`Z2`/`Z3`. Every naming surface uses the focused lane's
-    name; a bare `Z` or a per-lane `A/B/Z` triple is stale terminology. Visibility eyes
-    are **per lane**, so hiding A does not hide C.
+26. **Frame names are global and derive from the stable lane key.** Operand frames are
+    `A`–`P` (two per live lane) and derived frames `Z1`–`Z8` at the eight-lane cap; the
+    boot instrument shows three (`A/B/Z1`, `C/D/Z2`, `E/F/Z3`). Every naming surface uses
+    the focused lane's name; a bare `Z` or a per-lane `A/B/Z` triple is stale terminology.
+    Visibility eyes are **per lane**, so hiding A does not hide C.
 27. **Focus is per lane and survives lane switches and 3-D entry.** `enableBOnSlot()` may
     seed the second operand but must not steal focus; the frame you chose stays the frame
     the strip shows.
@@ -644,7 +675,7 @@ something that looked fine until it was measured.
     exposes **no setters**; it must never become a second write path or change the
     visuals. Bump `BitWave.schema` when the shape changes. `geometry()` is the
     measured seam for the §11 control-point alignment check.
-29. **One source per input, and labels carry it.** Each operand frame A–F reads
+29. **One source per input, and labels carry it.** Each live operand frame reads
     exactly one of: a CSV column (`data`), a frame output (`1:1`/`z⁻¹`), or nothing.
     Choosing a data column clears the route and choosing a frame clears the column.
     A data-bound row reads `frame · column` (`A · Hex 1`); a frame-bound row reads
@@ -678,7 +709,9 @@ something that looked fine until it was measured.
     mode/rate and the dataset cursor; schema 3 adds expression sources; **schema 4 makes
     `lanes` an open map keyed by the stable lane key** (`"1"`..`"13"`, gaps allowed, 1–8
     lanes, ascending numeric order). A/B hexes persist, **Z never** does; routes and parked
-    bases persist so a saved patch board re-opens identically. Schema 1/2/3 documents load
+    bases persist so a saved patch board re-opens identically. **The live instrument loads
+    the whole document lane set** (D46): a wider document widens the tree, a narrower one
+    narrows it, and capture writes every live lane. Schema 1/2/3 documents load
     and upgrade on read; this build always saves schema 4; top-level unknown fields are
     preserved across load/save and canonical links. A newer schema is refused, never
     half-applied. Register widths outside `[8,16,32,64,128,256]` are refused at the app
@@ -727,11 +760,12 @@ something that looked fine until it was measured.
     once at the boundary), the result must reduce to an integer, and it wraps modulo 2^N.
     Invalid text never alters registers; the source table reports it and the bridge rejects
     it with `E_INVALID_EXPRESSION`.
-48. **Record is a transient take, not a catalog.** One row of all nine frames is appended
-    per settled evaluation while armed (the pointer-drag stream is skipped; the row lands on
-    release); the buffer is a bounded in-memory ring, cleared by starting a take and never
-    stored in `.bitwave` or the share link. Expressions read the previous row, one update
-    late, so a snapshot cannot include its own result.
+48. **Record is a transient take, not a catalog.** One row of **`3L` frames** (three per
+    live lane) is appended per settled evaluation while armed (the pointer-drag stream is
+    skipped; the row lands on release); the buffer is a bounded in-memory ring, cleared by
+    starting a take and never stored in `.bitwave` or the share link. Expressions read the
+    previous row, one update late, so a snapshot cannot include its own result. The export
+    CSV header follows the live lane set (`step, A, B, Z1, …, O, P, Z8`).
 49. **Schemas 3 and 4 are additive.** Schema 3 added expressions on
     `lanes.<n>.expressions`; schema 4 adds the dynamic lane map (D44). Schema-1/2/3
     documents load with their defaults (no expressions, closed three lanes), unknown fields
@@ -757,10 +791,39 @@ something that looked fine until it was measured.
     `aria-pressed` follows the focused frame, and the strip, hint, edit target and
     whole-word hex entry follow the selection (D41).
 54. **The frames view is a stage mode, not a panel.** While it is open the canvas and hint
-    are hidden and the stage bar shrinks to `Lanes`; every frame gets an equal card; the `+`
-    tile never invents lanes beyond this build's cap (it names the cap); closing returns to
-    the exact 2-D/3-D view and focus untouched. The default instrument (view closed) is
-    pixel-identical to before D42.
+    are hidden and the stage bar shrinks to `Lanes`; every live lane's frames get equal
+    cards (three per lane, nine at boot); the `+` tile is the **live add-lane** control
+    (disabled only at the eight-lane cap, with a reason) and each lane head carries compact
+    `dup` / `del` controls (D46); closing returns to the exact 2-D/3-D view and focus
+    untouched. The stage/strip/readout geometry of the default instrument (view closed) is
+    unchanged; the D46 slice intentionally changes the stage-bar lane control and the
+    frames-view lane-head/hint pixels, so parity is measured against the artifact that
+    introduced this UI slice.
+55. **A lane's identity is its stable key, and the live set is 1–8 lanes.** `S.lanes` is
+    keyed by `"1"`…`"13"` (the grammar ceiling) and the app cap is eight; the live set may
+    have gaps (`1`, `3`, `4`), is always iterated in ascending numeric key order, and is
+    **never renumbered**. Adding allocates the lowest free key; deleting frees that key for
+    reuse. The ordered live list is derived from the map, never from array position.
+56. **Delete clears routes and restores surviving destinations.** Deleting a lane removes
+    every route touching it: a route entering the deleted lane is dropped with its parked
+    base; a route leaving it unplugs its surviving destination and restores the parked
+    pre-patch base byte-identically, exactly as an explicit unplug would. The last lane can
+    never be deleted; focus falls to the lowest remaining lane; `splitPair` is repaired and
+    split exits below two lanes.
+57. **Duplicate copies the lane, not its wiring.** A duplicated lane takes register
+    bits/values, `showB`, operator, edit/focus lenses, seeded flag, B phase, frame
+    visibility, expressions, fold and CSV columns — **never** route edges or parked bases
+    (routing belongs to the rack), then the copy is focused.
+58. **Share length is measured, never enforced in the UI.** The compact `#bw=` link is the
+    only budget gate and it drops the dataset first, then expressions, with explicit flags;
+    there is no budget meter, warning component or per-lane share control. A 16-route
+    8-lane 256-bit document is the documented overflow case (link not written); this is
+    reported, not prevented. An 8-lane 256-bit document measures 1252 characters through
+    the live app path (1260 for the fully seeded fixture).
+59. **The live lane set drives every derived surface.** Routing/evaluation, expression
+    environments, LFO snapshots, CSV column mapping, resize remapping, Record rows, the
+    observation/export-log columns and the agent `getState()` lane map all iterate the
+    live lanes — adding or deleting a lane changes them together, in one transaction.
 
 ---
 
@@ -788,23 +851,37 @@ The visual contract is measurable, so measure it rather than eyeballing:
   retargets the strip, edit target and whole-word hex entry to B, pressing `Z1` makes the
   strip read-only and disables the hex entry, and the view mode and opened panels do not
   change; `aria-pressed` follows the focused frame and every target is ≥24×24 px (D41).
-- Frames view: `frames` hides the canvas, shows nine equal cards (3 lanes × 3 frames) plus
-  the `+` tile and `Lanes`; choosing a card returns to the same 2-D/3-D view with that frame
-  focused (a Z card lands on a read-only strip); eyes toggle per-lane visibility without
-  leaving; the scroll arrows are disabled when the grid fits and scroll one column when it
-  does not; Esc returns; every card is a button and axe stays clean in the open view (D42).
+- Frames view: `frames` hides the canvas, shows three equal cards per live lane (nine at
+  boot) plus the `+` tile and `Lanes`; choosing a card returns to the same 2-D/3-D view with
+  that frame focused (a Z card lands on a read-only strip); eyes toggle per-lane visibility
+  without leaving; the scroll arrows are disabled when the grid fits and scroll one column
+  when it does not; Esc returns; every card is a button and axe stays clean in the open
+  view (D42). The `+` tile is live: it adds a blank lane at the lowest free key, focuses it
+  and disables only at eight lanes with an explanatory name; `dup` copies the lane's model
+  state but no routes; `del` shows an inline confirmation that counts routes/expressions,
+  requires a second click, cancels on Esc without leaving the view, and clears routes /
+  restores surviving destinations (D46).
+- **Live lane set:** the stage bar shows one native lane dropdown per pane (two in split,
+  the second named "Lane (second pane)") with `Lane 1`…`Lane 8` options; changing it focuses
+  that lane; `Alt+1…8` selects a live lane and does nothing for an absent key; adding
+  through the frames view grows the set to eight, deleting removes exactly that key (no
+  renumbering) and a freed key is reusable; the source table then shows `2L` rows grouped
+  under a lane header; the Record export header lists `3L` frames; an 8-lane 256-bit
+  document round-trips through a compact `#bw=` link within 2000 characters.
 - 3-D hinge: in 3-D `#foldBtn` reads `A far`; pressing it reads `B far`, moves the dashed B
   plate from near to far (and A solid to near), and leaves A/B/Z values and the Z label
   unchanged; the control is hidden in 2-D and follows the active split pane.
 - Readout stability: with the trend badge forced through `level`, `step-up` and `step-down`
   in 2-D and 3-D, the badge width and the `#hex`/`#hexA`/`#hexZ` positions must not move;
   the badge word must not overflow its slot.
-- Frame names: lane 1 reads A/Z1/B, lane 2 C/Z2/D, lane 3 E/Z3/F in the navigator, strip
-  label, stage bar, truth header and A/B/Z readouts; hiding A in lane 1 leaves C visible.
-- Source table: six rows; a data-bound row reads `A · <column>` and its STATE is `data`;
-  a frame binding reads `1:1` (or `z⁻¹` for same-lane Z) and drives the register;
-  unplug restores the parked base byte-identically; a driven input's strip is read-only
-  and a bit click cannot change it; a fresh import fills the board from the columns.
+- Frame names: lane 1 reads A/Z1/B, lane 2 C/Z2/D, lane 3 E/Z3/F and lane 8 O/Z8/P in the
+  strip, stage bar, truth header, frames view and A/B/Z readouts; hiding A in lane 1 leaves
+  C visible; names follow a lane's stable key across add/delete (`1,3,4` keeps Z3/Z4).
+- Source table: `2L` rows grouped by live lane; a data-bound row reads `A · <column>` and
+  its STATE is `data`; a frame binding reads `1:1` (or `z⁻¹` for same-lane Z) and drives
+  the register; unplug restores the parked base byte-identically; a driven input's strip is
+  read-only and a bit click cannot change it; a fresh import fills the live board from the
+  columns.
 - **Keyboard-only task:** from boot, Tab reaches the strip; the focused nibble is set by
   `↑/↓`, `Home`/`End` and `0–F`; `←/→` moves between nibbles; a hex word commits; a preset,
   a unary op and a CSV step all work without a pointer; focus is never lost to `<body>`.
@@ -821,10 +898,12 @@ The visual contract is measurable, so measure it rather than eyeballing:
 - **Persistence:** `save project` downloads a schema-4 document (a lane map keyed by the
   stable lane key); `open project…` applies one (lanes, routes/parked bases,
   focus/frameVis, LFO mode/rate, dataset cursor, expressions) and a refresh shows the
-  restored width/lane/view. Schema 1/2/3 documents load and upgrade, and a document with a
-  newer schema is refused with a readable error. Autosave survives a reload; a shared
-  `#bw=` link restores the same state (and wins over autosave); the link stays ≤ ~2 KB at
-  256 bits for the shipped lane set; `?fresh` writes neither. Non-token CSV files and empty
+  restored width/lane/view; opening an 8-lane document makes eight lanes live, and a
+  document with gaps keeps exactly those keys. Schema 1/2/3 documents load and upgrade, and
+  a document with a newer schema is refused with a readable error. Autosave survives a
+  reload; a shared `#bw=` link restores the same state (and wins over autosave); an 8-lane
+  256-bit link measures 1252 characters through the live path (1260 for the seeded fixture),
+  within the 2000-character budget; `?fresh` writes neither. Non-token CSV files and empty
   files are refused with a status message and do not replace the current dataset.
 - **Distribution:** `npm run check:pwa` serves `dist/hosted/` on `127.0.0.1` and asserts the
   manifest + every icon load, the worker registers/activates/controls the page, the app shell
@@ -840,7 +919,9 @@ The visual contract is measurable, so measure it rather than eyeballing:
   `window.BitWave` surface, deeplink reloads twice, the agent tab, no overflow at
   360/720/1440 and zero console errors. The default 2-D view is compared against the
   artifact that introduced the current UI slice (`browser-check --compare`); the
-  external-routing slice intentionally adds the Record control.
+  external-routing slice intentionally adds the Record control, and the dynamic-lanes slice
+  intentionally changes the stage-bar lane control and the frames-view lane heads (D46),
+  so those states are expected to differ from the pre-slice artifact.
 - **External routing (schema 3; schema 4 additive):** the source table offers `expr` rows; a valid expression
   changes the operand and Z on the next evaluation, an invalid one restores the previous
   text and leaves the registers alone (`E_INVALID_EXPRESSION` from the bridge); Record
@@ -848,14 +929,17 @@ The visual contract is measurable, so measure it rather than eyeballing:
   `getState().recording` agree; a project/link round-trip preserves expressions but not the
   transient log; the float policy is documented, not tested as a ban.
 - **Automated a11y audit:** axe-core (dev-only, never in the artifact) reports **zero
-  critical/serious** violations in the 2-D, A·B, 3-D and source-table states.
+  critical/serious** violations in the 2-D, A·B, 3-D, source-table, frames-view and
+  eight-lane frames-view states.
 
 - **Information architecture:** the stage bar is visible in 2-D and 3-D and is the only
-  home of the lane set, the `frames` opener and `split` (disabled in 2-D); the controls row
-  renders the six named modules in order at every width; inapplicable controls are present
-  and `aria-disabled`, never absent; `copy to…` is a focus-in menu that Esc closes and whose
-  copy is spoken; the hex entry right-aligns a word, refuses invalid input and reverts on Esc;
-  `?` opens the keyboard map; the truth table exposes `role="table"` rows/cells.
+  home of the lane selector (a native per-pane dropdown), the `frames` opener and `split`
+  (disabled in 2-D); the controls row renders the six named modules in order at every
+  width; inapplicable controls are present and `aria-disabled`, never absent; `copy to…`
+  is a focus-in menu that Esc closes and whose copy is spoken (listing the live lanes
+  except the focused one); the hex entry right-aligns a word, refuses invalid input and
+  reverts on Esc; `?` opens the keyboard map; the truth table exposes `role="table"`
+  rows/cells.
 
 A headless-Chrome CDP pass drives these in seconds: `npm run check:browser`
 ([`tools/browser-check.mjs`](tools/browser-check.mjs), zero dependencies) asserts
@@ -931,6 +1015,18 @@ them.
   `recording` and per-lane `expressions` in the agent state. Float is accepted as an
   authoring boundary and converted once to exact values; the register engine stays exact.
   Toolset 1.1.0; the default control row intentionally gains the Record control (D40).
+- **Dynamic lanes (2026-11-14)** — stable lane-key identity with names generated from the
+  key (`0 → A/B/Z1`, …, `7 → O/P/Z8`), `.bitwave` schema 4 (open lane map, gaps allowed,
+  1–8 lanes, migration from the closed three-lane documents), the compact `#bw=` codec with
+  a measured budget, and this UI slice: the live tree holds the document's whole lane set;
+  the stage bar replaces the `1 | 2 | 3` radiogroup with a native per-pane lane dropdown;
+  the frames view's `+` becomes the live add-lane control and each lane head gains
+  duplicate/delete with an inline reference-counted confirmation; the source table becomes
+  `2L` grouped rows; Record rows and the copy menu follow the live set. Lane management is
+  no-renumber, min 1 / max 8; delete clears routes and restores surviving parked bases;
+  duplicate excludes route edges. Accessible names and 24 px targets cover the new
+  controls; axe stays clean in single- and eight-lane frames views. The agent
+  manifest/toolset enums intentionally stay three-lane for the final docs slice.
 
 ### Next
 
@@ -965,7 +1061,10 @@ them.
 4. New hue → justify it against §3. The answer is usually "no".
 5. **Source change → `src/`, never the built file.** `bitwave-v2.html` is generated by
    `npm run build` from `src/`; prove a rebuild with
-   `node tools/browser-check.mjs --compare <old-artifact>` (six states, pixel-identical).
+   `node tools/browser-check.mjs --compare <old-artifact>` (six states, pixel-identical) —
+   unless a reviewed UI slice intentionally changes the rendered instrument, in which case
+   compare against the artifact that introduced that slice and record the changed states
+   (as D40 did for Record and D46 does for the lane dropdown and frames-view lane heads).
    `index.html` stays untouched as the reference build.
 6. **Any new control must declare its keyboard path and accessible name in §8** and
    implement it before shipping. A control a keyboard-only user cannot reach is not done.
