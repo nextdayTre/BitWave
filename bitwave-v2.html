@@ -771,10 +771,11 @@ function remapParked(routing, oldN, newN) {
 *   unary      := ('+' | '-' | '~') unary | primary
 *   primary    := number | name | name '(' args ')' | '(' expression ')'
 *
-* `number` is decimal, decimal-fraction or `0x` hex. `name` is a global frame
-* name (`A`–`F`, `Z1`–`Z3`), the register width `N`, or `log.<frame>` for the
-* previous recorded snapshot. Functions: `floor`, `ceil`, `round`, `abs`, `min`,
-* `max` (round is half away from zero).
+* `number` is decimal, decimal-fraction or `0x` hex. `name` is any key present in
+* the environment's frame map (the three-lane app provides `A`–`F`, `Z1`–`Z3`;
+* a dynamic-lane environment provides `A`–`P`, `Z1`–`Z8`), the register width
+* `N`, or `log.<frame>` for the previous recorded snapshot. Functions: `floor`,
+* `ceil`, `round`, `abs`, `min`, `max` (round is half away from zero).
 *
 * Errors are typed (`ExpressionError.code`) and never leak stacks. Limits bound
 * the source, AST depth, numeric size and shift counts so a bad patch cannot hang
@@ -1181,27 +1182,23 @@ var FUNCTIONS = /* @__PURE__ */ new Set([
 	"min",
 	"max"
 ]);
-var NAMES = /* @__PURE__ */ new Set([
-	"A",
-	"B",
-	"C",
-	"D",
-	"E",
-	"F",
-	"Z1",
-	"Z2",
-	"Z3",
-	"N"
-]);
+/**
+* Deterministic hint for an unknown name: list the frame names the environment
+* actually provides. A dynamic-lane environment names eight or thirteen lanes;
+* the shipped three-lane app lists `A`–`F`, `Z1`–`Z3`.
+*/
+function frameNameHint(env) {
+	const names = Object.keys(env.frames).sort();
+	return `${names.length === 0 ? "this environment has no frame names" : `frame names are ${names.join(", ")}`}; the width is N; log frames are log.<name>`;
+}
 function lookupName(name, env) {
 	if (name === "N") return rational(BigInt(env.width), 1n);
 	if (name.startsWith("log.")) {
 		const frame = name.slice(4);
-		if (!env.log || !(frame in env.log)) fail("E_EXPR_UNKNOWN_NAME", `log.${frame} is not available`, "the log is empty until the first recorded update");
+		if (!env.log || !Object.hasOwn(env.log, frame)) fail("E_EXPR_UNKNOWN_NAME", `log.${frame} is not available`, "the log is empty until the first recorded update");
 		return rational(env.log[frame], 1n);
 	}
-	if (!NAMES.has(name)) fail("E_EXPR_UNKNOWN_NAME", `unknown name: ${name}`, "frame names are A–F, Z1–Z3; the width is N; log frames are log.<name>");
-	if (!(name in env.frames)) fail("E_EXPR_UNKNOWN_NAME", `${name} is not in this expression's frame environment`);
+	if (!Object.hasOwn(env.frames, name)) fail("E_EXPR_UNKNOWN_NAME", `unknown name: ${name}`, frameNameHint(env));
 	return rational(env.frames[name], 1n);
 }
 function wordOf(value, env, what) {
@@ -3851,6 +3848,72 @@ function createHelpPanel(deps) {
 		activeTab: () => activeTab
 	};
 }
+function checkIndex(index) {
+	if (!Number.isInteger(index) || index < 0 || index >= 13) throw new RangeError(`lane index must be an integer in [0, 12]; got ${String(index)}`);
+}
+function checkCount(count) {
+	if (!Number.isInteger(count) || count < 1 || count > 13) throw new RangeError(`lane count must be an integer in [1, 13]; got ${String(count)}`);
+}
+/** One lane's names, derived from its 0-based name index. Gaps are fine: `laneDef(3)` is G/H/Z4. */
+function laneDef(index) {
+	checkIndex(index);
+	return {
+		key: String(index + 1),
+		index,
+		a: String.fromCharCode(65 + 2 * index),
+		b: String.fromCharCode(66 + 2 * index),
+		z: `Z${index + 1}`
+	};
+}
+/** The first `count` lanes, in name order (names derive from the index, not array position). */
+function laneDefs(count = 3) {
+	checkCount(count);
+	const out = [];
+	for (let index = 0; index < count; index += 1) out.push(laneDef(index));
+	return out;
+}
+/** A lane key ("1".."13") from the numeric 1-based name index; null otherwise. */
+function laneKeyFromNumber$1(value) {
+	if (typeof value !== "number" || !Number.isInteger(value) || value < 1 || value > 13) return null;
+	return String(value);
+}
+/** Frame name table keyed by lane key, in lane order: `{ "1": {a:"A", b:"B", z:"Z1"}, … }`. */
+function frameNamesFor(count = 3) {
+	const out = {};
+	for (const def of laneDefs(count)) out[def.key] = {
+		a: def.a,
+		b: def.b,
+		z: def.z
+	};
+	return out;
+}
+/**
+* Resolve a global frame name (`A`–`Z`, `Z1`–`Z13`) to its lane/frame pair;
+* case-insensitive, and null for names outside the supplied lane count. The
+* returned `name` is the canonical uppercase form.
+*/
+function frameRefFromName$1(value, count = 3) {
+	if (typeof value !== "string" || value === "") return null;
+	const upper = value.toUpperCase();
+	for (const def of laneDefs(count)) {
+		if (upper === def.a) return {
+			lane: def.key,
+			frame: "a",
+			name: def.a
+		};
+		if (upper === def.b) return {
+			lane: def.key,
+			frame: "b",
+			name: def.b
+		};
+		if (upper === def.z) return {
+			lane: def.key,
+			frame: "z",
+			name: def.z
+		};
+	}
+	return null;
+}
 // src/core/lanes.ts
 function makeLane(key, N, binop = "xor") {
 	const empty = () => ({
@@ -4199,60 +4262,38 @@ var LFO_RATES = [
 	4,
 	8
 ];
+/**
+* The lane names this build ships: the default three-lane table from
+* `lanedefs.ts`. Later dynamic-lane slices widen this; the agent surface stays a
+* closed enum until that reviewed slice bumps the toolset.
+*/
+var SHIPPED_LANE_DEFS = laneDefs(3);
+var SHIPPED_LANES = SHIPPED_LANE_DEFS.map((def) => def.key);
+var SLOT_KEY_OF_LANE = SHIPPED_LANE_DEFS.map((def) => String.fromCharCode(65 + def.index));
 /** Global frame names: lane 1 A/B/Z1, lane 2 C/D/Z2, lane 3 E/F/Z3. */
-var FRAME_NAMES = {
-	"1": {
-		a: "A",
-		b: "B",
-		z: "Z1"
-	},
-	"2": {
-		a: "C",
-		b: "D",
-		z: "Z2"
-	},
-	"3": {
-		a: "E",
-		b: "F",
-		z: "Z3"
-	}
-};
-var SLOT_OF_LANE = {
-	"1": "A",
-	"2": "B",
-	"3": "C"
-};
-var FRAME_BY_NAME = (() => {
-	const out = {};
-	for (const lane of [
-		"1",
-		"2",
-		"3"
-	]) for (const frame of [
-		"a",
-		"b",
-		"z"
-	]) {
-		const name = FRAME_NAMES[lane][frame];
-		out[name] = {
-			lane,
-			frame,
-			slotKey: SLOT_OF_LANE[lane],
-			name
-		};
-	}
-	return out;
-})();
+var FRAME_NAMES = frameNamesFor(3);
+var SLOT_OF_LANE = Object.fromEntries(SHIPPED_LANES.map((lane, index) => [lane, SLOT_KEY_OF_LANE[index]]));
+Object.fromEntries(SHIPPED_LANES.map((lane, index) => [SLOT_KEY_OF_LANE[index], lane]));
 function frameName(lane, frame) {
 	return FRAME_NAMES[lane][frame];
 }
-/** Resolve a global frame name (`A`–`F`, `Z1`–`Z3`); case-insensitive. */
+/** Resolve a global frame name of the shipped three lanes (`A`–`F`, `Z1`–`Z3`); case-insensitive. */
 function frameRefFromName(value) {
-	if (typeof value !== "string") return null;
-	return FRAME_BY_NAME[value.toUpperCase()] ?? null;
+	const ref = frameRefFromName$1(value, 3);
+	if (ref === null) return null;
+	const lane = ref.lane;
+	return {
+		lane,
+		frame: ref.frame,
+		slotKey: SLOT_OF_LANE[lane],
+		name: ref.name
+	};
 }
+/** The shipped lane key ("1"–"3") for the numeric lane selector; null for any other value. */
 function laneKeyFromNumber(value) {
-	return value === 1 ? "1" : value === 2 ? "2" : value === 3 ? "3" : null;
+	const key = laneKeyFromNumber$1(value);
+	if (key === null || !SHIPPED_LANES.includes(key)) return null;
+	return key;
 }
 function baseProjectDoc(N) {
 	return serializeProject(makeBootLanes(N), createRouting(), N, {

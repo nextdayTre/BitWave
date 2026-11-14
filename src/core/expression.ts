@@ -23,10 +23,11 @@
  *   unary      := ('+' | '-' | '~') unary | primary
  *   primary    := number | name | name '(' args ')' | '(' expression ')'
  *
- * `number` is decimal, decimal-fraction or `0x` hex. `name` is a global frame
- * name (`A`–`F`, `Z1`–`Z3`), the register width `N`, or `log.<frame>` for the
- * previous recorded snapshot. Functions: `floor`, `ceil`, `round`, `abs`, `min`,
- * `max` (round is half away from zero).
+ * `number` is decimal, decimal-fraction or `0x` hex. `name` is any key present in
+ * the environment's frame map (the three-lane app provides `A`–`F`, `Z1`–`Z3`;
+ * a dynamic-lane environment provides `A`–`P`, `Z1`–`Z8`), the register width
+ * `N`, or `log.<frame>` for the previous recorded snapshot. Functions: `floor`,
+ * `ceil`, `round`, `abs`, `min`, `max` (round is half away from zero).
  *
  * Errors are typed (`ExpressionError.code`) and never leak stacks. Limits bound
  * the source, AST depth, numeric size and shift counts so a bad patch cannot hang
@@ -74,7 +75,7 @@ export class ExpressionError extends Error {
 export interface ExpressionEnv {
   /** Register width in bits; operands and the result live in [0, 2^width). */
   width: number;
-  /** Current frame words, keyed by global name (`A`…`F`, `Z1`…`Z3`). */
+  /** Current frame words, keyed by global frame name (every key here is a valid name). */
   frames: Readonly<Record<string, bigint>>;
   /** Previous recorded snapshot, if any. Access as `log.<frame>`. */
   log?: Readonly<Record<string, bigint>>;
@@ -462,22 +463,32 @@ class Parser {
 // ---------------------------------------------------------------------------
 
 const FUNCTIONS = new Set(["floor", "ceil", "round", "abs", "min", "max"]);
-const NAMES = new Set(["A", "B", "C", "D", "E", "F", "Z1", "Z2", "Z3", "N"]);
+
+/**
+ * Deterministic hint for an unknown name: list the frame names the environment
+ * actually provides. A dynamic-lane environment names eight or thirteen lanes;
+ * the shipped three-lane app lists `A`–`F`, `Z1`–`Z3`.
+ */
+function frameNameHint(env: ExpressionEnv): string {
+  const names = Object.keys(env.frames).sort();
+  const framePart =
+    names.length === 0 ? "this environment has no frame names" : `frame names are ${names.join(", ")}`;
+  return `${framePart}; the width is N; log frames are log.<name>`;
+}
 
 function lookupName(name: string, env: ExpressionEnv): Rational {
   if (name === "N") return rational(BigInt(env.width), 1n);
   if (name.startsWith("log.")) {
     const frame = name.slice(4);
-    if (!env.log || !(frame in env.log)) {
+    if (!env.log || !Object.hasOwn(env.log, frame)) {
       fail("E_EXPR_UNKNOWN_NAME", `log.${frame} is not available`, "the log is empty until the first recorded update");
     }
     return rational(env.log[frame], 1n);
   }
-  if (!NAMES.has(name)) {
-    fail("E_EXPR_UNKNOWN_NAME", `unknown name: ${name}`, "frame names are A–F, Z1–Z3; the width is N; log frames are log.<name>");
-  }
-  if (!(name in env.frames)) {
-    fail("E_EXPR_UNKNOWN_NAME", `${name} is not in this expression's frame environment`);
+  // Resolution is environment-driven: a name is valid exactly when the caller's
+  // frame map carries it (no hardcoded three-lane whitelist to drift).
+  if (!Object.hasOwn(env.frames, name)) {
+    fail("E_EXPR_UNKNOWN_NAME", `unknown name: ${name}`, frameNameHint(env));
   }
   return rational(env.frames[name], 1n);
 }

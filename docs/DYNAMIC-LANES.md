@@ -1,6 +1,10 @@
 # Dynamic lanes — design note
 
-**Status: design only. No lane-count or schema change is proposed for immediate build.**
+**Status: building (author-approved 2026-11-14, D43).** The pass is staged and each slice
+lands on its own gates: 1) core lane/frame naming primitives → 2) state + schema 4 +
+migration → 3) compact share codec + budget proof → 4) shipped UI (cap 8, live `+`,
+lane sets, source table, keyboard) → 5) agent surface, manifest/docs. See §11 for the
+approved decisions and slice status.
 
 The author asked how many lanes the instrument could support, and whether the FRAMES
 panel should grow a `+` for new lanes. The answer depends on which ceiling is meant: the
@@ -218,3 +222,22 @@ The hinge has landed as a **session-only presentation flag** on each lane (`a-fa
 computation, and it does not touch `.bitwave`, the agent contract or the source routing.
 That kept the quick visual win cheap. When dynamic lanes take their schema bump, `fold`
 should be persisted alongside the lane record rather than retrofitted later.
+
+## 11. Approved pass (2026-11-14, D43)
+
+Author approval: "absolutely we can start that pass", after the frames view (D42) shipped
+with the `+` tile naming the 3-lane cap.
+
+| decision | value |
+|---|---|
+| First shipped cap | **8 lanes** — operands `A`–`P`, derived `Z1`–`Z8`; the 13-lane `A`–`Z` ceiling is the naming limit and is **not** shipped (two-letter names are a separate grammar) |
+| Lane identity | **stable name index** — lane key `"1"`..`"13"`, gaps allowed; frame names derive from the index (`0 → A/B/Z1`, `3 → G/H/Z4`); deleting never renumbers existing lanes |
+| Add | a blank lane allocating the **lowest free pair**; the new lane is focused |
+| Duplicate / delete | duplicate copies register values, operator, visibility, expressions and fold, **not** route edges (routing/bindings stay an explicit second decision); delete warns when the lane's frames are referenced and clears its routes/parked bases |
+| Share link | **compact codec** for the `#bw=` fragment (lane tuple arrays, defaults omitted, route triples); proof target: an 8-lane, 256-bit, no-dataset document stays portable (~2 KB promise, measured and reported in the UI); if it still overflows, explicit drop flags (`datasetDropped` / expressions dropped) — never silent |
+| UI | stage bar scales to the lane set (wrapping/scrolling, `Alt+1..8`); split stays exactly two panes; extra lanes are browsed in the frames view, not all displayed; frames view gets the live `+` with a disabled cap state |
+| Out of scope | lane rename (breaks frame references), 13-lane ship, per-lane undo |
+
+Slices (each a reviewed commit): **1** core naming primitives (behaviour-identical),
+**2** state + schema 4 + migration, **3** compact codec + budget, **4** UI + DESIGN
+amendment, **5** agent surface + manifest/toolset bump + docs + full `npm run verify`.

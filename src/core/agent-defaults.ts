@@ -7,6 +7,13 @@
 
 import { SIZES, type RegisterSize } from "./registers.ts";
 import type { BinOp, FrameKey, LaneKey } from "./types.ts";
+import {
+  DEFAULT_LANE_COUNT,
+  laneDefs,
+  frameNamesFor,
+  frameRefFromName as lanedefsFrameRefFromName,
+  laneKeyFromNumber as lanedefsLaneKeyFromNumber,
+} from "./lanedefs.ts";
 import { makeBootLanes } from "./lanes.ts";
 import { createRouting } from "./routing.ts";
 import { serializeProject, type ProjectDoc, type ProjectViewState } from "./project.ts";
@@ -27,15 +34,28 @@ export type ViewMode = (typeof VIEW_MODES)[number];
 export const LFO_MODES = ["rotcw", "rotccw", "slide", "csvStep"] as const;
 export const LFO_RATES = [1, 2, 4, 8] as const;
 
-/** Global frame names: lane 1 A/B/Z1, lane 2 C/D/Z2, lane 3 E/F/Z3. */
-export const FRAME_NAMES: Record<LaneKey, Record<FrameKey, string>> = {
-  "1": { a: "A", b: "B", z: "Z1" },
-  "2": { a: "C", b: "D", z: "Z2" },
-  "3": { a: "E", b: "F", z: "Z3" },
-};
+/**
+ * The lane names this build ships: the default three-lane table from
+ * `lanedefs.ts`. Later dynamic-lane slices widen this; the agent surface stays a
+ * closed enum until that reviewed slice bumps the toolset.
+ */
+const SHIPPED_LANE_DEFS = laneDefs(DEFAULT_LANE_COUNT);
+const SHIPPED_LANES: readonly LaneKey[] = SHIPPED_LANE_DEFS.map((def) => def.key as LaneKey);
+const SLOT_KEY_OF_LANE: readonly string[] = SHIPPED_LANE_DEFS.map((def) =>
+  String.fromCharCode(65 + def.index),
+);
 
-export const SLOT_OF_LANE: Record<LaneKey, "A" | "B" | "C"> = { "1": "A", "2": "B", "3": "C" };
-export const LANE_OF_SLOT: Record<"A" | "B" | "C", LaneKey> = { A: "1", B: "2", C: "3" };
+/** Global frame names: lane 1 A/B/Z1, lane 2 C/D/Z2, lane 3 E/F/Z3. */
+export const FRAME_NAMES: Record<LaneKey, Record<FrameKey, string>> = frameNamesFor(
+  DEFAULT_LANE_COUNT,
+) as Record<LaneKey, Record<FrameKey, string>>;
+
+export const SLOT_OF_LANE: Record<LaneKey, "A" | "B" | "C"> = Object.fromEntries(
+  SHIPPED_LANES.map((lane, index) => [lane, SLOT_KEY_OF_LANE[index]]),
+) as Record<LaneKey, "A" | "B" | "C">;
+export const LANE_OF_SLOT: Record<"A" | "B" | "C", LaneKey> = Object.fromEntries(
+  SHIPPED_LANES.map((lane, index) => [SLOT_KEY_OF_LANE[index], lane]),
+) as Record<"A" | "B" | "C", LaneKey>;
 
 export interface FrameRef {
   lane: LaneKey;
@@ -45,29 +65,23 @@ export interface FrameRef {
   name: string;
 }
 
-const FRAME_BY_NAME: Record<string, FrameRef> = (() => {
-  const out: Record<string, FrameRef> = {};
-  for (const lane of ["1", "2", "3"] as LaneKey[]) {
-    for (const frame of ["a", "b", "z"] as FrameKey[]) {
-      const name = FRAME_NAMES[lane][frame];
-      out[name] = { lane, frame, slotKey: SLOT_OF_LANE[lane], name };
-    }
-  }
-  return out;
-})();
-
 export function frameName(lane: LaneKey, frame: FrameKey): string {
   return FRAME_NAMES[lane][frame];
 }
 
-/** Resolve a global frame name (`A`–`F`, `Z1`–`Z3`); case-insensitive. */
+/** Resolve a global frame name of the shipped three lanes (`A`–`F`, `Z1`–`Z3`); case-insensitive. */
 export function frameRefFromName(value: unknown): FrameRef | null {
-  if (typeof value !== "string") return null;
-  return FRAME_BY_NAME[value.toUpperCase()] ?? null;
+  const ref = lanedefsFrameRefFromName(value, DEFAULT_LANE_COUNT);
+  if (ref === null) return null;
+  const lane = ref.lane as LaneKey;
+  return { lane, frame: ref.frame, slotKey: SLOT_OF_LANE[lane], name: ref.name };
 }
 
+/** The shipped lane key ("1"–"3") for the numeric lane selector; null for any other value. */
 export function laneKeyFromNumber(value: unknown): LaneKey | null {
-  return value === 1 ? "1" : value === 2 ? "2" : value === 3 ? "3" : null;
+  const key = lanedefsLaneKeyFromNumber(value);
+  if (key === null || !(SHIPPED_LANES as readonly string[]).includes(key)) return null;
+  return key as LaneKey;
 }
 
 function baseProjectDoc(N: RegisterSize): ProjectDoc {

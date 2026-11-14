@@ -9,7 +9,7 @@
     "build:pwa": "npm run build && node tools/build-pwa.mjs",
     "dev": "vite",
     "typecheck": "tsc -p tsconfig.core.json --noEmit",
-    "test": "node --test --test-isolation=none --test-concurrency=1 tests/design-invariants.test.ts tests/routing.test.ts tests/io-geometry.test.ts tests/project.test.ts tests/share.test.ts tests/state.test.ts tests/actions.test.ts tests/bindings.test.ts tests/agent-tools.test.ts tests/agent-state.test.ts tests/agent-transports.test.ts tests/external-routing.test.ts && node --test --test-isolation=none tests/project-app.test.ts",
+    "test": "node --test --test-isolation=none --test-concurrency=1 tests/design-invariants.test.ts tests/lanedefs.test.ts tests/routing.test.ts tests/io-geometry.test.ts tests/project.test.ts tests/share.test.ts tests/state.test.ts tests/actions.test.ts tests/bindings.test.ts tests/agent-tools.test.ts tests/agent-state.test.ts tests/agent-transports.test.ts tests/external-routing.test.ts && node --test --test-isolation=none tests/project-app.test.ts",
     "prototype:routing": "node tools/prototype-external-routing.mjs",
     "check:browser": "node tools/browser-check.mjs",
     "check:pwa": "node tools/check-pwa.mjs",
