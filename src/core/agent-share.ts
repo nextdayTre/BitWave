@@ -5,6 +5,10 @@
  * the agent contract needs: a state has exactly one link, so the timestamp is not
  * part of a shared document. It also reproduces the app's budget policy (drop the
  * dataset before giving up) so `build_deeplink` and the address bar agree.
+ *
+ * Schema 1-4 documents are accepted: `deserializeProject` upgrades a legacy
+ * document on read and the canonical form is always schema 4 (D44). Top-level
+ * fields this build does not understand ride along, matching the app bridge.
  */
 
 import { CANONICAL_SAVED_AT } from "./agent-defaults.ts";
@@ -20,9 +24,14 @@ export interface ShareLink {
   datasetDropped: boolean;
 }
 
+const KNOWN_DOC_KEYS = new Set([
+  "schema", "app", "savedAt", "N", "view", "lanes", "routes", "parked", "dataset",
+]);
+
 /**
- * Validate a document and re-serialize it canonically: no `savedAt`, extras
- * preserved, engine recomputed. Throws ProjectError on an invalid document.
+ * Validate a document and re-serialize it canonically: schema 4, no `savedAt`,
+ * extras preserved, unknown top-level fields carried along, engine recomputed.
+ * Throws ProjectError on an invalid document.
  */
 export function canonicalShareDocument(doc: ProjectDoc): ProjectDoc {
   const loaded = deserializeProject(doc);
@@ -42,6 +51,9 @@ export function canonicalShareDocument(doc: ProjectDoc): ProjectDoc {
     },
   );
   delete (out as { savedAt?: string }).savedAt;
+  for (const [key, value] of Object.entries(doc)) {
+    if (!KNOWN_DOC_KEYS.has(key)) (out as unknown as Record<string, unknown>)[key] = value;
+  }
   return out;
 }
 

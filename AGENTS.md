@@ -12,8 +12,8 @@ disagree: one implementation, one envelope, deterministic output.
 
 Onboarding path: this file → the normative contract
 [`docs/AGENT-INTERFACE.md`](docs/AGENT-INTERFACE.md). User docs:
-[`README.md`](README.md). Version: toolset `1.1.0`, state schema `1`, `.bitwave` schema
-`3` (schema 1/2 still load).
+[`README.md`](README.md). Version: toolset `1.2.0`, state schema `1`, `.bitwave` schema
+`4` (schema 1/2/3 still load and upgrade).
 
 ## Quick start
 
@@ -70,13 +70,16 @@ saw-up/sine `AND` lane 3.
 
 ### 1. URL deep links
 
-The URL fragment is the whole view state, encoded by the `.bitwave` schema-3 codec
-(schema 1/2 still load):
+The URL fragment is the whole view state, encoded by the `.bitwave` schema-4 codec
+(schema 1/2/3 still load and upgrade on read):
 
 ```
 bitwave-v2.html#bw=<unpadded base64url(UTF-8 JSON document)>
 ```
 
+- A document is a lane map keyed by the stable lane key (`"1"`..`"13"`, gaps allowed, at
+  most 8 lanes, ascending numeric key order); a schema 1/2/3 document is the closed
+  three-lane object. Z is never stored.
 - Build canonical links headlessly with `node agent/cli.mjs deeplink --project
   examples/demo.bitwave.json --base "file:///C:/path/to/bitwave-v2.html" --json`
   (or `window.bitwave.getDeeplink()` in a live page).
@@ -91,7 +94,7 @@ bitwave-v2.html#bw=<unpadded base64url(UTF-8 JSON document)>
 
 ```js
 window.bitwave.schemaVersion            // 1
-window.bitwave.version                  // "1.1.0"
+window.bitwave.version                  // "1.2.0"
 window.bitwave.getState()               // full UI state (§6 of the contract)
 window.bitwave.getManifest()            // manifest data
 window.bitwave.tools()                  // tool definitions
@@ -174,7 +177,7 @@ path required):
 | `src/core/registers.ts`, `ops.ts`, `derive.ts`, `routing.ts`, `project.ts`, `share.ts`, `csv.ts` | the only implementation of the maths/data (DOM-free) |
 | `src/core/agent-tools.ts` | registry, envelope, deeplink builder, manifest, patch validation |
 | `src/core/agent-state.ts` | pure UI-state builder shared by browser and CLI |
-| `src/state/project-bridge.ts` | app ↔ `.bitwave` mapping (`captureProject`/`applyProject`) |
+| `src/state/project-bridge.ts` | app ↔ `.bitwave` schema-4 mapping (`captureProject`/`applyProject`; lane-key map) |
 | `src/agent/bridge.js` | `window.bitwave` installation and event semantics |
 | `src/ui/agent-panel.js` | the help-panel agent tab |
 | `agent/cli.mjs`, `agent/mcp-server.mjs` | headless transports |
@@ -209,7 +212,7 @@ node agent/verify-browser.mjs
 | `docs/AGENT-INTERFACE.md` | contract: tools, envelope, deeplink, state, bridge, CLI, MCP |
 | `docs/AGENT-SCREENSHOTS.md` | reproducible states + headless Chrome recipes |
 | `docs/BITWAVE-ECOSYSTEM-MAP.md` | sibling tools and what a handoff would carry |
-| `docs/DYNAMIC-LANES.md` | design note: lane-count ceiling (13/8), `+` menu, share budget (not shipped) |
+| `docs/DYNAMIC-LANES.md` | design note: lane-count ceiling (13/8), `+` menu, share budget; schema 4 + migration shipped (D44), compact codec/UI pending |
 | `docs/EXTERNAL-ROUTING.md` | shipped slice: Record/log and expression operands (schema 3, toolset 1.1.0) |
 | `agent/manifest.json` | generated capability manifest (tools, selectors, errors) |
 | `agent/examples/` | generated example envelopes, one per tool |

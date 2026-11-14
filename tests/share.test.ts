@@ -15,7 +15,9 @@ import {
   createRouting,
   deserializeProject,
   evaluateAll,
+  fromHex,
   makeBootLanes,
+  makeLane,
   serializeProject,
   toHex,
 } from "../src/core/index.ts";
@@ -27,7 +29,8 @@ import {
   parseShareHash,
   shareFragment,
 } from "../src/core/share.ts";
-import { buildShareLink } from "../src/core/agent-share.ts";
+import { buildShareLink, canonicalShareDocument } from "../src/core/agent-share.ts";
+import { exampleProjectDoc } from "../src/core/agent-defaults.ts";
 import type { Dataset } from "../src/core/csv.ts";
 import type { ProjectDoc, ProjectExtras, ProjectViewState } from "../src/core/project.ts";
 
@@ -150,7 +153,7 @@ test("a 256-bit document without a dataset fits SHARE_MAX_CHARS", () => {
   assert.equal(decoded.N, 256);
 });
 
-test("canonical share links preserve schema-3 expression sources", () => {
+test("canonical share links preserve expression sources and save schema 4", () => {
   const lanes = makeBootLanes(64);
   const routing = createRouting();
   const doc = serializeProject(
@@ -170,10 +173,78 @@ test("canonical share links preserve schema-3 expression sources", () => {
   );
 
   const link = buildShareLink(doc);
-  const decoded = deserializeProject(parseShareHash(link.fragment));
+  const payload = parseShareHash(link.fragment) as Record<string, unknown>;
+  assert.equal(payload.schema, 4, "a canonical link is always schema 4");
+  const decoded = deserializeProject(payload);
   assert.deepEqual(decoded.extras.expressions, {
     "1": {},
     "2": { b: "round(1.2599210498948732 * C)" },
     "3": {},
   });
 });
+
+test("legacy #bw= links decode and upgrade to schema 4", () => {
+  const schema4 = projectDoc(64);
+  /* Genuine legacy payloads: the closed three-lane object at the old version. */
+  const schema2 = { ...schema4, schema: 2 };
+  const schema1 = {
+    ...schema4,
+    schema: 1,
+    view: { lane: "1", view3d: false, split3d: false, splitPair: ["1", "2"], activePane: 0 },
+    lanes: Object.fromEntries(
+      Object.entries(schema4.lanes).map(([lane, data]) => {
+        const { focus: _focus, frameVis: _frameVis, ...rest } = data;
+        return [lane, rest];
+      }),
+    ),
+  };
+  for (const legacy of [schema1, schema2]) {
+    const fragment = shareFragment(legacy);
+    const raw = parseShareHash(fragment) as Record<string, unknown>;
+    assert.equal(raw.schema, legacy.schema);
+    const loaded = deserializeProject(raw);
+    assert.equal(loaded.N, 64);
+    assert.deepEqual(Object.keys(loaded.lanes), ["1", "2", "3"]);
+
+    const canonical = canonicalShareDocument(legacy as ProjectDoc);
+    assert.equal(canonical.schema, 4);
+    const canonicalDecoded = parseShareHash(buildShareLink(legacy as ProjectDoc).fragment);
+    assert.equal((canonicalDecoded as Record<string, unknown>).schema, 4);
+  }
+});
+
+test("a schema-4 document with gaps canonicalizes in ascending key order", () => {
+  /* Lane keys "1", "3" and "4": a gapped wider map (lane 2 removed). */
+  const lanes = makeBootLanes(8);
+  delete lanes["2"];
+  lanes["4"] = makeLane("4", 8);
+  lanes["4"].A.bits = fromHex("0A", 8);
+  const routing = createRouting();
+  const view: ProjectViewState = {
+    lane: "4",
+    view3d: false,
+    split3d: false,
+    splitPair: ["1", "3"],
+    activePane: 0,
+  };
+  const doc = serializeProject(lanes, routing, 8, view, null, NOW);
+  assert.deepEqual(Object.keys(doc.lanes), ["1", "3", "4"]);
+
+  const canonical = canonicalShareDocument(doc);
+  assert.deepEqual(Object.keys(canonical.lanes), ["1", "3", "4"]);
+  assert.equal(canonical.view.lane, "4");
+  const reloaded = deserializeProject(parseShareHash(buildShareLink(doc).fragment));
+  assert.deepEqual(Object.keys(reloaded.lanes), ["1", "3", "4"]);
+});
+
+test("canonical links carry unknown top-level fields through load/save", () => {
+  const doc = exampleProjectDoc() as ProjectDoc & { futureField: unknown };
+  doc.futureField = { keep: true };
+  const canonical = canonicalShareDocument(doc) as Record<string, unknown>;
+  assert.deepEqual(canonical.futureField, { keep: true });
+
+  const decoded = parseShareHash(buildShareLink(doc).fragment) as Record<string, unknown>;
+  assert.deepEqual(decoded.futureField, { keep: true });
+  assert.equal(decoded.schema, 4);
+});
+

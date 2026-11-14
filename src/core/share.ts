@@ -8,7 +8,9 @@
  * The codec is deliberately dumb: it does not validate the document (the
  * project schema does) and it does not enforce the URL budget. A caller checks
  * `encodeShare(doc).length` against `SHARE_MAX_CHARS` and may drop the dataset
- * before sharing. UTF-8 is hand-rolled so `src/core` keeps compiling with no
+ * before sharing. `parseShareHash` returns the raw JSON, so a link written for
+ * schema 1/2/3 still decodes and `deserializeProject` upgrades it on read
+ * (schema 4, D44). UTF-8 is hand-rolled so `src/core` keeps compiling with no
  * DOM lib (`TextEncoder` is a browser/Node global type, not ES2022).
  */
 

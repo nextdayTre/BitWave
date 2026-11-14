@@ -22,6 +22,7 @@ import {
   stopRecording,
 } from "../src/state/record.ts";
 import { toHex } from "../src/core/registers.ts";
+import { makeBootLanes } from "../src/core/lanes.ts";
 import {
   applyProject,
   captureProject,
@@ -115,7 +116,7 @@ test("captureProject round-trips the mapped state", () => {
     dataset: { cols: DEMO.cols.slice(), rows: DEMO.rows.map((r) => r.slice()), i: DEMO.i },
   };
   const captured = captureProject("2026-11-06T01:00:00.000Z");
-  assert.equal(captured.schema, 3);
+  assert.equal(captured.schema, 4);
   assert.equal(captured.N, 16);
   assert.equal(captured.view.lane, "2");
   assert.equal(captured.lanes["1"].focus, "b");
@@ -229,4 +230,86 @@ test("every supported width is representable", () => {
     assert.equal(result.ok, true, `${n} bits: ${result.message}`);
     assert.equal(S.N, n);
   }
+});
+
+/* ---------------------------------------------------------------------------
+ * Schema 4 (D44): the document is a lane map keyed by stable lane key; this
+ * build's live tree still ships the three default lanes.
+ * ------------------------------------------------------------------------- */
+
+test("a schema-4 document wider than the live tree loads the lanes it can represent", () => {
+  const base = doc();
+  const extraLane = { ...base.lanes["1"], binop: "xor" as const };
+  const wide = {
+    ...base,
+    schema: 4,
+    view: { ...base.view, lane: "7", splitPair: ["7", "3"] as [string, string] },
+    lanes: {
+      ...base.lanes,
+      "4": { ...extraLane },
+      "7": { ...extraLane },
+    },
+    routes: [
+      { from: "1.z", to: "3.a", mix: "set" },
+      { from: "7.z", to: "2.a", mix: "set" }, // source lane 7 is not in the live tree
+    ],
+    parked: { "3.a": "89AB", "2.a": "0123" },
+  };
+  const result = applyProject(wide);
+  assert.equal(result.ok, true, result.message);
+
+  /* Only the three shipped lanes exist; the rest are ignored until the UI slice. */
+  assert.deepEqual(Object.keys(S.lanes), ["1", "2", "3"]);
+  /* A view reference to an unrepresentable lane falls back to a live lane. */
+  assert.equal(S.laneKey, "1");
+  assert.deepEqual(S.splitPair, ["1", "3"]);
+  /* The lane-7 route and its parked base are dropped together. */
+  assert.equal(routing.routes.length, 1);
+  assert.equal(routing.routes[0].from.lane, "1");
+  assert.deepEqual([...routing.parked.keys()], ["3:a"]);
+  assert.equal(toHex(S.lanes["2"].A.bits, S.N), "0123", "lane 2 keeps its base value");
+
+  /* Capture is the shipped three-lane schema-4 document and round-trips. */
+  const captured = captureProject("2026-11-06T01:00:00.000Z");
+  assert.equal(captured.schema, 4);
+  assert.deepEqual(Object.keys(captured.lanes), ["1", "2", "3"]);
+  assert.equal(captured.view.lane, "1");
+  assert.equal(captured.routes.length, 1);
+  assert.deepEqual(Object.keys(captured.parked), ["3.a"]);
+  assert.equal(applyProject(captured).ok, true);
+});
+
+test("a schema-4 document with gaps resets an omitted live lane to boot", () => {
+  const base = doc();
+  const gapped = {
+    ...base,
+    schema: 4,
+    lanes: { "1": { ...base.lanes["1"] }, "3": { ...base.lanes["3"] } },
+    routes: [],
+    parked: {},
+    dataset: undefined,
+  };
+  const result = applyProject(gapped);
+  assert.equal(result.ok, true, result.message);
+  assert.deepEqual(Object.keys(S.lanes), ["1", "2", "3"]);
+  assert.equal(toHex(S.lanes["1"].A.bits, 16), "DEAD");
+  assert.equal(toHex(S.lanes["3"].A.bits, 16), "89AB");
+  const boot = makeBootLanes(S.N);
+  assert.equal(
+    toHex(S.lanes["2"].A.bits, S.N),
+    toHex(boot["2"].A.bits, S.N),
+    "an omitted live lane falls back to its boot value",
+  );
+  const captured = captureProject("2026-11-06T01:00:00.000Z");
+  assert.deepEqual(Object.keys(captured.lanes), ["1", "2", "3"]);
+});
+
+test("legacy schema-1/2/3 documents still load and capture as schema 4", () => {
+  for (const schema of [1, 2, 3]) {
+    const result = applyProject({ ...doc(), schema });
+    assert.equal(result.ok, true, `schema ${schema}: ${result.message}`);
+    assert.equal(S.N, 16);
+    assert.equal(S.laneKey, "2");
+  }
+  assert.equal(captureProject().schema, 4);
 });

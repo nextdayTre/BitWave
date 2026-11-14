@@ -5,7 +5,7 @@
   "data": {
     "id": "bitwave",
     "title": "BitWave",
-    "version": "1.1.0",
+    "version": "1.2.0",
     "schemaVersion": 1,
     "description": "BitWave renders a bit register as a wavetable. Compute Z = A op B for any lane, compare operators, parse CSV/TSV datasets and build canonical #bw= deeplinks from one shared, deterministic core.",
     "urls": {
@@ -229,14 +229,14 @@
       {
         "name": "build_deeplink",
         "title": "Build a canonical deeplink",
-        "description": "Validate a .bitwave schema-2 document and build its canonical share fragment (#bw=). Canonical links omit savedAt, so equal state gives equal links; the dataset is dropped if the payload would exceed the 2000-character budget.",
+        "description": "Validate a .bitwave document (schema 1–4; older schemas are upgraded) and build its canonical schema-4 share fragment (#bw=). Canonical links omit savedAt, so equal state gives equal links; the dataset is dropped if the payload would exceed the 2000-character budget.",
         "scope": "pure",
         "inputSchema": {
           "type": "object",
           "properties": {
             "project": {
               "type": "object",
-              "description": "A .bitwave schema-2 document."
+              "description": "A .bitwave document (schema 1–4)."
             },
             "base": {
               "type": "string",
@@ -252,7 +252,7 @@
           {
             "args": {
               "project": {
-                "schema": 3,
+                "schema": 4,
                 "app": "bitwave",
                 "savedAt": "1970-01-01T00:00:00.000Z",
                 "N": 8,
@@ -326,7 +326,7 @@
               },
               "base": "http://localhost:8000/"
             },
-            "note": "8-bit boot document."
+            "note": "8-bit boot document (schema 4)."
           }
         ]
       }

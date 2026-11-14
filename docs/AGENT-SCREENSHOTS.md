@@ -8,7 +8,7 @@ also exposes its machine-readable state at `#bitwave-state` (see
 So prefer a **deeplink + state JSON pair** over prose, and never infer state from pixels.
 The images in `docs/agent/` are reproducibility fixtures, not the source of truth.
 
-Since the external-routing slice (toolset `1.1.0`, `.bitwave` schema 3) the default view
+Since the external-routing slice (toolset `1.1.0`, `.bitwave` schema 3; schema 4 since toolset `1.2.0`, D44) the default view
 also contains the **Record** control and the source table can carry **`expr`** rows. The
 Record take is transient session state, so its screenshot is driven over CDP rather than
 through a deeplink; everything else is still a link.
@@ -93,7 +93,7 @@ source group shows the Record toggle off with **0 rows** (export disabled).
 
 ## State 2 — A·B pair (`8ADEFEDA85210125 XOR FFFFFFFF00000000`)
 
-The pair is a `.bitwave` schema-3 document; `build_deeplink` canonicalises it (drops
+The pair is a `.bitwave` document (schema 3 here; a current build saves schema 4); `build_deeplink` canonicalises it (drops
 `savedAt`, keeps expression sources) and appends the fragment to the app URL. All three
 lanes need the schema-1 fields, so the fixture includes them even though only lane 1 is
 on screen.
@@ -284,7 +284,7 @@ returns three rows whose `step` values are `[1, 2, 3]` and whose `frames` each h
 nine global names (`A B Z1 C D Z2 E F Z3`). The Record toggle reads **on** with **3 rows**
 and `export log` is enabled; the open source table shows lane 2 `D` reading an
 `expr · expression` source. A deeplink built from this state carries the expression
-(schema 3) but **not** the take, by design.
+(schema 4 in current builds) but **not** the take, by design.
 
 ## Extract the state JSON (`#bitwave-state`) — no driver needed
 
@@ -350,7 +350,7 @@ visual check.
   only when it is opened against the same `bitwave-v2.html` path. For a portable link,
   build the fragment with an `http(s)` `--base` (see [`hosting.md`](hosting.md)) —
   `build_deeplink` only appends the fragment to the base you pass.
-- **Links are schema 3 and carry expression sources.** A link restores the `expr` text, so
+- **Links are schema 4 and carry expression sources.** A link restores the `expr` text, so
   the same computation resumes. It never carries the Record take: the log is a session
   artifact (in memory, cleared on reload).
 - **`?fresh` does not read a shared link.** Boot priority is shared link → autosave →

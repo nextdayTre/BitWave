@@ -1,13 +1,15 @@
 /**
  * UI-state builder shared by the browser bridge and the headless transports.
  *
- * Pure: takes a `.bitwave` schema-2 document plus the few transient UI values and
- * returns the exact object `window.bitwave.getState()` and `#bitwave-state`
- * expose. Derived values are recomputed from the shared core, never scraped from
- * the DOM.
+ * Pure: takes a `.bitwave` schema 1-4 document plus the few transient UI values
+ * and returns the exact object `window.bitwave.getState()` and `#bitwave-state`
+ * expose. A schema 1/2/3 document (the shipped three lanes) is the common case;
+ * a schema-4 document may carry a wider lane map, whose lanes are reported by
+ * their stable key with names derived from `lanedefs.ts`. Derived values are
+ * recomputed from the shared core, never scraped from the DOM.
  */
 
-import { FRAME_NAMES, SCHEMA_VERSION, TOOLSET_VERSION, frameName, type ViewMode } from "./agent-defaults.ts";
+import { SCHEMA_VERSION, TOOLSET_VERSION, frameName, type ViewMode } from "./agent-defaults.ts";
 import { computeZ, popcountZ, truthCounts } from "./derive.ts";
 import { fromHex, toHex } from "./registers.ts";
 import type { ProjectDoc } from "./project.ts";
@@ -102,9 +104,13 @@ export function buildUiState(doc: ProjectDoc, options: UiStateOptions = {}): UiS
   const width = doc.N;
   const lanes: Record<string, UiLaneState> = {};
 
-  for (const lane of LANE_KEYS) {
+  /* A schema 1-3 document is the shipped three lanes; schema 4 may carry a
+     wider/gapped lane map. Report exactly the lanes the document holds, in
+     ascending lane-key order, with names derived from the stable key. */
+  const laneKeys = Object.keys(doc.lanes).sort((a, b) => Number(a) - Number(b));
+  for (const lane of laneKeys) {
     const laneDoc = doc.lanes[lane];
-    const names = FRAME_NAMES[lane];
+    const names = { a: frameName(lane, "a"), b: frameName(lane, "b"), z: frameName(lane, "z") };
     const aBits = fromHex(laneDoc.a, width);
     const bBits = fromHex(laneDoc.b, width);
     const zBits = computeZ(aBits, bBits, width, laneDoc.binop);
@@ -158,15 +164,17 @@ export function buildUiState(doc: ProjectDoc, options: UiStateOptions = {}): UiS
     };
   }
 
-  const focusedLane = doc.view.lane;
-  const focusedFrame: FrameKey = doc.lanes[focusedLane].focus ?? "a";
+  const focusedLane = doc.lanes[doc.view.lane] ? doc.view.lane : (laneKeys[0] ?? doc.view.lane);
+  const focusedFrame: FrameKey = doc.lanes[focusedLane]?.focus ?? "a";
   const focusedState = lanes[focusedLane];
   const focusedOperand: "a" | "b" | null = focusedFrame === "z" ? null : focusedFrame;
-  const focusedExpression = focusedOperand !== null
-    ? focusedState.expressions[FRAME_NAMES[focusedLane][focusedOperand]] !== null
+  const focusedName = focusedOperand !== null ? frameName(focusedLane, focusedOperand) : null;
+  const focusedExpression = focusedName !== null
+    ? focusedState.expressions[focusedName] !== null
     : false;
   const enabled = focusedOperand !== null
-    && !focusedState.driven[FRAME_NAMES[focusedLane][focusedOperand]]
+    && focusedName !== null
+    && !focusedState.driven[focusedName]
     && !focusedExpression;
 
   const mode: ViewMode = doc.view.split3d ? "split" : doc.view.view3d ? "3d" : "2d";

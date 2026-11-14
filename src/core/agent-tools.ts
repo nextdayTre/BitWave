@@ -416,12 +416,12 @@ export const TOOLS: ToolDef[] = [
     name: "build_deeplink",
     title: "Build a canonical deeplink",
     description:
-      "Validate a .bitwave schema-2 document and build its canonical share fragment (#bw=). Canonical links omit savedAt, so equal state gives equal links; the dataset is dropped if the payload would exceed the 2000-character budget.",
+      "Validate a .bitwave document (schema 1–4; older schemas are upgraded) and build its canonical schema-4 share fragment (#bw=). Canonical links omit savedAt, so equal state gives equal links; the dataset is dropped if the payload would exceed the 2000-character budget.",
     scope: "pure",
     inputSchema: {
       type: "object",
       properties: {
-        project: { type: "object", description: "A .bitwave schema-2 document." },
+        project: { type: "object", description: "A .bitwave document (schema 1–4)." },
         base: { type: "string", description: "Absolute URL without a fragment; omit to return only the fragment." },
       },
       required: ["project"],
@@ -430,7 +430,7 @@ export const TOOLS: ToolDef[] = [
     examples: [
       {
         args: { project: exampleProjectDoc(), base: "http://localhost:8000/" },
-        note: "8-bit boot document.",
+        note: "8-bit boot document (schema 4).",
       },
     ],
     run: (args) => buildDeeplinkData(args),

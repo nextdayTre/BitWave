@@ -57,7 +57,7 @@ test("state has the contract keys and the focused defaults", () => {
   assert.equal(s.editing.enabled, true);
   assert.deepEqual(s.recording, { on: false, rows: 0 });
   assert.equal(s.deeplink, "file:///bitwave-v2.html#bw=abc");
-  assert.deepEqual(s.bridge, { schemaVersion: 1, version: "1.1.0" });
+  assert.deepEqual(s.bridge, { schemaVersion: 1, version: "1.2.0" });
   assert.deepEqual(Object.keys(s.lanes), ["1", "2", "3"]);
 });
 
@@ -144,4 +144,20 @@ test("state serialization is deterministic and timestamp-free", () => {
   const second = JSON.stringify(state());
   assert.equal(first, second);
   assert.ok(!/\d{4}-\d{2}-\d{2}T/.test(first));
+});
+
+test("a schema-4 document with a wider lane map reports those lanes by stable key", () => {
+  const doc = exampleProjectDoc();
+  delete doc.lanes["2"];
+  doc.lanes["4"] = { ...doc.lanes["1"] };
+  doc.view.lane = "4";
+  doc.view.splitPair = ["1", "3"];
+
+  const s = buildUiState(doc, {});
+  assert.deepEqual(Object.keys(s.lanes), ["1", "3", "4"]);
+  assert.deepEqual(Object.keys(s.lanes["4"].frames), ["G", "H", "Z4"]);
+  assert.deepEqual(Object.keys(s.lanes["4"].visibility), ["G", "H", "Z4"]);
+  assert.equal(s.lane, 4);
+  assert.equal(s.frame, "G");
+  assert.deepEqual(s.view.splitPair, [1, 3]);
 });

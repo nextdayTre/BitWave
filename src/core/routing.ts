@@ -29,6 +29,7 @@ import type {
   SourcePort,
 } from "./types.ts";
 import { LANE_KEYS } from "./types.ts";
+import { compareLaneKeys } from "./lanedefs.ts";
 import {
   bigToReg,
   bitsToNibbles,
@@ -50,15 +51,22 @@ export const portKey = (lane: LaneKey, frame: FrameKey): string => `${lane}:${fr
 export const routeKey = (from: SourcePort, to: DestinationPort): string =>
   `${from.lane}:${from.frame}>${to.lane}:${to.frame}`;
 
+/**
+ * The lane keys present in a lane map, in canonical ascending numeric order.
+ * A schema-4 document may carry a subset of `"1"`..`"13"` with gaps; the shipped
+ * instrument always passes the three keys from `LANE_KEYS`.
+ */
+export const laneKeysOf = (lanes: LaneMap): LaneKey[] => Object.keys(lanes).sort(compareLaneKeys);
+
 const sameDest = (a: DestinationPort, b: DestinationPort): boolean =>
   a.lane === b.lane && a.frame === b.frame;
 
 const operandReg = (lane: Lane, frame: "a" | "b") => (frame === "a" ? lane.A : lane.B);
 
-/** A per-lane table keyed by the stable lane keys in display order. */
-function laneTable<T>(make: () => T): Record<LaneKey, T> {
+/** A per-lane table keyed by the supplied stable lane keys. */
+function laneTable<T>(laneKeys: readonly LaneKey[], make: () => T): Record<LaneKey, T> {
   const out = {} as Record<LaneKey, T>;
-  for (const key of LANE_KEYS) out[key] = make();
+  for (const key of laneKeys) out[key] = make();
   return out;
 }
 
@@ -94,7 +102,7 @@ export function addRoute(
   to: DestinationPort,
   mix: MixOp = "set",
 ): Route {
-  if (!LANE_KEYS.includes(from.lane) || !LANE_KEYS.includes(to.lane)) {
+  if (!lanes[from.lane] || !lanes[to.lane]) {
     throw new TypeError(`unknown lane in route ${JSON.stringify({ from, to })}`);
   }
   if (from.frame !== "a" && from.frame !== "b" && from.frame !== "z") {
@@ -118,7 +126,7 @@ export function addRoute(
 
   const route: Route = { id: routeKey(from, to), from: { ...from }, to: { ...to }, delay: false, mix };
   routing.routes.push(route);
-  markDelays(routing);
+  markDelays(routing, laneKeysOf(lanes));
   return route;
 }
 
@@ -130,7 +138,7 @@ export function removeRoute(routing: RoutingState, lanes: LaneMap, id: string): 
   if (!isDriven(routing, route.to.lane, route.to.frame)) {
     restoreDestination(routing, lanes, route.to.lane, route.to.frame);
   }
-  markDelays(routing);
+  markDelays(routing, laneKeysOf(lanes));
   return true;
 }
 
@@ -162,12 +170,16 @@ export function clearRoutes(routing: RoutingState, lanes: LaneMap): void {
 
 /**
  * Classify cycle-closing routes. DFS over the lane graph: an edge to a gray
- * node is a back edge and gets `delay = true`. Deterministic in LANE_KEYS order
- * and route insertion order. A self-lane route (3·Z -> 3·A) is always delayed.
+ * node is a back edge and gets `delay = true`. Deterministic in ascending
+ * lane-key order and route insertion order. A self-lane route (3·Z -> 3·A) is
+ * always delayed.
+ *
+ * `laneKeys` defaults to the shipped three lanes; pass `laneKeysOf(lanes)` for a
+ * schema-4 document with a different lane set.
  */
-export function markDelays(routing: RoutingState): void {
-  const color = laneTable<0 | 1 | 2>(() => 0);
-  const edges = laneTable<Route[]>(() => []);
+export function markDelays(routing: RoutingState, laneKeys: readonly LaneKey[] = LANE_KEYS): void {
+  const color = laneTable<0 | 1 | 2>(laneKeys, () => 0);
+  const edges = laneTable<Route[]>(laneKeys, () => []);
   for (const route of routing.routes) edges[route.from.lane].push(route);
 
   const visit = (laneKey: LaneKey): void => {
@@ -184,17 +196,18 @@ export function markDelays(routing: RoutingState): void {
     color[laneKey] = 2;
   };
 
-  for (const key of LANE_KEYS) if (color[key] === 0) visit(key);
+  for (const key of laneKeys) if (color[key] === 0) visit(key);
 }
 
 /**
  * Dependency order over the acyclic (non-delayed) edges: a route X -> Y is
- * applied after X has settled, so chains resolve in one pass. Call
- * markDelays() first (evaluateAll does).
+ * applied after X has settled, so chains resolve in one pass. `laneKeys`
+ * defaults to the shipped three lanes; callers with a wider lane map pass
+ * `laneKeysOf(lanes)`. `markDelays()` must run first (evaluateAll does).
  */
-export function topoOrder(routing: RoutingState): LaneKey[] {
-  const color = laneTable<0 | 1 | 2>(() => 0);
-  const edges = laneTable<LaneKey[]>(() => []);
+export function topoOrder(routing: RoutingState, laneKeys: readonly LaneKey[] = LANE_KEYS): LaneKey[] {
+  const color = laneTable<0 | 1 | 2>(laneKeys, () => 0);
+  const edges = laneTable<LaneKey[]>(laneKeys, () => []);
   for (const route of routing.routes) {
     if (!route.delay) edges[route.from.lane].push(route.to.lane);
   }
@@ -206,7 +219,7 @@ export function topoOrder(routing: RoutingState): LaneKey[] {
     color[laneKey] = 2;
     order.push(laneKey);
   };
-  for (const key of LANE_KEYS) if (color[key] === 0) visit(key);
+  for (const key of laneKeys) if (color[key] === 0) visit(key);
 
   return order.reverse();
 }
@@ -251,8 +264,9 @@ export function evaluateAll(
   N: number,
   hooks?: EvaluateHooks,
 ): void {
-  markDelays(routing);
-  const order = topoOrder(routing);
+  const laneKeys = laneKeysOf(lanes);
+  markDelays(routing, laneKeys);
+  const order = topoOrder(routing, laneKeys);
 
   // Sample every delayed source before any write: that snapshot is exactly one
   // evaluation old, and needs no stored state to survive resize or unroute.

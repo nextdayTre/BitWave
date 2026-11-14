@@ -9,9 +9,11 @@ import { SIZES, type RegisterSize } from "./registers.ts";
 import type { BinOp, FrameKey, LaneKey } from "./types.ts";
 import {
   DEFAULT_LANE_COUNT,
+  laneDef,
   laneDefs,
   frameNamesFor,
   frameRefFromName as lanedefsFrameRefFromName,
+  laneIndex,
   laneKeyFromNumber as lanedefsLaneKeyFromNumber,
 } from "./lanedefs.ts";
 import { makeBootLanes } from "./lanes.ts";
@@ -20,7 +22,7 @@ import { serializeProject, type ProjectDoc, type ProjectViewState } from "./proj
 
 export const TOOL_ID = "bitwave";
 export const TOOL_TITLE = "BitWave";
-export const TOOLSET_VERSION = "1.1.0";
+export const TOOLSET_VERSION = "1.2.0";
 export const SCHEMA_VERSION = 1;
 export const DEFAULT_WIDTH: RegisterSize = 64;
 
@@ -66,7 +68,13 @@ export interface FrameRef {
 }
 
 export function frameName(lane: LaneKey, frame: FrameKey): string {
-  return FRAME_NAMES[lane][frame];
+  const names = FRAME_NAMES[lane];
+  if (names) return names[frame];
+  /* A schema-4 document may carry lanes past the shipped closed enum; the
+     display names still derive from the stable lane key (D43). */
+  const index = laneIndex(lane);
+  if (index >= 0) return laneDef(index)[frame];
+  return frame.toUpperCase();
 }
 
 /** Resolve a global frame name of the shipped three lanes (`A`–`F`, `Z1`–`Z3`); case-insensitive. */
@@ -108,12 +116,16 @@ function baseProjectDoc(N: RegisterSize): ProjectDoc {
   });
 }
 
-/** The boot instrument as a schema-2 document (headless transports default). */
+/**
+ * The boot instrument as a schema-4 document (headless transports default).
+ * It carries the shipped three lanes, keyed by their stable lane keys, exactly
+ * as the app captures them.
+ */
 export function bootProjectDoc(): ProjectDoc {
   return baseProjectDoc(DEFAULT_WIDTH);
 }
 
-/** A compact 8-bit document used by tool examples. */
+/** A compact 8-bit schema-4 document used by tool examples. */
 export function exampleProjectDoc(): ProjectDoc {
   return baseProjectDoc(8);
 }

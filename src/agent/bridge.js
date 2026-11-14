@@ -14,9 +14,11 @@
  *   - the debounced address-bar mirror (`bitwave:urlsettled` from io/share-url)
  *     refreshes the hidden state node silently — a URL write is not a UI change.
  *
- * Toolset 1.1.0 adds external routing: expression sources (`setExpression`,
+ * Toolset 1.1.0 added external routing: expression sources (`setExpression`,
  * patch key `expression`), the transient recorded take (`record(on)`,
  * `getLog({limit?})`) and `recording` / per-lane `expressions` in `getState()`.
+ * Toolset 1.2.0 (D44) moves the shared `.bitwave` document to schema 4 (lane map
+ * keyed by stable lane key); the bridge surface itself is unchanged.
  */
 
 import {

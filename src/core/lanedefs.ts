@@ -94,6 +94,11 @@ export function laneKeyFromNumber(value: unknown): string | null {
   return String(value);
 }
 
+/** Ascending numeric lane-key order ("1" < "2" < … < "13"), never lexicographic. */
+export function compareLaneKeys(a: string, b: string): number {
+  return Number(a) - Number(b);
+}
+
 /** Frame name table keyed by lane key, in lane order: `{ "1": {a:"A", b:"B", z:"Z1"}, … }`. */
 export function frameNamesFor(
   count: number = DEFAULT_LANE_COUNT,

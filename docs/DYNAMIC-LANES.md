@@ -169,8 +169,27 @@ Lanes need stable IDs independent of display order:
 
 ## 7. Schema and agent surface
 
+**Update 2026-11-14 (D44, schema shipped):** `.bitwave` schema 4 is the dynamic lane
+document, and it settles the shape question below as a **keyed map, not an array**: a
+lane's stable identity is already its name index, so `lanes` stays an object keyed by the
+lane-key string (`"1"`..`"13"`) with the schema-3 per-lane record. What changes is that
+the map is now open — gaps are allowed (`"1"`,`"3"`,`"4"`), at most `APP_LANE_CAP` (8)
+lanes per document, keys outside `"1"`..`"13"` are refused, 9 lanes are refused with a
+clear error, and canonical serialization is ascending numeric lane key. `view.lane`/
+`splitPair`, routes and parked ports may name any carried lane. Schema 1/2/3 documents
+and existing `#bw=` links load and upgrade on read; the writer always emits schema 4; Z
+is never stored. `src/core/project.ts` owns the migration, `src/state/project-bridge.ts`
+maps by key (the shipped tree still has three lanes until slice 4), and routing
+evaluation is lane-set aware so an 8-lane document derives every Z. The agent layer is
+minimally updated: `build_deeplink` accepts schema 1–4 and canonicalises to 4, boot/
+example documents are schema 4, and the toolset is **1.2.0**; lane-count/selector enums
+stay three-lane until the agent-surface slice. Not yet shipped: the compact codec and
+its budget proof (next slice) and the `fold` persistence/hinge UI (UI slice).
+
 Once lanes are dynamic, `.bitwave` cannot keep a closed three-key `lanes` object as the
-only shape. A future schema should:
+only shape. The pre-decision survey is kept here for the record; the shipped shape above
+resolves the first two items (keyed map with stable IDs, `fold` as a later lane field)
+and keeps the migration rule:
 
 - store a lane-ID list plus per-lane records, or an ordered array with stable IDs;
 - store `fold` (the hinge flag) and any other view state at lane level;

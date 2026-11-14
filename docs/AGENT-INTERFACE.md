@@ -1,4 +1,4 @@
-# Agent Interface Contract — bitwave v1 (toolset 1.1.0)
+# Agent Interface Contract — bitwave v1 (toolset 1.2.0)
 
 Normative contract for BitWave's agent layer. The human-facing onboarding is
 [`AGENTS.md`](../AGENTS.md); this file is the precise spec the browser bridge, CLI and
@@ -24,12 +24,12 @@ Design rules:
 |---|---|
 | tool id | `bitwave` |
 | title | `BitWave` |
-| toolset version | `1.1.0` |
+| toolset version | `1.2.0` |
 | `schemaVersion` | `1` |
 | browser bridge | `window.bitwave` |
 | legacy surface | `window.BitWave` (schema 1, read-only, unchanged) |
 | app artifact | `bitwave-v2.html` (single file, no external references) |
-| project document | `.bitwave` schema 3 (`src/core/project.ts`; schema 1/2 still load) |
+| project document | `.bitwave` schema 4 (`src/core/project.ts`; schemas 1/2/3 still load and upgrade) |
 
 Keep the id stable across the manifest, CLI, MCP `serverInfo.name`, the bridge global and
 the hidden state node.
@@ -40,7 +40,7 @@ Exports:
 
 ```ts
 export const SCHEMA_VERSION: 1
-export const TOOLSET_VERSION: "1.1.0"
+export const TOOLSET_VERSION: "1.2.0"
 export const TOOL_ID: "bitwave"
 export class AgentToolError extends Error { code; hint? }
 export const TOOLS: ToolDef[]              // definition order is canonical
@@ -154,11 +154,12 @@ Caps: `text` ≤ 262144 characters (`E_INPUT_TOO_LARGE`), at most 64 columns
 `totalRows > maxRows`.
 
 ### `build_deeplink`
-Args: `{ project: object, base?: string }` (`project` is a `.bitwave` schema 2 or 3 document).
+Args: `{ project: object, base?: string }` (`project` is a `.bitwave` schema 1–4 document;
+older schemas upgrade on read).
 
 Validates with `deserializeProject` (throws `E_INVALID_PROJECT` on malformed/newer/
-foreign documents), re-serializes canonically **without `savedAt`** (so a state has one
-link), and returns:
+foreign documents), re-serializes canonically **as schema 4 and without `savedAt`** (so a
+state has one link), and returns:
 
 ```json
 { "fragment": "#bw=…", "payloadChars": 1180, "withinBudget": true,
@@ -202,17 +203,22 @@ BitWave's view state is already the URL fragment (`#bw=`), produced by
 `shareFragment(doc)` (`src/core/share.ts`):
 
 ```
-bitwave-v2.html#bw=<unpadded base64url(UTF-8 JSON .bitwave schema 3)>
+bitwave-v2.html#bw=<unpadded base64url(UTF-8 JSON .bitwave schema 4)>
 ```
 
 - Parse/validate with `parseShareHash(hash)`; a corrupt payload is refused; a hash
   without `bw=` is ignored.
+- The document is schema 4 (D44): `lanes` is keyed by the stable lane key string
+  (`"1"`..`"13"`, gaps allowed, at most 8 lanes per document) in ascending numeric key
+  order, with the schema-3 per-lane record. A schema 1/2/3 payload is the closed
+  three-lane object and upgrades on read; this build always writes schema 4.
 - Boot priority is shared link → autosave → defaults; `?fresh` disables autosave and
   sharing (an ephemeral session).
 - The app mirrors settled state with a debounced `history.replaceState` (~550 ms),
   never `pushState`; reloading a link reproduces the state. Works over `file://`.
 - Canonical links omit `savedAt`, so equal state ⇒ equal link (the live app and
-  `build_deeplink` share this rule).
+  `build_deeplink` share this rule). The 2000-character budget/dataset-drop rule is
+  unchanged; a compact codec is a later slice.
 - A link is portable only when the app file is available; the CLI/MCP path needs no URL.
 
 ## 6. UI state — `getState()` and `#bitwave-state`
@@ -249,13 +255,17 @@ once mounted and contains `JSON.stringify(getState())`. `getState()` returns:
   "editing": { "copyArmed": false, "enabled": true },
   "recording": { "on": false, "rows": 0 },
   "deeplink": "file:///…/bitwave-v2.html#bw=…",
-  "bridge": { "schemaVersion": 1, "version": "1.1.0" }
+  "bridge": { "schemaVersion": 1, "version": "1.2.0" }
 }
 ```
 
 - Keys `schemaVersion, ready, width, lane, frame, view, lanes, lfo, dataset, editing,
   recording, deeplink, bridge` are always present; `dataset` is `null` when empty.
 - Frame names are global: lane 1 `A/B/Z1`, lane 2 `C/D/Z2`, lane 3 `E/F/Z3`.
+- `lanes` reports exactly the lanes the document carries: the shipped three for a
+  schema 1–3 document and the boot state; a schema-4 document with a wider or gapped lane
+  map is reported by stable key with names derived from `lanedefs.ts` (D44). Lane-count
+  and selector enums stay three-lane until the agent-surface slice (D43).
 - `derived` is computed from the shared core (`computeZ`, `truthCounts`, `popcountZ`),
   never copied from the DOM.
 - `frame` is the focused frame's global name; `lane` is the focused lane.
@@ -272,7 +282,7 @@ once mounted and contains `JSON.stringify(getState())`. `getState()` returns:
 
 ```js
 window.bitwave = {
-  schemaVersion: 1, version: "1.1.0", ready: true,
+  schemaVersion: 1, version: "1.2.0", ready: true,
   getState(), getManifest(), tools(), call(name, args),
   getDeeplink(),
   setState(patch), setLane(n), setFrame(name), setView(mode), setWidth(bits),
@@ -336,7 +346,7 @@ Automation hooks (additive attributes only):
 
 ```json
 {
-  "id": "bitwave", "title": "BitWave", "version": "1.1.0", "schemaVersion": 1,
+  "id": "bitwave", "title": "BitWave", "version": "1.2.0", "schemaVersion": 1,
   "description": "…",
   "urls": { "app": "bitwave-v2.html", "manifest": "agent/manifest.json",
             "agents": "AGENTS.md", "interface": "docs/AGENT-INTERFACE.md" },
@@ -393,7 +403,7 @@ Commands: `manifest`, `analyze_register`, `evaluate_lane`, `compare_operands`,
 Newline-delimited JSON-RPC 2.0 over stdio, zero dependencies.
 
 - `initialize` → `{ protocolVersion: "2025-06-18", capabilities: { tools: {} },
-  serverInfo: { name: "bitwave", version: "1.1.0" } }`
+  serverInfo: { name: "bitwave", version: "1.2.0" } }`
 - `notifications/initialized` → no response.
 - `ping` → `{}`.
 - `tools/list` → `{ tools: [{ name, description, inputSchema }] }` (pure tools only).

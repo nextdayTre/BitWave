@@ -145,10 +145,10 @@ Onboarding: [`AGENTS.md`](AGENTS.md) → normative contract
 [`llms.txt`](llms.txt). The agent transports need **Node ≥ 23.6** (native TypeScript
 type-stripping) and zero extra dependencies.
 
-### Expressions and Record (toolset 1.1.0)
+### Expressions and Record (since toolset 1.1.0)
 
 Each of the six source rows can be a deterministic **expression** (`expr`) instead of a
-data column or route. Expressions are text in the `.bitwave` schema-3 document, evaluated
+data column or route. Expressions are text in the `.bitwave` schema-4 document, evaluated
 in the shared core on every clocked update after routes and before `Z`, with the current
 frames plus the previous recorded row as `log.<frame>`. Coefficients from float/DSP tooling
 are welcome: a float is converted once at the boundary to an exact value, so the register
@@ -165,7 +165,10 @@ remaining boundary (expression-only dependency ordering, float-valued mode).
 
 ### 1. URL deep links
 
-The URL fragment is the whole view state, encoded by the `.bitwave` schema-3 codec. Build
+The URL fragment is the whole view state, encoded by the `.bitwave` schema-4 codec.
+A schema-1/2/3 document and its `#bw=` link still load and upgrade on read: the `lanes`
+object is keyed by the stable lane key (`"1"`..`"13"`, gaps allowed, at most 8 lanes per
+document, ascending key order) and the shipped build always writes schema 4. Build
 canonical links headlessly:
 
 ```powershell
@@ -186,7 +189,7 @@ this in the console:
 
 ```js
 window.bitwave.schemaVersion            // 1
-window.bitwave.version                  // "1.1.0"
+window.bitwave.version                  // "1.2.0"
 window.bitwave.getState()               // full UI state (schema 1)
 window.bitwave.getManifest()            // manifest data
 window.bitwave.tools()                  // tool definitions

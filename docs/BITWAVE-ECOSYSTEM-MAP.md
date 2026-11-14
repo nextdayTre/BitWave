@@ -17,7 +17,7 @@ does not exist.
 | Does BitWave call another tool? | No | `agent/manifest.json` → `"relatedTools": []` |
 | Does a sibling import BitWave? | No | the sibling tools listed below contain no BitWave references (searched 2026-11-08) |
 | Is there a network/telemetry path? | No | single-file app; no fetch of remote origins; no analytics |
-| Is there a shared file format with a sibling? | No | `.bitwave` (schema 3) and the `#bw=` fragment are BitWave-only |
+| Is there a shared file format with a sibling? | No | `.bitwave` (schema 4) and the `#bw=` fragment are BitWave-only |
 
 Verify from a clean checkout:
 
@@ -86,7 +86,7 @@ added, never repurposed without a schema bump. A consumer should accept
 ### 3. Deeplink (`#bw=`)
 
 The whole view state as a URL fragment:
-`bitwave-v2.html#bw=<unpadded base64url(UTF-8 JSON of a .bitwave schema-3 document)>`.
+`bitwave-v2.html#bw=<unpadded base64url(UTF-8 JSON of a .bitwave schema-4 document)>`.
 Canonical links omit `savedAt`, so equal state ⇒ equal link, and the payload stays within
 the 2000-character share budget (a dataset that would overflow is dropped and flagged
 `datasetDropped`). This is the human-portable carrier: paste a link and the receiving
@@ -99,7 +99,7 @@ Every tool answer uses one envelope — `{ ok, schemaVersion, tool, data, deepli
 on success, `{ ok:false, schemaVersion, tool, error:{ code, message, hint? }, warnings }`
 on failure — with a closed error-code set. The manifest
 (`agent/manifest.json`, byte-identical to `getManifest()`) is the machine-readable
-identity: id `bitwave`, toolset `1.1.0`, `schemaVersion: 1`, `urls`, `deeplink`,
+identity: id `bitwave`, toolset `1.2.0`, `schemaVersion: 1`, `urls`, `deeplink`,
 `ui` selectors, `tools`, `errorCodes`, `invariants`, and the reserved `relatedTools`.
 
 A future handoff would populate `relatedTools` — for example:

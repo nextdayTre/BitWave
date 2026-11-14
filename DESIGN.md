@@ -673,12 +673,16 @@ something that looked fine until it was measured.
 38. **Accessibility work does not change the palette.** Tokens, alphas and the dim
     hierarchy are hands-off (D10 / Q8); accessibility is carried by roles, names, keys,
     targets, reflow and motion only.
-39. **Persistence is versioned and derived-safe.** `.bitwave` schema 2 is additive over
-    schema 1 (focus/frameVis, LFO mode/rate, dataset cursor); A/B hexes persist, **Z never**
-    does; routes and parked bases persist so a saved patch board re-opens identically.
-    Top-level unknown fields are preserved across load/save. A newer schema is refused,
-    never half-applied. Register widths outside `[8,16,32,64,128,256]` are refused at the
-    app boundary even though the core accepts other multiples of 8.
+39. **Persistence is versioned and derived-safe.** `.bitwave` schema 4 is additive over
+    1–3: schema 1 is the closed three-lane object; schema 2 adds focus/frameVis, LFO
+    mode/rate and the dataset cursor; schema 3 adds expression sources; **schema 4 makes
+    `lanes` an open map keyed by the stable lane key** (`"1"`..`"13"`, gaps allowed, 1–8
+    lanes, ascending numeric order). A/B hexes persist, **Z never** does; routes and parked
+    bases persist so a saved patch board re-opens identically. Schema 1/2/3 documents load
+    and upgrade on read; this build always saves schema 4; top-level unknown fields are
+    preserved across load/save and canonical links. A newer schema is refused, never
+    half-applied. Register widths outside `[8,16,32,64,128,256]` are refused at the app
+    boundary even though the core accepts other multiples of 8.
 40. **Autosave captures settled state only.** One debounced write per transaction burst;
     transient interaction state (copy menu, drag, hover, LFO snapshot) is never stored.
     `?fresh` opens an ephemeral session that neither reads nor writes autosave/share state.
@@ -711,7 +715,8 @@ something that looked fine until it was measured.
     state gives equal links, and the existing 2000-character budget/dataset-drop rule is
     unchanged. `getDeeplink()`, the address bar and `build_deeplink` agree.
 47. **Expression sources are deterministic register functions.** An expression is text in
-    `.bitwave` schema 3, evaluated by the shared DOM-free evaluator on every clocked pass
+    `.bitwave` schema 3 (carried through schema 4), evaluated by the shared DOM-free
+    evaluator on every clocked pass
     after routes and before Z. It sees the current frame words plus the *previous* recorded
     row as `log.<frame>`; exact rationals are internal (float authoring input is converted
     once at the boundary), the result must reduce to an integer, and it wraps modulo 2^N.
@@ -722,10 +727,11 @@ something that looked fine until it was measured.
     release); the buffer is a bounded in-memory ring, cleared by starting a take and never
     stored in `.bitwave` or the share link. Expressions read the previous row, one update
     late, so a snapshot cannot include its own result.
-49. **Schema 3 is additive.** Expressions ride on `lanes.<n>.expressions`; schema-1/2
-    documents load with no expressions, unknown fields survive, and the version refusal is
-    `> 3`. `E_BAD_ENUM` rejects derived frames; `E_DRIVEN_INPUT` rejects writes to a routed
-    or expression-driven operand.
+49. **Schemas 3 and 4 are additive.** Schema 3 added expressions on
+    `lanes.<n>.expressions`; schema 4 adds the dynamic lane map (D44). Schema-1/2/3
+    documents load with their defaults (no expressions, closed three lanes), unknown fields
+    survive, and the version refusal is `> 4`. `E_BAD_ENUM` rejects derived frames;
+    `E_DRIVEN_INPUT` rejects writes to a routed or expression-driven operand.
 50. **Float is a valid authoring format.** Float coefficients from audio/DSP tools and
     JSON numbers are converted once, at the expression/import boundary, with a declared
     precision/rounding contract; the internal exact-rational arithmetic is a reproducibility
@@ -807,13 +813,14 @@ The visual contract is measurable, so measure it rather than eyeballing:
   load; starting it caps at 4/s and commits without easing; the hint does not fade.
 - **Targets:** `.op.mini` ≥24 px tall, `width` thumb ≥24 px, and the nibble semantic target
   covers the whole nibble.
-- **Persistence:** `save project` downloads a schema-3 document; `open project…` applies one
-  (lanes, routes/parked bases, focus/frameVis, LFO mode/rate, dataset cursor, expressions)
-  and a refresh shows the restored width/lane/view; `reset instrument` returns to the boot
-  state. A document with a newer schema is refused with a readable error. Autosave survives
-  a reload; a shared `#bw=` link restores the same state (and wins over autosave); the link
-  stays ≤ ~2 KB at 256 bits; `?fresh` writes neither. Non-token CSV files and empty files are
-  refused with a status message and do not replace the current dataset.
+- **Persistence:** `save project` downloads a schema-4 document (a lane map keyed by the
+  stable lane key); `open project…` applies one (lanes, routes/parked bases,
+  focus/frameVis, LFO mode/rate, dataset cursor, expressions) and a refresh shows the
+  restored width/lane/view. Schema 1/2/3 documents load and upgrade, and a document with a
+  newer schema is refused with a readable error. Autosave survives a reload; a shared
+  `#bw=` link restores the same state (and wins over autosave); the link stays ≤ ~2 KB at
+  256 bits for the shipped lane set; `?fresh` writes neither. Non-token CSV files and empty
+  files are refused with a status message and do not replace the current dataset.
 - **Distribution:** `npm run check:pwa` serves `dist/hosted/` on `127.0.0.1` and asserts the
   manifest + every icon load, the worker registers/activates/controls the page, the app shell
   is in a `bitwave-<hash>` cache, a reload **with the origin server stopped** still boots
@@ -829,7 +836,7 @@ The visual contract is measurable, so measure it rather than eyeballing:
   360/720/1440 and zero console errors. The default 2-D view is compared against the
   artifact that introduced the current UI slice (`browser-check --compare`); the
   external-routing slice intentionally adds the Record control.
-- **External routing (schema 3):** the source table offers `expr` rows; a valid expression
+- **External routing (schema 3; schema 4 additive):** the source table offers `expr` rows; a valid expression
   changes the operand and Z on the next evaluation, an invalid one restores the previous
   text and leaves the registers alone (`E_INVALID_EXPRESSION` from the bridge); Record
   appends one row per settled update and `export log` downloads the CSV; `getLog()` and

@@ -1,6 +1,6 @@
 # BitWave — implementation status
 
-**Updated:** 2026-11-14 · **Phase:** F0 **done**, F1 **done**, F2 spine + render + UI modules done (pointer/lane controllers still in `main.js`), F3 source table + frame routing **done**, F4 accessibility + IA **done**, F5 persistence & reach **done**, **F6 distribution done**, the **agent interface done** (2026-11-08), the **external-routing slice done** (2026-11-08, D40) — expression sources, a DAW-style Record/log, `.bitwave` schema 3, and bridge `setExpression`/`record`/`getLog` (toolset 1.1.0) — and the **frame-navigation pair done** (2026-11-14): the A/B/Z1 readout labels are focus buttons (D41) and the pop-out navigator became the stage-level **frames view** with the `+` tile at the 3-lane cap (D42). The **dynamic-lanes pass** started 2026-11-14 (D43): cap 8, stable name-index lanes, compact share codec, five staged slices (core naming → state/schema 4 → codec → UI → agent/docs); **slice 1** (core naming primitives) and **slice 2** (state lane-key identity, A/B/C slots removed, three-lane pixels unchanged) are landed. The plan's funded path is complete; Tauri remains deferred (D37).
+**Updated:** 2026-11-14 · **Phase:** F0 **done**, F1 **done**, F2 spine + render + UI modules done (pointer/lane controllers still in `main.js`), F3 source table + frame routing **done**, F4 accessibility + IA **done**, F5 persistence & reach **done**, **F6 distribution done**, the **agent interface done** (2026-11-08), the **external-routing slice done** (2026-11-08, D40) — expression sources, a DAW-style Record/log, `.bitwave` schema 3, and bridge `setExpression`/`record`/`getLog` (toolset 1.1.0) — the **frame-navigation pair done** (2026-11-14, D41/D42), and the **dynamic-lanes pass** started 2026-11-14 (D43): cap 8, stable name-index lanes, compact share codec, staged slices. Landed so far: **core naming primitives**, **state lane-key identity** (A/B/C slots removed, three-lane pixels unchanged) and **`.bitwave` schema 4 + migration** (D44: lane map keyed by stable lane key, gaps, cap 8, schema 1/2/3 upgrade, toolset 1.2.0, three-lane document unchanged in the new shape). Pending: compact share codec + budget proof, live lane UI, agent-surface widening. The plan's funded path is complete; Tauri remains deferred (D37).
 **Source of truth:** [`PLAN.md`](PLAN.md) for the plan, [`DECISIONS.md`](DECISIONS.md) for choices taken, [`DESIGN.md`](DESIGN.md) for the visual contract. `index.html` is still untouched and remains the shipping instrument.
 
 ## Author decisions (2026-11-06)
@@ -40,6 +40,7 @@ cell enough? Confirm before the matrix lands in the app.
 | **Agent interface** | **Done** | Additive agent layer (2026-11-08): `src/core/agent-*.ts` one registry/state/deeplink source; `window.bitwave` bridge (state/setters/call/subscribe/events) beside the untouched `window.BitWave`; hidden `#bitwave-state` + `body[data-agent-ready]`; `keys | agent` help-panel tab; `agent/cli.mjs` + `agent/mcp-server.mjs` (zero deps); generated `agent/manifest.json` + examples (`--check`); AGENTS/contract/llms/screenshot/ecosystem docs; hosted build serves the agent files. Default rendering pixel-identical (D39). |
 | **External routing** | **Done** | `.bitwave` schema 3 (expressions additive; schema 1/2 load); six source rows gain a validated `expr` editor; DAW-style Record toggle + bounded transient frame log + `export log`; expression-aware clocked pass (routes → expression sources → Z) with the previous row as `log.<frame>`; bridge `setExpression`/`record`/`getLog`, state `recording` + per-lane `expressions`; toolset 1.1.0. Float is a boundary authoring format (converted once to exact values). D40. |
 | **Frame navigation** | **Done (2026-11-14)** | A/B/Z1 readout labels are focus buttons bound to the whole-word hex entry (D41); the pop-out frame navigator is replaced by the stage-level **frames view** — equal cards per frame, lane columns, mini-splines, per-card eyes, `unpair B`, horizontal scroll arrows/track, `Lanes`/Esc return, and a perpetual `+` tile that names the 3-lane cap until dynamic lanes (D42). Canvas hidden while open; strip/meta/controls stay live; default pixels unchanged when closed. |
+| **Dynamic lanes (D43/D44)** | **In progress** | Core naming primitives and state lane-key identity landed; **`.bitwave` schema 4 + migration landed (D44)**: `lanes` is keyed by the stable lane key (`"1"`..`"13"`, gaps allowed, at most `APP_LANE_CAP` (8) lanes, ascending numeric order), schema 1/2/3 documents and `#bw=` links load and upgrade on read, 9 lanes/invalid keys are refused, Z is never stored; the app bridge maps by key and still ships three lanes (wider documents load the representable lanes, and a dropped route restores its parked base); routing evaluation is lane-set aware. Agent: schema-4 boot/example documents, `build_deeplink` accepts schema 1–4 and canonicalises to 4, toolset **1.2.0**. Pending: compact codec + budget proof, live lane UI (cap 8, `+`, deletion), agent-surface widening. |
 | **F6 Distribution** | **Done** | Hosted/installable PWA build (`dist/hosted/`): manifest + maskable icons, hash-versioned app-shell service worker, relative URLs, offline reload. The committed single-file `bitwave-v2.html` is untouched and still has zero external references (asserted). `npm run check:pwa` proves install/offline against the real built output; deploy/install/privacy guidance in [`docs/hosting.md`](docs/hosting.md). Tauri 2 deferred (D37). |
 
 ## F4 progress (2026-11-06) — complete
@@ -196,7 +197,58 @@ browser check measures `#hex`/`#hexA`/`#hexZ` positions across all three words i
 schema, agent API and the canvas are untouched. The five `docs/agent/*.png` screenshots
 were recaptured from the rebuilt artifact so the documentation shows the fixed slot.
 
+## Dynamic lanes — schema 4 (2026-11-14) — persistence slice landed
+
+**`.bitwave` schema 4 + migration (D44).** The approved dynamic-lanes pass (D43) now has
+the document shape it needs, with no UI change yet:
+
+- **Shape.** `lanes` stays an object keyed by the stable lane key (`"1"`..`"13"`, D43)
+  with the same schema-3 per-lane record, but it is an open map: gaps are allowed
+  (`"1"`,`"3"`,`"4"`), at most `APP_LANE_CAP` (8) lanes per document, keys outside
+  `"1"`..`"13"` are malformed, 9 lanes are refused with a clear error, and canonical
+  serialization is ascending numeric lane key. `view.lane`/`splitPair`, routes and parked
+  ports may name any carried lane; Z is never stored.
+- **Migration.** A schema 1/2/3 document (the closed three-lane object) loads and upgrades
+  on read; the writer always emits schema 4; a schema 5 payload takes the existing
+  `newer-schema` refusal; unknown top-level fields survive load/save and now canonical
+  links too. The share codec is unchanged (same JSON + base64url; dataset dropped only on
+  overflow and reported) — the compact codec is the next slice.
+- **Core/state.** `src/core/project.ts` owns the keyed map, cap and migration;
+  `markDelays`/`topoOrder`/`evaluateAll` are lane-set aware so an 8-lane document derives
+  every Z and routes across new lanes; `src/state/project-bridge.ts` maps by key and still
+  boots the shipped three lanes (lanes the live tree cannot represent are ignored until
+  the UI slice, and a route it must drop restores the parked base).
+- **Agent.** `bootProjectDoc`/`exampleProjectDoc` are schema-4; `build_deeplink` accepts
+  schema 1–4 and canonicalises to schema 4; `TOOLSET_VERSION` is **1.2.0** (document
+  schema acceptance changed); `agent/manifest.json` + `agent/examples/` regenerated;
+  lane-count/selector enums stay three-lane until the agent-surface slice.
+- **Tests.** Migration fixtures for schema 1/2/3; canonical round-trip determinism;
+  ascending key order with gaps; boot document values unchanged; 8-lane accepted
+  (A–P/Z1–Z8) and 9 refused; schema 5 refused; legacy `#bw=` links load; app-bridge
+  round-trip for three lanes and a wider/gapped document; agent tool/transport/example
+  artifacts updated.
+
 ## Verified this session
+
+### Schema-4 persistence slice gates (2026-11-14)
+
+- `npm test` → **151 + 10 tests, all pass, 0 fail** (core/state/share/project incl. the
+  new migration/gap/cap fixtures, agent registry/state/transports, and the 10 app-bridge
+  tests in a separate process).
+- `npm run typecheck` → **clean**.
+- `node agent/gen-agent-artifacts.mjs --check` → **8 files current** after intentional
+  regeneration (manifest/examples carry schema-4 documents and toolset 1.2.0).
+- `node agent/selftest.mjs` → **23/23**.
+- `npm run build` → **`bitwave-v2.html` 298.4 KB**, single file, no external references.
+- `node tools/browser-check.mjs` → **54/54** (F5 groups now assert schema-4 autosave/
+  share documents; legacy schema-2 `open project…` still applies).
+- `node agent/verify-browser.mjs` → **31/31** (the real `#bw=` reload check now asserts a
+  schema-4 payload).
+- `node tools/build-pwa.mjs && node tools/check-pwa.mjs` → **8/8**;
+  `dist/hosted/` rebuilt and the committed single-file artifact stayed byte-unchanged.
+- Parity: `node tools/browser-check.mjs --compare <HEAD artifact>` → **6/6 states
+  pixel-identical** (55/55 checks with `--compare`), so the default three-lane instrument
+  is unchanged.
 
 - `npm test` → **126 + 7 tests, all pass, 0 fail** (core/state/actions/bindings/share/
   project, expression routing, the agent registry/state/transports, and the 7 app-bridge
@@ -207,7 +259,7 @@ were recaptured from the rebuilt artifact so the documentation shows the fixed s
   intentionally includes Record; pixel parity resumes from this slice's artifact, not the
   pre-agent one.
 - `npm run check:browser` → **54/54 checks pass** on the built `bitwave-v2.html` (55 with
-  `--shots`/`--compare`), including the F5 persistence groups (now schema 3), the F4
+  `--shots`/`--compare`), including the F5 persistence groups (schema 4 since D44), the F4
   reflow/keyboard/semantics/axe groups, the §11 geometry assertion and the source-table/
   record controls; the hidden agent node and bridge do not alter the rendered stage.
 - `npm run build:pwa` → **`dist/hosted/`** (index 284.3 KB, sw.js 1.6 KB, manifest 0.9 KB,
@@ -333,7 +385,7 @@ were recaptured from the rebuilt artifact so the documentation shows the fixed s
 | [`src/state/actions.ts`](src/state/actions.ts) | Commands: core unary ops/presets, focus/binop/visibility/bit/nibble/hex/copy/unpair |
 | [`src/state/bindings.ts`](src/state/bindings.ts) | Six input bindings, data/frame/none sources, driven + parked-base helpers |
 | [`src/state/routing.ts`](src/state/routing.ts) | Core `LaneMap` adapter + `evaluate()` running `src/core/routing.ts` |
-| [`src/state/project-bridge.ts`](src/state/project-bridge.ts) | App ↔ `.bitwave` schema-3 bridge: capture/apply, expressions, unknown-field preservation |
+| [`src/state/project-bridge.ts`](src/state/project-bridge.ts) | App ↔ `.bitwave` schema-4 bridge: lane-key map, capture/apply, expressions, wider-document filtering, unknown-field preservation |
 | [`src/state/record.ts`](src/state/record.ts) | Transient DAW-style frame log (bounded ring, `lastLog`, CSV export) |
 | [`src/state/dataset.ts`](src/state/dataset.ts) | Dataset state (columns, rows, cursor) shared by the shell and canvas code |
 | [`src/render/`](src/render/canvas.js) | Canvas + 3-D field, strip, readouts; the only DOM/canvas renderers |
@@ -347,7 +399,7 @@ were recaptured from the rebuilt artifact so the documentation shows the fixed s
 | [`testcsv.xlsx`](testcsv.xlsx), [`examples/testcsv.csv`](examples/testcsv.csv) | The four-column layout sample; CSV twin for the importer |
 | [`vite.config.mjs`](vite.config.mjs) | Vite 8 build: `src/` → `dist/index.html`, no minification |
 | [`tools/build-artifact.mjs`](tools/build-artifact.mjs) | Single-file gate: verifies no external refs, writes `bitwave-v2.html` |
-| [`src/core/`](src/core/index.ts) | DOM-free engine, lanes 1/2/3, schema-3 project + share codec, exact expression evaluator |
+| [`src/core/`](src/core/index.ts) | DOM-free engine, lanes 1/2/3, schema-4 project + share codec, exact expression evaluator |
 | [`src/core/expression.ts`](src/core/expression.ts) | Deterministic rational register-expression evaluator (no `eval`; float is a boundary format) |
 | [`src/core/external-routing.ts`](src/core/external-routing.ts) | Reference clocked pipeline and prototype checks |
 | [`src/core/agent-tools.ts`](src/core/agent-tools.ts) | Agent registry, one envelope, closed error set, manifest, canonical deeplink, bridge patch validation |
@@ -395,7 +447,7 @@ were recaptured from the rebuilt artifact so the documentation shows the fixed s
    app path is not yet driven by the browser check.
 6. **A newer `.bitwave` schema is refused, not opened read-only.** The plan's "open read-only"
    path for a future schema is not built; the UI reports a clear error and leaves the current
-   instrument untouched. Low risk while schema 3 is the only shipped format.
+   instrument untouched. Low risk while schema 4 is the only format this build writes.
 7. **Project save is not browser-asserted end-to-end.** Open/apply/reset, autosave and share
    are driven in Chromium; the `save project` download path is exercised by the unit-tested
    façade but not captured by the harness (no download interception).
@@ -425,8 +477,14 @@ were recaptured from the rebuilt artifact so the documentation shows the fixed s
     coefficients are converted once to exact rationals/declared precision; a full
     float-valued expression mode with its own rounding/precision contract is not shipped.
 14. **The 3-D hinge is session-only.** `fold` is not persisted in `.bitwave` or exposed in
-    agent state yet; reloading resets each lane to `a-far`. Persisting it belongs to the
-    dynamic-lanes schema bump (see [`docs/DYNAMIC-LANES.md`](docs/DYNAMIC-LANES.md)).
+    agent state yet; reloading resets each lane to `a-far`. Schema 4 (D44) intentionally
+    left it out; persisting it belongs to the dynamic-lanes UI slice (see
+    [`docs/DYNAMIC-LANES.md`](docs/DYNAMIC-LANES.md)).
+15. **The live app tree still ships three lanes.** Schema 4 can carry up to 8 lanes and the
+    core (plus the CLI/`build_deeplink`) handles them, but `src/state` still has the
+    default three-lane tree: opening a wider document loads the representable lanes, and
+    the frames view `+` remains the cap-note placeholder. The live lane UI and the widened
+    agent enums are later D43 slices.
 
 ## Errata found
 

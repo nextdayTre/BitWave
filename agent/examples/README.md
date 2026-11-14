@@ -14,7 +14,7 @@ Argument schemas live in `agent/manifest.json`.
 | [evaluate_lane.json](evaluate_lane.json) | `evaluate_lane` | The DESIGN §11 A·B vector. |
 | [compare_operands.json](compare_operands.json) | `compare_operands` | All five operators on the §11 pair. |
 | [parse_dataset.json](parse_dataset.json) | `parse_dataset` | Header plus two token rows. |
-| [build_deeplink.json](build_deeplink.json) | `build_deeplink` | 8-bit boot document. |
+| [build_deeplink.json](build_deeplink.json) | `build_deeplink` | 8-bit boot document (schema 4). |
 
 `examples/manifest.json` is the `manifest` tool envelope (its `data` is the
 capability manifest). One directory up, `agent/manifest.json` is the bare

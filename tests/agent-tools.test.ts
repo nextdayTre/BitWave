@@ -49,7 +49,7 @@ test("manifest is JSON-safe, versioned and strips run functions", () => {
   const manifest = getManifest();
   assert.equal(manifest.id, "bitwave");
   assert.equal(manifest.schemaVersion, SCHEMA_VERSION);
-  assert.equal(manifest.version, "1.1.0");
+  assert.equal(manifest.version, "1.2.0");
   assert.equal(manifest.tools.length, 6);
   assert.deepEqual(manifest.errorCodes, [...ERROR_CODES]);
   assert.ok(!("run" in manifest.tools[0]));
@@ -201,6 +201,25 @@ test("build_deeplink rejects invalid projects and bad bases", () => {
   if (!base.ok) assert.equal(base.error.code, "E_BAD_ARGS");
 
   assert.equal(callTool("build_deeplink", {}).ok, false);
+});
+
+test("build_deeplink accepts schema 2/3/4 documents and upgrades them to schema 4", () => {
+  const current = exampleProjectDoc();
+  const links = new Map<number, string>();
+  for (const schema of [2, 3, 4]) {
+    const data = okData(callTool("build_deeplink", { project: { ...current, schema } }));
+    const decoded = parseShareHash(String(data.fragment)) as Record<string, unknown>;
+    assert.equal(decoded.schema, 4, `schema ${schema} upgrades to the canonical schema`);
+    assert.ok(!("savedAt" in decoded), "canonical links omit savedAt");
+    deserializeProject(decoded); // proves the canonical payload is a valid project
+    links.set(schema, String(data.fragment));
+  }
+  /* The same state expressed at an older schema gives the same canonical link. */
+  assert.equal(links.get(2), links.get(4));
+  assert.equal(links.get(3), links.get(4));
+
+  /* Schema 1 loads through the same core path (the CLI also accepts it). */
+  assert.equal(callTool("build_deeplink", { project: { ...current, schema: 1 } }).ok, true);
 });
 
 test("build_deeplink and the canonical share helper agree", () => {

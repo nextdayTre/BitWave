@@ -254,6 +254,10 @@ function laneKeyFromNumber$1(value) {
 	if (typeof value !== "number" || !Number.isInteger(value) || value < 1 || value > 13) return null;
 	return String(value);
 }
+/** Ascending numeric lane-key order ("1" < "2" < … < "13"), never lexicographic. */
+function compareLaneKeys(a, b) {
+	return Number(a) - Number(b);
+}
 /** Frame name table keyed by lane key, in lane order: `{ "1": {a:"A", b:"B", z:"Z1"}, … }`. */
 function frameNamesFor(count = 3) {
 	const out = {};
@@ -657,12 +661,18 @@ var createRouting = () => ({
 });
 var portKey = (lane, frame) => `${lane}:${frame}`;
 var routeKey = (from, to) => `${from.lane}:${from.frame}>${to.lane}:${to.frame}`;
+/**
+* The lane keys present in a lane map, in canonical ascending numeric order.
+* A schema-4 document may carry a subset of `"1"`..`"13"` with gaps; the shipped
+* instrument always passes the three keys from `LANE_KEYS`.
+*/
+var laneKeysOf = (lanes) => Object.keys(lanes).sort(compareLaneKeys);
 var sameDest = (a, b) => a.lane === b.lane && a.frame === b.frame;
 var operandReg = (lane, frame) => frame === "a" ? lane.A : lane.B;
-/** A per-lane table keyed by the stable lane keys in display order. */
-function laneTable(make) {
+/** A per-lane table keyed by the supplied stable lane keys. */
+function laneTable(laneKeys, make) {
 	const out = {};
-	for (const key of LANE_KEYS) out[key] = make();
+	for (const key of laneKeys) out[key] = make();
 	return out;
 }
 function readPort(lanes, laneKey, frame) {
@@ -680,7 +690,7 @@ function driverOf(routing, lane, frame) {
 * rather than silently doing something surprising.
 */
 function addRoute(routing, lanes, from, to, mix = "set") {
-	if (!LANE_KEYS.includes(from.lane) || !LANE_KEYS.includes(to.lane)) throw new TypeError(`unknown lane in route ${JSON.stringify({
+	if (!lanes[from.lane] || !lanes[to.lane]) throw new TypeError(`unknown lane in route ${JSON.stringify({
 		from,
 		to
 	})}`);
@@ -701,7 +711,7 @@ function addRoute(routing, lanes, from, to, mix = "set") {
 		mix
 	};
 	routing.routes.push(route);
-	markDelays(routing);
+	markDelays(routing, laneKeysOf(lanes));
 	return route;
 }
 /** Remove a route by id. Restores the parked base when its input becomes free. */
@@ -710,7 +720,7 @@ function removeRoute(routing, lanes, id) {
 	if (index < 0) return false;
 	const [route] = routing.routes.splice(index, 1);
 	if (!isDriven(routing, route.to.lane, route.to.frame)) restoreDestination(routing, lanes, route.to.lane, route.to.frame);
-	markDelays(routing);
+	markDelays(routing, laneKeysOf(lanes));
 	return true;
 }
 /** Restore a driven input's parked base. Returns false if nothing was parked. */
@@ -730,12 +740,16 @@ function clearRoutes(routing, lanes) {
 }
 /**
 * Classify cycle-closing routes. DFS over the lane graph: an edge to a gray
-* node is a back edge and gets `delay = true`. Deterministic in LANE_KEYS order
-* and route insertion order. A self-lane route (3·Z -> 3·A) is always delayed.
+* node is a back edge and gets `delay = true`. Deterministic in ascending
+* lane-key order and route insertion order. A self-lane route (3·Z -> 3·A) is
+* always delayed.
+*
+* `laneKeys` defaults to the shipped three lanes; pass `laneKeysOf(lanes)` for a
+* schema-4 document with a different lane set.
 */
-function markDelays(routing) {
-	const color = laneTable(() => 0);
-	const edges = laneTable(() => []);
+function markDelays(routing, laneKeys = LANE_KEYS) {
+	const color = laneTable(laneKeys, () => 0);
+	const edges = laneTable(laneKeys, () => []);
 	for (const route of routing.routes) edges[route.from.lane].push(route);
 	const visit = (laneKey) => {
 		color[laneKey] = 1;
@@ -750,16 +764,17 @@ function markDelays(routing) {
 		}
 		color[laneKey] = 2;
 	};
-	for (const key of LANE_KEYS) if (color[key] === 0) visit(key);
+	for (const key of laneKeys) if (color[key] === 0) visit(key);
 }
 /**
 * Dependency order over the acyclic (non-delayed) edges: a route X -> Y is
-* applied after X has settled, so chains resolve in one pass. Call
-* markDelays() first (evaluateAll does).
+* applied after X has settled, so chains resolve in one pass. `laneKeys`
+* defaults to the shipped three lanes; callers with a wider lane map pass
+* `laneKeysOf(lanes)`. `markDelays()` must run first (evaluateAll does).
 */
-function topoOrder(routing) {
-	const color = laneTable(() => 0);
-	const edges = laneTable(() => []);
+function topoOrder(routing, laneKeys = LANE_KEYS) {
+	const color = laneTable(laneKeys, () => 0);
+	const edges = laneTable(laneKeys, () => []);
 	for (const route of routing.routes) if (!route.delay) edges[route.from.lane].push(route.to.lane);
 	const order = [];
 	const visit = (laneKey) => {
@@ -768,7 +783,7 @@ function topoOrder(routing) {
 		color[laneKey] = 2;
 		order.push(laneKey);
 	};
-	for (const key of LANE_KEYS) if (color[key] === 0) visit(key);
+	for (const key of laneKeys) if (color[key] === 0) visit(key);
 	return order.reverse();
 }
 function combine(values, N, mix) {
@@ -791,8 +806,9 @@ function combine(values, N, mix) {
 * must complete first; renderers sync targets afterwards. Never call per frame.
 */
 function evaluateAll(routing, lanes, N, hooks) {
-	markDelays(routing);
-	const order = topoOrder(routing);
+	const laneKeys = laneKeysOf(lanes);
+	markDelays(routing, laneKeys);
+	const order = topoOrder(routing, laneKeys);
 	const delayed = /* @__PURE__ */ new Map();
 	for (const route of routing.routes) if (route.delay) delayed.set(route.id, readPort(lanes, route.from.lane, route.from.frame).slice());
 	for (const laneKey of order) {
@@ -4048,11 +4064,24 @@ function lenientDataset(value) {
 	return dataset;
 }
 var portString = (lane, frame) => `${lane}.${frame}`;
+/**
+* The stable lane keys a document may carry, in canonical (ascending numeric)
+* order. A lane map may have gaps but never duplicates (object keys) and never
+* more than `APP_LANE_CAP` lanes; keys outside `"1"`..`"13"` are malformed.
+*/
+function requireLaneKeys(value) {
+	if (typeof value !== "object" || value === null || Array.isArray(value)) throw new ProjectError("malformed", "missing lanes");
+	const keys = Object.keys(value).sort(compareLaneKeys);
+	if (keys.length === 0) throw new ProjectError("malformed", "a document must hold at least one lane");
+	for (const key of keys) if (laneIndex(key) < 0) throw new ProjectError("malformed", `invalid lane key ${JSON.stringify(key)} (expected "1".."13")`);
+	if (keys.length > 8) throw new ProjectError("malformed", `a document may hold at most 8 lanes; got ${keys.length}`);
+	return keys;
+}
 function parsePort(text, allowZ) {
-	const m = /^([123])\.([abz])$/.exec(text);
+	const m = /^(?:[1-9]|1[0-3])\.([abz])$/.exec(text);
 	if (!m) throw new ProjectError("malformed", `bad port reference: ${JSON.stringify(text)}`);
-	const lane = m[1];
-	const frame = m[2];
+	const lane = text.slice(0, text.indexOf("."));
+	const frame = m[1];
 	if (!allowZ && frame === "z") throw new ProjectError("malformed", `Z cannot be a destination: ${text}`);
 	return {
 		lane,
@@ -4060,9 +4089,14 @@ function parsePort(text, allowZ) {
 	};
 }
 function serializeProject(lanes, routing, N, view, dataset = null, now = (/* @__PURE__ */ new Date()).toISOString(), extras = {}) {
+	const laneKeys = Object.keys(lanes).sort(compareLaneKeys);
+	if (laneKeys.length === 0) throw new ProjectError("malformed", "a document must hold at least one lane");
+	if (laneKeys.length > 8) throw new ProjectError("malformed", `a document may hold at most 8 lanes; got ${laneKeys.length}`);
 	const laneDocs = {};
-	for (const key of LANE_KEYS) {
+	for (const key of laneKeys) {
+		if (laneIndex(key) < 0) throw new ProjectError("malformed", `invalid lane key ${JSON.stringify(key)} (expected "1".."13")`);
 		const lane = lanes[key];
+		if (!lane) throw new ProjectError("malformed", `missing lane ${key}`);
 		const laneDoc = {
 			a: toHex(lane.A.bits, N),
 			b: toHex(lane.B.bits, N),
@@ -4104,7 +4138,7 @@ function serializeProject(lanes, routing, N, view, dataset = null, now = (/* @__
 	if (lfoMode !== void 0) viewDoc.lfoMode = lfoMode;
 	if (lfoRate !== void 0) viewDoc.lfoRate = lfoRate;
 	const doc = {
-		schema: 3,
+		schema: 4,
 		app: PROJECT_APP,
 		savedAt: now,
 		N,
@@ -4137,30 +4171,37 @@ function requireIndex(value, where) {
 	return value;
 }
 /**
-* Validate and materialize a document. Recomputes Z and delay flags, so the
-* returned engine state is immediately consistent. Throws ProjectError.
+* Validate and materialize a document. Recomputes Z and delay flags for every
+* lane the document carries, so the returned engine state is immediately
+* consistent. Throws ProjectError.
 *
-* `extras` is always fully populated: schema-1 documents (or corrupt additive
-* fields) load with the v2 defaults. The schema-1 fields keep their existing
-* strict validation.
+* A schema 1/2/3 document is the closed three-lane object and upgrades on read;
+* schema 4 is a lane map keyed by the stable lane key (`"1"`..`"13"`, gaps
+* allowed, at most `APP_LANE_CAP` lanes). `extras` is always fully populated for
+* the lanes present: older documents (or corrupt additive fields) load with the
+* additive defaults, and the schema-1 fields keep their existing strict
+* validation.
 */
 function deserializeProject(doc) {
 	if (typeof doc !== "object" || doc === null) throw new ProjectError("malformed", "project must be an object");
 	const d = doc;
 	if (d.app !== "bitwave") throw new ProjectError("unsupported-app", `not a BitWave project`);
 	if (typeof d.schema !== "number") throw new ProjectError("malformed", "missing schema version");
-	if (d.schema > 3) throw new ProjectError("newer-schema", `project schema ${d.schema} is newer than supported 3; open it read-only`);
+	if (d.schema > 4) throw new ProjectError("newer-schema", `project schema ${d.schema} is newer than supported 4; open it read-only`);
 	const N = requireIndex(d.N, "N");
 	if (!(N >= 8 && N <= 256 && N % 8 === 0)) throw new ProjectError("malformed", `unsupported width: ${N}`);
-	if (typeof d.lanes !== "object" || d.lanes === null) throw new ProjectError("malformed", "missing lanes");
-	const lanes = makeBootLanes(N);
+	const laneKeys = requireLaneKeys(d.lanes);
+	if (d.schema < 4) {
+		if (!(laneKeys.length === LANE_KEYS.length && LANE_KEYS.every((key, i) => laneKeys[i] === key))) throw new ProjectError("malformed", `schema ${d.schema} document must carry lanes ${LANE_KEYS.join(", ")}`);
+	}
+	const lanes = {};
 	const focus = {};
 	const frameVis = {};
 	const expressions = {};
-	for (const key of LANE_KEYS) {
+	for (const key of laneKeys) {
 		const s = d.lanes[key];
-		if (!s) throw new ProjectError("malformed", `missing lane ${key}`);
-		const lane = lanes[key];
+		if (typeof s !== "object" || s === null) throw new ProjectError("malformed", `lane ${key} must be an object`);
+		const lane = makeLane(key, N);
 		lane.A.bits = requireHex(s.a, N, `lanes.${key}.a`);
 		lane.B.bits = requireHex(s.b, N, `lanes.${key}.b`);
 		lane.showB = requireBool(s.showB, `lanes.${key}.showB`);
@@ -4171,6 +4212,7 @@ function deserializeProject(doc) {
 		lane.lfoB = typeof s.lfoB === "string" ? s.lfoB : "0";
 		lane.colA = requireIndex(s.colA, `lanes.${key}.colA`);
 		lane.colB = requireIndex(s.colB, `lanes.${key}.colB`);
+		lanes[key] = lane;
 		focus[key] = lenientFocus(s.focus);
 		frameVis[key] = lenientFrameVis(s.frameVis);
 		expressions[key] = lenientExpressions(s.expressions);
@@ -4182,6 +4224,8 @@ function deserializeProject(doc) {
 		if (typeof r.from !== "string" || typeof r.to !== "string") throw new ProjectError("malformed", "route must have from/to port strings");
 		const from = parsePort(r.from, true);
 		const to = parsePort(r.to, false);
+		if (!lanes[from.lane]) throw new ProjectError("malformed", `route source lane ${from.lane} is not in the document`);
+		if (!lanes[to.lane]) throw new ProjectError("malformed", `route destination lane ${to.lane} is not in the document`);
 		const mix = MIXES.includes(r.mix) ? r.mix : "set";
 		const route = {
 			id: `${from.lane}.${from.frame}>${to.lane}.${to.frame}`,
@@ -4201,17 +4245,21 @@ function deserializeProject(doc) {
 	}
 	for (const [key, value] of Object.entries(d.parked ?? {})) {
 		const port = parsePort(key, false);
+		if (!lanes[port.lane]) throw new ProjectError("malformed", `parked base lane ${port.lane} is not in the document`);
 		if (!routing.routes.some((r) => r.to.lane === port.lane && r.to.frame === port.frame)) throw new ProjectError("malformed", `parked base for an unpatched input: ${key}`);
 		routing.parked.set(`${port.lane}:${port.frame}`, requireHex(value, N, `parked.${key}`));
 	}
+	const firstLane = laneKeys[0];
+	const secondLane = laneKeys[1] ?? firstLane;
+	const pairEntries = d.view?.splitPair;
+	const splitPair = Array.isArray(pairEntries) && pairEntries.length === 2 && laneKeys.includes(pairEntries[0]) && laneKeys.includes(pairEntries[1]) ? [pairEntries[0], pairEntries[1]] : [firstLane, secondLane];
 	const view = {
-		lane: d.view && LANE_KEYS.includes(d.view.lane) ? d.view.lane : "1",
+		lane: d.view && laneKeys.includes(d.view.lane) ? d.view.lane : firstLane,
 		view3d: d.view?.view3d === true,
 		split3d: d.view?.split3d === true,
-		splitPair: d.view?.splitPair && Array.isArray(d.view.splitPair) && d.view.splitPair.length === 2 ? [d.view.splitPair[0], d.view.splitPair[1]] : ["1", "2"],
+		splitPair,
 		activePane: d.view?.activePane === 1 ? 1 : 0
 	};
-	markDelays(routing);
 	evaluateAll(routing, lanes, N);
 	return {
 		lanes,
@@ -4239,7 +4287,7 @@ var stringifyProject = (doc) => JSON.stringify(doc, null, 2);
 */
 var TOOL_ID = "bitwave";
 var TOOL_TITLE = "BitWave";
-var TOOLSET_VERSION = "1.1.0";
+var TOOLSET_VERSION = "1.2.0";
 /** Fixed timestamp for canonical share documents (links never carry `savedAt`). */
 var CANONICAL_SAVED_AT = "1970-01-01T00:00:00.000Z";
 var WIDTHS = SIZES$1;
@@ -4280,7 +4328,11 @@ var FRAME_NAMES = frameNamesFor(3);
 var SLOT_OF_LANE = Object.fromEntries(SHIPPED_LANES.map((lane, index) => [lane, SLOT_KEY_OF_LANE[index]]));
 Object.fromEntries(SHIPPED_LANES.map((lane, index) => [SLOT_KEY_OF_LANE[index], lane]));
 function frameName(lane, frame) {
-	return FRAME_NAMES[lane][frame];
+	const names = FRAME_NAMES[lane];
+	if (names) return names[frame];
+	const index = laneIndex(lane);
+	if (index >= 0) return laneDef(index)[frame];
+	return frame.toUpperCase();
 }
 /** Resolve a global frame name of the shipped three lanes (`A`–`F`, `Z1`–`Z3`); case-insensitive. */
 function frameRefFromName(value) {
@@ -4334,7 +4386,7 @@ function baseProjectDoc(N) {
 		lfoRate: 4
 	});
 }
-/** A compact 8-bit document used by tool examples. */
+/** A compact 8-bit schema-4 document used by tool examples. */
 function exampleProjectDoc() {
 	return baseProjectDoc(8);
 }
@@ -4484,10 +4536,26 @@ function parseShareHash(hash) {
 * the agent contract needs: a state has exactly one link, so the timestamp is not
 * part of a shared document. It also reproduces the app's budget policy (drop the
 * dataset before giving up) so `build_deeplink` and the address bar agree.
+*
+* Schema 1-4 documents are accepted: `deserializeProject` upgrades a legacy
+* document on read and the canonical form is always schema 4 (D44). Top-level
+* fields this build does not understand ride along, matching the app bridge.
 */
+var KNOWN_DOC_KEYS = /* @__PURE__ */ new Set([
+	"schema",
+	"app",
+	"savedAt",
+	"N",
+	"view",
+	"lanes",
+	"routes",
+	"parked",
+	"dataset"
+]);
 /**
-* Validate a document and re-serialize it canonically: no `savedAt`, extras
-* preserved, engine recomputed. Throws ProjectError on an invalid document.
+* Validate a document and re-serialize it canonically: schema 4, no `savedAt`,
+* extras preserved, unknown top-level fields carried along, engine recomputed.
+* Throws ProjectError on an invalid document.
 */
 function canonicalShareDocument(doc) {
 	const loaded = deserializeProject(doc);
@@ -4499,6 +4567,7 @@ function canonicalShareDocument(doc) {
 		expressions: loaded.extras.expressions
 	});
 	delete out.savedAt;
+	for (const [key, value] of Object.entries(doc)) if (!KNOWN_DOC_KEYS.has(key)) out[key] = value;
 	return out;
 }
 /**
@@ -4886,14 +4955,14 @@ var TOOLS = [
 	{
 		name: "build_deeplink",
 		title: "Build a canonical deeplink",
-		description: "Validate a .bitwave schema-2 document and build its canonical share fragment (#bw=). Canonical links omit savedAt, so equal state gives equal links; the dataset is dropped if the payload would exceed the 2000-character budget.",
+		description: "Validate a .bitwave document (schema 1–4; older schemas are upgraded) and build its canonical schema-4 share fragment (#bw=). Canonical links omit savedAt, so equal state gives equal links; the dataset is dropped if the payload would exceed the 2000-character budget.",
 		scope: "pure",
 		inputSchema: {
 			type: "object",
 			properties: {
 				project: {
 					type: "object",
-					description: "A .bitwave schema-2 document."
+					description: "A .bitwave document (schema 1–4)."
 				},
 				base: {
 					type: "string",
@@ -4908,7 +4977,7 @@ var TOOLS = [
 				project: exampleProjectDoc(),
 				base: "http://localhost:8000/"
 			},
-			note: "8-bit boot document."
+			note: "8-bit boot document (schema 4)."
 		}],
 		run: (args) => buildDeeplinkData(args)
 	}
@@ -5358,10 +5427,12 @@ function createAgentPanel({ root }) {
 /**
 * UI-state builder shared by the browser bridge and the headless transports.
 *
-* Pure: takes a `.bitwave` schema-2 document plus the few transient UI values and
-* returns the exact object `window.bitwave.getState()` and `#bitwave-state`
-* expose. Derived values are recomputed from the shared core, never scraped from
-* the DOM.
+* Pure: takes a `.bitwave` schema 1-4 document plus the few transient UI values
+* and returns the exact object `window.bitwave.getState()` and `#bitwave-state`
+* expose. A schema 1/2/3 document (the shipped three lanes) is the common case;
+* a schema-4 document may carry a wider lane map, whose lanes are reported by
+* their stable key with names derived from `lanedefs.ts`. Derived values are
+* recomputed from the shared core, never scraped from the DOM.
 */
 function routeInto(doc, lane, frame) {
 	const to = `${lane}.${frame}`;
@@ -5394,9 +5465,14 @@ function sourceFor(doc, lane, frame, route) {
 function buildUiState(doc, options = {}) {
 	const width = doc.N;
 	const lanes = {};
-	for (const lane of LANE_KEYS) {
+	const laneKeys = Object.keys(doc.lanes).sort((a, b) => Number(a) - Number(b));
+	for (const lane of laneKeys) {
 		const laneDoc = doc.lanes[lane];
-		const names = FRAME_NAMES[lane];
+		const names = {
+			a: frameName(lane, "a"),
+			b: frameName(lane, "b"),
+			z: frameName(lane, "z")
+		};
 		const aBits = fromHex(laneDoc.a, width);
 		const bBits = fromHex(laneDoc.b, width);
 		const zBits = computeZ(aBits, bBits, width, laneDoc.binop);
@@ -5448,12 +5524,13 @@ function buildUiState(doc, options = {}) {
 			} }
 		};
 	}
-	const focusedLane = doc.view.lane;
-	const focusedFrame = doc.lanes[focusedLane].focus ?? "a";
+	const focusedLane = doc.lanes[doc.view.lane] ? doc.view.lane : laneKeys[0] ?? doc.view.lane;
+	const focusedFrame = doc.lanes[focusedLane]?.focus ?? "a";
 	const focusedState = lanes[focusedLane];
 	const focusedOperand = focusedFrame === "z" ? null : focusedFrame;
-	const focusedExpression = focusedOperand !== null ? focusedState.expressions[FRAME_NAMES[focusedLane][focusedOperand]] !== null : false;
-	const enabled = focusedOperand !== null && !focusedState.driven[FRAME_NAMES[focusedLane][focusedOperand]] && !focusedExpression;
+	const focusedName = focusedOperand !== null ? frameName(focusedLane, focusedOperand) : null;
+	const focusedExpression = focusedName !== null ? focusedState.expressions[focusedName] !== null : false;
+	const enabled = focusedOperand !== null && focusedName !== null && !focusedState.driven[focusedName] && !focusedExpression;
 	const mode = doc.view.split3d ? "split" : doc.view.view3d ? "3d" : "2d";
 	let dataset = null;
 	if (doc.dataset && doc.dataset.rows.length > 0) {
@@ -5507,8 +5584,14 @@ function buildUiState(doc, options = {}) {
 * `ProjectDoc`. It is DOM-free so the round trip is testable in Node and the
 * desktop shell can reuse it.
 *
-* D43: the live tree is keyed by stable lane keys ("1".."13"), exactly like the
-* schema-3 document, so the mapping is the identity for the shipped three lanes.
+* D43/D44: the live tree and the document are both keyed by stable lane keys
+* ("1".."13"), so the mapping is the identity for the lanes the app ships. The
+* document format (schema 4) can carry up to `APP_LANE_CAP` lanes; this build's
+* tree still ships the default three, so `applyProject` loads the lanes it can
+* represent by key and ignores the rest (they are not lost from an untouched
+* file — the dynamic-lanes UI slice widens the tree). View fields and extras are
+* mapped only for live lanes; routes/parked bases outside the live tree are
+* dropped together.
 *
 * Unknown top-level fields from a loaded document are remembered and merged
 * back on the next capture, so a file written by a newer build survives a
@@ -5606,9 +5689,10 @@ function applyProject(raw) {
 	}
 	const { lanes, routing: loadedRouting, N, view, dataset, extras } = loaded;
 	S.N = N;
+	const boot = makeBootLanes(N);
 	for (const laneKey of LANE_KEYS) {
 		const sl = S.lanes[laneKey];
-		const src = lanes[laneKey];
+		const src = lanes[laneKey] ?? boot[laneKey];
 		sl.A = makeReg(N);
 		sl.B = makeReg(N);
 		sl.Z = makeReg(N);
@@ -5622,7 +5706,11 @@ function applyProject(raw) {
 		sl.colA = src.colA;
 		sl.colB = src.colB;
 		sl.focus = extras.focus[laneKey] ?? "a";
-		sl.frameVis = { ...extras.frameVis[laneKey] };
+		sl.frameVis = { ...extras.frameVis[laneKey] ?? {
+			a: true,
+			b: true,
+			z: true
+		} };
 		sl.fold = "a-far";
 		sl.expressions = {
 			a: extras.expressions[laneKey]?.a ?? "",
@@ -5631,12 +5719,25 @@ function applyProject(raw) {
 		syncTarget(sl.A, true);
 		syncTarget(sl.B, true);
 	}
-	routing.routes = loadedRouting.routes;
-	routing.parked = loadedRouting.parked;
-	S.laneKey = view.lane;
+	const liveRoutes = loadedRouting.routes.filter((route) => LANE_KEYS.includes(route.from.lane) && LANE_KEYS.includes(route.to.lane));
+	const routedDestinations = new Set(liveRoutes.map((route) => `${route.to.lane}:${route.to.frame}`));
+	routing.routes = liveRoutes;
+	routing.parked = new Map([...loadedRouting.parked].filter(([key]) => routedDestinations.has(key)));
+	for (const [key, bits] of loadedRouting.parked) {
+		if (routedDestinations.has(key)) continue;
+		const [lane, frame] = key.split(":");
+		if (!LANE_KEYS.includes(lane) || frame !== "a" && frame !== "b") continue;
+		const reg = frame === "a" ? S.lanes[lane].A : S.lanes[lane].B;
+		reg.bits.set(bits);
+		syncTarget(reg, true);
+	}
+	const fallbackLane = LANE_KEYS[0];
+	const focusLane = LANE_KEYS.includes(view.lane) ? view.lane : fallbackLane;
+	const splitPair = [LANE_KEYS.includes(view.splitPair[0]) ? view.splitPair[0] : fallbackLane, LANE_KEYS.includes(view.splitPair[1]) ? view.splitPair[1] : LANE_KEYS[1] ?? fallbackLane];
+	S.laneKey = focusLane;
 	S.view3d = view.view3d;
 	S.split3d = view.split3d;
-	S.splitPair = [view.splitPair[0], view.splitPair[1]];
+	S.splitPair = splitPair;
 	S.activePane = view.activePane === 1 ? 1 : 0;
 	S.copyArmed = false;
 	S.drag = -1;
@@ -5687,9 +5788,11 @@ function applyProject(raw) {
 *   - the debounced address-bar mirror (`bitwave:urlsettled` from io/share-url)
 *     refreshes the hidden state node silently — a URL write is not a UI change.
 *
-* Toolset 1.1.0 adds external routing: expression sources (`setExpression`,
+* Toolset 1.1.0 added external routing: expression sources (`setExpression`,
 * patch key `expression`), the transient recorded take (`record(on)`,
 * `getLog({limit?})`) and `recording` / per-lane `expressions` in `getState()`.
+* Toolset 1.2.0 (D44) moves the shared `.bitwave` document to schema 4 (lane map
+* keyed by stable lane key); the bridge surface itself is unchanged.
 */
 var STATE_NODE_ID = "bitwave-state";
 var READY_ATTR = "agent-ready";

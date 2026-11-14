@@ -1810,7 +1810,7 @@ try {
     })`));
     assert(saved.raw, 'autosave key was not written');
     const parsed = JSON.parse(saved.raw);
-    assert(parsed.schema === 3 && parsed.lanes['1'].a === saved.hex, `autosave schema/state: ${parsed.schema}`);
+    assert(parsed.schema === 4 && parsed.lanes['1'].a === saved.hex, `autosave schema/state: ${parsed.schema}`);
 
     await loadApp({ query: 'keep' });
     const restored = JSON.parse(await evaluate(`JSON.stringify({

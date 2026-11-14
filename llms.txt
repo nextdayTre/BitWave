@@ -8,10 +8,13 @@ CSV/TSV input, stepped LFO, single offline HTML file.
 - Onboarding: `AGENTS.md`; manifest: `agent/manifest.json`; examples: `agent/examples/`.
 - Browser bridge: `window.bitwave`; hidden state: `#bitwave-state`;
   ready: `body[data-agent-ready='true']`; events: `bitwave:ready`, `bitwave:change`.
-- Toolset 1.1.0; `.bitwave` schema 3 (schema 1/2 load). Bridge additions:
+- Toolset 1.2.0; `.bitwave` schema 4 (schema 1/2/3 load and upgrade). Bridge additions:
   `setExpression(frame, text)`, `setSource(frame, source)`, `setRoute(frame, from)`,
   `record(on)`, `getLog({limit})`; state additions:
   `recording:{on,rows}`, `lanes[*].expressions`.
+- `.bitwave` schema 4 keys `lanes` by the stable lane key (`"1"`..`"13"`; gaps allowed,
+  at most 8 lanes per document, ascending numeric order); `build_deeplink` accepts
+  schema 1-4 and always canonicalises to schema 4.
 - Expression sources are deterministic in the shared core: routes -> expressions -> Z;
   each expression sees the current frames plus the previous recorded row as `log.<frame>`.
   Record is a transient in-memory DAW take (not saved in `.bitwave`/links); float is a

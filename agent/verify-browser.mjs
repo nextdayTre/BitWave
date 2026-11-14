@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 /**
- * Independent browser verification for the BitWave agent layer (toolset 1.1.0).
+ * Independent browser verification for the BitWave agent layer (toolset 1.2.0).
  *
  * Drives the built single-file artifact (`bitwave-v2.html`) over `file://` in a
  * fresh-profile headless Chrome/Edge over the DevTools Protocol, then asserts the
  * contract in docs/AGENT-INTERFACE.md — including the external-routing slice:
  * expression sources (`setExpression`), the transient Record take (`record`,
- * `getLog`) and the schema-3 state fields (`expressions`, `recording`).
+ * `getLog`) and the schema-4 project document behind `#bw=` links.
  *
  * Expectations are derived from `src/core` (the tool registry, the manifest, the
  * state builder, the project codec, the expression evaluator) — never from the
@@ -55,7 +55,7 @@ function flag(name, fallback) {
 const artifactPath = resolve(flag("--artifact", join(ROOT, "bitwave-v2.html")));
 const artifactUrl = pathToFileURL(artifactPath).href;
 
-/** The bridge surface the contract promises: v1 base + toolset 1.1.0 additions. */
+/** The bridge surface the contract promises: v1 base + 1.1.0 additions + 1.2.0 schema-4 documents. */
 const BRIDGE_KEYS = [
   "schemaVersion",
   "version",
@@ -428,7 +428,7 @@ async function main() {
       );
     });
 
-    await run("bridge exposes exactly the contract surface (v1 + 1.1.0 additions)", async () => {
+    await run("bridge exposes exactly the contract surface (v1 + 1.1.0/1.2.0 additions)", async () => {
       assertEqual(await browser.evaluate("Object.keys(window.bitwave).sort()"), BRIDGE_KEYS);
       assertEqual(await browser.evaluate("typeof window.bitwave.setExpression"), "function");
       assertEqual(await browser.evaluate("typeof window.bitwave.setSource"), "function");
@@ -844,9 +844,9 @@ async function main() {
       await browser.evaluate("window.bitwave.record(false)");
     });
 
-    /* ── deeplink: schema 3, expression sources, real reload ────────────── */
+    /* ── deeplink: schema 4, expression sources, real reload ────────────── */
 
-    await run("a #bw= deeplink carries schema-3 expression sources and reloads twice", async () => {
+    await run("a #bw= deeplink carries schema-4 expression sources and reloads twice", async () => {
       await browser.navigate(artifactUrl);
       await browser.evaluate("window.bitwave.reset()");
       await browser.evaluate("window.bitwave.setState({ lane: 2, width: 16 })");
@@ -858,7 +858,7 @@ async function main() {
       const link = await browser.evaluate("window.bitwave.getDeeplink()");
       assert(link.startsWith(artifactUrl + "#bw="), `getDeeplink() is not the canonical app link: ${link}`);
 
-      /* Independent decode: the fragment must be a schema-3 doc with the expression. */
+      /* Independent decode: the fragment must be a schema-4 doc with the expression. */
       const doc = parseShareHash(new URL(link).hash);
       assert(doc !== null, "fragment did not decode");
       assertEqual(doc.schema, PROJECT_SCHEMA);
@@ -970,7 +970,7 @@ async function main() {
     await browser.close();
   }
 
-  console.log("BitWave agent browser verification (toolset 1.1.0 / schema 3)");
+  console.log("BitWave agent browser verification (toolset 1.2.0 / schema 4)");
   console.log(`  artifact: ${artifactPath} (${existsSync(artifactPath) ? readFileSync(artifactPath).length : 0} bytes)`);
   console.log(`  browser:  ${chromePath}`);
   console.log(

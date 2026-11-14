@@ -4,7 +4,8 @@
 expression evaluator, expression-aware clocked pass, schema-3 project mapping, source-table
 `expr` editor, DAW-style Record toggle/log/export, and bridge `setExpression`/`record`/
 `getLog` are implemented. This note remains the design record; the Node prototype below is
-kept as a reproducible reference model.
+kept as a reproducible reference model. The document format advanced to schema 4 in D44
+(toolset 1.2.0), which is additive over the expression fields described here.
 
 This note records the next seam after the agent interface: a simple, DAW-style
 **Record** control and a deterministic **expression operand** for the six input frames.
