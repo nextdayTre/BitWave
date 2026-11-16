@@ -341,8 +341,9 @@ Expected: `width: 64`, `lane: 8`, `frame: "O"`, `view.mode: "2d"`,
 `view.splitPair: [7, 8]`; `getState().lanes` has exactly the keys
 `"1" … "8"` in ascending order, each with its own global frame names — lane 1
 `A/B/Z1` (and the DESIGN §11 vector `Z1 = 7521012585210125`), lane 4 `G/H/Z4`, lane 8
-`O/P/Z8` with `O = DEADBEEFCAFEBABE`, `P = 0123456789ABCDEF`. `bridge.version` is
-`"1.4.0"`. The stage-bar lane dropdown reads **Lane 8** and offers all eight options; the
+`O/P/Z8` with `O = DEADBEEFCAFEBABE`, `P = 0123456789ABCDEF`. `bridge.version` is the
+current toolset version (`"1.4.0"` when the image was captured; `1.5.0` since D48). The
+stage-bar lane dropdown reads **Lane 8** and offers all eight options; the
 readout-row truth disclosure follows the lane (`O ⊕ P → Z8`); the
 compact payload is **568 characters** (well within the 2000 budget, no drops). Opening the
 frames view on the same link renders **24 cards** (`A`–`P` plus `Z1`–`Z8`) across eight

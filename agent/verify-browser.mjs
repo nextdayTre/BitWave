@@ -1,14 +1,18 @@
 #!/usr/bin/env node
 /**
- * Independent browser verification for the BitWave agent layer (toolset 1.4.0).
+ * Independent browser verification for the BitWave agent layer (toolset 1.5.0).
  *
  * Drives the built single-file artifact (`bitwave-v2.html`) over `file://` in a
  * fresh-profile headless Chrome/Edge over the DevTools Protocol, then asserts the
  * contract in docs/AGENT-INTERFACE.md — including the external-routing slice:
  * expression sources (`setExpression`), the transient Record take (`record`,
- * `getLog`), the schema-4 project document behind `#bw=` links, and the shipped
+ * `getLog`), the schema-4 project document behind `#bw=` links, the shipped
  * 1–8 lane range (the stage-bar lane dropdown, non-live lane refusal, and an
- * eight-lane document loaded from a canonical compact link).
+ * eight-lane document loaded from a canonical compact link), and the toolset
+ * 1.5.0 dataset readback (`getDataset()`: null before a load, an exact
+ * columns/rows/index/kinds/widths round-trip after `setDataset({csv})`, refusal
+ * of an invalid load with the live dataset untouched, and the full matrix kept
+ * out of `getState()` / `#bitwave-state`).
  *
  * Expectations are derived from `src/core` (the tool registry, the manifest, the
  * state builder, the project codec, the expression evaluator) — never from the
@@ -38,6 +42,7 @@ import {
   getManifest,
   normalizeAgentPatch,
 } from "../src/core/agent-tools.ts";
+import { columnMode, columnWidth, parseDataset } from "../src/core/csv.ts";
 import { FRAME_NAMES, bootProjectDoc } from "../src/core/agent-defaults.ts";
 import { buildShareLink } from "../src/core/agent-share.ts";
 import { buildUiState } from "../src/core/agent-state.ts";
@@ -58,12 +63,13 @@ function flag(name, fallback) {
 const artifactPath = resolve(flag("--artifact", join(ROOT, "bitwave-v2.html")));
 const artifactUrl = pathToFileURL(artifactPath).href;
 
-/** The bridge surface the contract promises: v1 base + 1.1.0 additions + the 1.2.0 schema-4 document shape (links are compact since 1.3.0; lanes are 1–8 since 1.4.0). */
+/** The bridge surface the contract promises: v1 base + 1.1.0 additions + the 1.2.0 schema-4 document shape (links are compact since 1.3.0; lanes are 1–8 since 1.4.0; the opt-in dataset readback since 1.5.0). */
 const BRIDGE_KEYS = [
   "schemaVersion",
   "version",
   "ready",
   "getState",
+  "getDataset",
   "getManifest",
   "tools",
   "call",
@@ -445,6 +451,7 @@ async function main() {
 
     await run("bridge exposes exactly the contract surface (v1 + 1.1.0/1.2.0 additions)", async () => {
       assertEqual(await browser.evaluate("Object.keys(window.bitwave).sort()"), BRIDGE_KEYS);
+      assertEqual(await browser.evaluate("typeof window.bitwave.getDataset"), "function");
       assertEqual(await browser.evaluate("typeof window.bitwave.setExpression"), "function");
       assertEqual(await browser.evaluate("typeof window.bitwave.setSource"), "function");
       assertEqual(await browser.evaluate("typeof window.bitwave.setRoute"), "function");
@@ -932,6 +939,161 @@ async function main() {
       await browser.evaluate("window.bitwave.record(false)");
     });
 
+    /* ── dataset readback: getDataset() (toolset 1.5.0, D48) ─────────────── */
+
+    /* The matrix the readback checks use. Typing is per column (DESIGN §10.17):
+       `word` is hex, `flags`/`pad` are binary, and the raw cells carry leading
+       zeros a numeric readback would lose. Only `word` is auto-bound, so a
+       non-current row's word cannot appear elsewhere in the live state. */
+    const READBACK_CSV = "word,flags,pad\n8ADEFEDA,1010,0001\n11223344,1100,0010\n55667788,0011,0101";
+    const READBACK = parseDataset(READBACK_CSV);
+    const expectedDataset = (index) => ({
+      columns: READBACK.cols.slice(),
+      rows: READBACK.rows.map((row) => row.slice()),
+      index,
+      kinds: READBACK.cols.map((_, ci) => columnMode(READBACK.rows, ci)),
+      widths: READBACK.cols.map((_, ci) => columnWidth(READBACK.rows, ci)),
+    });
+
+    await run("getDataset() is null on a fresh page (opt-in readback)", async () => {
+      await browser.navigate(freshUrl);
+      const report = await browser.evaluate(`(() => ({
+        type: typeof window.bitwave.getDataset,
+        data: window.bitwave.getDataset(),
+        stateDataset: window.bitwave.getState().dataset,
+        stateKeys: Object.keys(window.bitwave.getState()).sort(),
+      }))()`);
+      assertEqual(report.type, "function");
+      assertEqual(report.data, null, "a page with no dataset must read back null");
+      assertEqual(report.stateDataset, null, "getState().dataset must be null with no dataset");
+      assert(!report.stateKeys.includes("getDataset"), "the readback getter must not be folded into getState()");
+    });
+
+    await run("setDataset({csv}) round-trips exactly through getDataset()", async () => {
+      await browser.navigate(freshUrl);
+      const report = await browser.evaluate(`(() => {
+        const changesBefore = window.__bitwaveVerify.changes;
+        const loaded = window.bitwave.setDataset({ csv: ${JSON.stringify(READBACK_CSV)} });
+        const afterLoad = window.__bitwaveVerify.changes;
+        const data = window.bitwave.getDataset();
+        const state = window.bitwave.getState();
+        const hiddenMatches = document.querySelector("#bitwave-state").textContent === JSON.stringify(state);
+        const stepped = window.bitwave.setDataset({ index: 2 });
+        return {
+          ok: loaded.ok,
+          loadChanges: afterLoad - changesBefore,
+          data,
+          stateDataset: state.dataset,
+          hiddenMatches,
+          steppedOk: stepped.ok,
+          steppedData: window.bitwave.getDataset(),
+          steppedState: window.bitwave.getState().dataset,
+        };
+      })()`);
+      const expected = expectedDataset(0);
+      assertEqual(report.ok, true);
+      assertEqual(report.loadChanges, 1, "loading a dataset must emit exactly one change");
+      assertEqual(report.data, expected, "getDataset() must return the exact imported matrix");
+      assertEqual(report.data.kinds, ["hex", "bin", "bin"], "kinds come from the shared columnMode");
+      assertEqual(report.data.widths, [32, 4, 4], "widths come from the shared columnWidth");
+      assertEqual(report.data.rows[1], ["11223344", "1100", "0010"], "raw cells keep their leading zeros");
+      assertEqual(report.stateDataset, {
+        columns: expected.columns,
+        rows: expected.rows.length,
+        index: 0,
+        row: expected.rows[0],
+      });
+      assertEqual(report.hiddenMatches, true, "#bitwave-state must still mirror getState() after a load");
+      assertEqual(report.steppedOk, true);
+      assertEqual(report.steppedData, expectedDataset(2), "the cursor step must be readable back");
+      assertEqual(report.steppedState.index, 2);
+      assertEqual(report.steppedState.row, expectedDataset(2).rows[2]);
+    });
+
+    await run("an invalid setDataset leaves the prior dataset untouched", async () => {
+      const beforeChanges = await changeCount();
+      const report = await browser.evaluate(`(() => {
+        const before = window.bitwave.getDataset();
+        const noColumns = window.bitwave.setDataset({ csv: "word,flags\\nZZ,YY\\nQQ,WW" });
+        const afterNoColumns = window.bitwave.getDataset();
+        const badIndex = window.bitwave.setDataset({ index: 9 });
+        const afterBadIndex = window.bitwave.getDataset();
+        return {
+          before,
+          noColumns: { ok: noColumns.ok, code: noColumns.error && noColumns.error.code },
+          afterNoColumns,
+          badIndex: { ok: badIndex.ok, code: badIndex.error && badIndex.error.code },
+          afterBadIndex,
+        };
+      })()`);
+      assertEqual(report.noColumns, { ok: false, code: "E_BAD_STATE" }, "a non-numeric CSV must be refused");
+      assertEqual(report.badIndex, { ok: false, code: "E_OUT_OF_RANGE" }, "an out-of-range index must be refused");
+      assertEqual(report.afterNoColumns, report.before, "a refused CSV must not replace the live dataset");
+      assertEqual(report.afterBadIndex, report.before, "a refused cursor must not move the live dataset");
+      assertEqual(await changeCount(), beforeChanges, "a refused dataset patch emitted a change event");
+    });
+
+    await run("getState() and #bitwave-state carry dataset metadata only (no full rows)", async () => {
+      const report = await browser.evaluate(`(() => {
+        const loaded = window.bitwave.setDataset({ csv: ${JSON.stringify(READBACK_CSV)} });
+        const state = window.bitwave.getState();
+        const hiddenText = document.querySelector("#bitwave-state").textContent;
+        const hidden = JSON.parse(hiddenText);
+        const serialized = JSON.stringify(state);
+        const nonCurrent = ${JSON.stringify(READBACK.rows.slice(1).map((row) => row[0]))};
+        return {
+          loaded: loaded.ok,
+          datasetKeys: Object.keys(state.dataset).sort(),
+          rowsIsNumber: typeof state.dataset.rows === "number",
+          dataset: state.dataset,
+          hiddenDataset: hidden.dataset,
+          serializedHasNonCurrent: nonCurrent.filter((token) => serialized.includes(token)),
+          hiddenHasNonCurrent: nonCurrent.filter((token) => hiddenText.includes(token)),
+          matrixRows: window.bitwave.getDataset().rows.length,
+        };
+      })()`);
+      const expected = expectedDataset(0);
+      assertEqual(report.loaded, true);
+      assertEqual(report.datasetKeys, ["columns", "index", "row", "rows"]);
+      assertEqual(report.rowsIsNumber, true, "state `dataset.rows` must be the row count, not the rows");
+      assertEqual(report.dataset, {
+        columns: expected.columns,
+        rows: expected.rows.length,
+        index: 0,
+        row: expected.rows[0],
+      });
+      assertEqual(report.hiddenDataset, report.dataset, "#bitwave-state dataset must match getState()");
+      assertEqual(report.serializedHasNonCurrent, [], "state must not stream rows the cursor is not on");
+      assertEqual(report.hiddenHasNonCurrent, [], "the hidden state node must not stream the full matrix");
+      assertEqual(report.matrixRows, 3, "the full matrix is readable only through getDataset()");
+    });
+
+    await run("getDataset() reads without a change event and returns fresh copies", async () => {
+      const beforeChanges = await changeCount();
+      const report = await browser.evaluate(`(() => {
+        const stateBefore = JSON.stringify(window.bitwave.getState());
+        const first = window.bitwave.getDataset();
+        first.columns.push("injected");
+        first.rows[0][0] = "INJECTED";
+        first.rows.push(["EXTRA"]);
+        first.kinds.push("bin");
+        first.widths.push(0);
+        first.index = 99;
+        const second = window.bitwave.getDataset();
+        return {
+          firstAltered: first,
+          second,
+          stateUnchanged: JSON.stringify(window.bitwave.getState()) === stateBefore,
+          changes: window.__bitwaveVerify.changes,
+          stateKeys: Object.keys(window.bitwave.getState()).sort(),
+        };
+      })()`);
+      assertEqual(report.changes, beforeChanges, "getDataset() must not emit a change event");
+      assertEqual(report.stateUnchanged, true, "getDataset() must not mutate state");
+      assertEqual(report.second, expectedDataset(0), "each call must return fresh copies of the live dataset");
+      assert(!report.stateKeys.includes("rows") && !report.stateKeys.includes("getDataset"), "the matrix must stay out of getState()");
+    });
+
     /* ── deeplink: schema 4, expression sources, real reload ────────────── */
 
     await run("a #bw= deeplink carries schema-4 expression sources and reloads twice", async () => {
@@ -1127,7 +1289,7 @@ async function main() {
     await browser.close();
   }
 
-  console.log("BitWave agent browser verification (toolset 1.4.0 / schema 4)");
+  console.log("BitWave agent browser verification (toolset 1.5.0 / schema 4)");
   console.log(`  artifact: ${artifactPath} (${existsSync(artifactPath) ? readFileSync(artifactPath).length : 0} bytes)`);
   console.log(`  browser:  ${chromePath}`);
   console.log(

@@ -23,6 +23,12 @@
  * widens the closed lane/frame enums to the shipped 1–8 range (frames `A`–`P`,
  * `Z1`–`Z8`): setters accept only lanes the live tree carries, so focusing an
  * absent lane is a truthful `E_OUT_OF_RANGE`, never a silent lane creation.
+ * Toolset 1.5.0 (D48) adds the opt-in dataset readback (`getDataset()`): the
+ * live bridge could already load processed data through `setDataset({csv})` but
+ * could not read it back. The getter is read-only and synchronous, returns
+ * `null` when no dataset is loaded, and never puts the full matrix into
+ * `getState()` / `#bitwave-state` / change payloads — the state schema and the
+ * `.bitwave` schema are unchanged.
  */
 
 import {
@@ -35,7 +41,7 @@ import {
 } from "../core/agent-tools.ts";
 import { buildUiState } from "../core/agent-state.ts";
 import { frameRefFromName, laneKeyFromNumber } from "../core/agent-defaults.ts";
-import { columnWidth, parseDataset } from "../core/csv.ts";
+import { columnMode, columnWidth, parseDataset } from "../core/csv.ts";
 import { SIZES } from "../core/registers.ts";
 import { captureProject } from "../state/project-bridge.ts";
 import { DEMO } from "../state/dataset.ts";
@@ -484,6 +490,29 @@ export function createAgentBridge(deps) {
     return { ok: true, rows: selected, warnings: [] };
   }
 
+  /**
+   * Read the live dataset back (toolset 1.5.0, D48) — the opt-in full matrix.
+   *
+   * Read-only and synchronous: no store transaction, no state write and no
+   * `bitwave:change` event. The matrix never enters `getState()` /
+   * `#bitwave-state` (their `dataset` is metadata plus the current row); this is
+   * the only surface that carries every cell. Returns `null` when no dataset is
+   * loaded and fresh arrays on every call, so a caller cannot mutate live state.
+   * `rows` are the raw imported cells (leading zeros preserved); `kinds` and
+   * `widths` come from the shared per-column typing in `src/core/csv.ts`.
+   */
+  function getDataset() {
+    if (!DEMO.rows.length) return null;
+    const columns = DEMO.cols.slice();
+    return {
+      columns,
+      rows: DEMO.rows.map((row) => row.slice()),
+      index: DEMO.i,
+      kinds: columns.map((_, ci) => columnMode(DEMO.rows, ci)),
+      widths: columns.map((_, ci) => columnWidth(DEMO.rows, ci)),
+    };
+  }
+
   function getDeeplink() {
     try {
       share.update();
@@ -531,6 +560,7 @@ export function createAgentBridge(deps) {
       version: TOOLSET_VERSION,
       ready: true,
       getState: currentState,
+      getDataset,
       getManifest,
       tools: toolDefinitions,
       call: (name, args) => callTool(name, args),

@@ -1,4 +1,4 @@
-# Agent Interface Contract — bitwave v1 (toolset 1.4.0)
+# Agent Interface Contract — bitwave v1 (toolset 1.5.0)
 
 Normative contract for BitWave's agent layer. The human-facing onboarding is
 [`AGENTS.md`](../AGENTS.md); this file is the precise spec the browser bridge, CLI and
@@ -24,7 +24,7 @@ Design rules:
 |---|---|
 | tool id | `bitwave` |
 | title | `BitWave` |
-| toolset version | `1.4.0` |
+| toolset version | `1.5.0` |
 | `schemaVersion` | `1` |
 | browser bridge | `window.bitwave` |
 | legacy surface | `window.BitWave` (schema 1, read-only, unchanged) |
@@ -32,6 +32,11 @@ Design rules:
 | project document | `.bitwave` schema 4 (`src/core/project.ts`; schemas 1/2/3 still load and upgrade) |
 | lane range (agent) | **1–8** — the shipped app cap; the default instrument boots with 3 |
 | frame names | **`A`–`P`** (two operands per lane) and **`Z1`–`Z8`** (derived), lanes 1–8 |
+
+Toolset 1.5.0 (D48) adds one additive browser-bridge getter, `window.bitwave.getDataset()`,
+the opt-in full-matrix dataset readback (§6/§7). The state schema stays `1`, the `.bitwave`
+schema stays `4`, no agent tool is added (the six pure tools are unchanged), and the
+default instrument is pixel-identical.
 
 Keep the id stable across the manifest, CLI, MCP `serverInfo.name`, the bridge global and
 the hidden state node.
@@ -42,7 +47,7 @@ Exports:
 
 ```ts
 export const SCHEMA_VERSION: 1
-export const TOOLSET_VERSION: "1.4.0"
+export const TOOLSET_VERSION: "1.5.0"
 export const TOOL_ID: "bitwave"
 export class AgentToolError extends Error { code; hint? }
 export const TOOLS: ToolDef[]              // definition order is canonical
@@ -303,7 +308,7 @@ once mounted and contains `JSON.stringify(getState())`. `getState()` returns:
   "editing": { "copyArmed": false, "enabled": true },
   "recording": { "on": false, "rows": 0 },
   "deeplink": "file:///…/bitwave-v2.html#bw=…",
-  "bridge": { "schemaVersion": 1, "version": "1.4.0" }
+  "bridge": { "schemaVersion": 1, "version": "1.5.0" }
 }
 ```
 
@@ -330,12 +335,35 @@ once mounted and contains `JSON.stringify(getState())`. `getState()` returns:
   are available only via `getLog()`); the log is not persisted in `.bitwave`/links.
 - The shape is stable; add keys, never repurpose them without a schema bump.
 
+**Dataset readback is opt-in and is not state.** The full imported matrix is never part of
+`getState()`, `#bitwave-state` or any `bitwave:change` payload: `dataset.rows` is the row
+**count** and `dataset.row` is the current row only. A caller that needs every row calls
+`window.bitwave.getDataset()` (§7), which is read-only and synchronous and returns `null`
+when no dataset is loaded; otherwise:
+
+```json
+{
+  "columns": ["word", "flags", "pad"],
+  "rows": [["8ADEFEDA", "1010", "0001"], ["11223344", "1100", "0010"]],
+  "index": 0,
+  "kinds": ["hex", "bin", "bin"],
+  "widths": [32, 4, 4]
+}
+```
+
+`rows` are the raw imported cells (leading zeros preserved), `kinds` is the per-column
+typing from `columnMode` (`"hex" | "bin"`) and `widths` the per-column bit width from
+`columnWidth` (`src/core/csv.ts`); `index` is the current row cursor. Each call returns
+fresh copies (no live references), the getter changes no state and emits no event, and the
+set of keys is fixed. Dataset loading (`setDataset`) keeps its existing patch, validation
+and error semantics; the readback only observes the result.
+
 ## 7. Browser bridge — `window.bitwave`
 
 ```js
 window.bitwave = {
-  schemaVersion: 1, version: "1.4.0", ready: true,
-  getState(), getManifest(), tools(), call(name, args),
+  schemaVersion: 1, version: "1.5.0", ready: true,
+  getState(), getDataset(), getManifest(), tools(), call(name, args),
   getDeeplink(),
   setState(patch), setLane(n), setFrame(name), setView(mode), setWidth(bits),
   setRegister(frame, hex), setBinop(op), setLfo(patch), setDataset(patch),
@@ -356,7 +384,14 @@ Behaviour that must hold:
   changes; unsubscribe is idempotent; throwing subscribers are isolated;
 - `call(name, args)` returns the same envelope as CLI/MCP for the same inputs;
 - `getDeeplink()` returns the absolute current URL (address bar after the setter's
-  immediate `replaceState`).
+  immediate `replaceState`);
+- `getDataset()` is the opt-in dataset readback: read-only and synchronous, it returns
+  `null` when no dataset is loaded, else `{ columns, rows, index, kinds, widths }` with the
+  raw imported cells (leading zeros preserved), the per-column `kinds`/`widths` derived
+  from the shared core, and the current cursor. It returns fresh copies on every call (no
+  live references), changes no state and emits no `bitwave:change`; the full matrix never
+  appears in `getState()`, `#bitwave-state` or a change payload. `setDataset` keeps the
+  `{ csv?, index? }` patch, validation and error semantics documented in the table below.
 
 Setters are applied through the instrument's own commands (store transaction, routing
 evaluation, renderers) — never by writing DOM state directly. Patch keys (closed set;
@@ -371,7 +406,7 @@ unknown key → `E_BAD_ARGS`; all validation happens before any mutation):
 | `register` | `{ frame: A–P, hex: string }` | writes an operand; `E_DRIVEN_INPUT` when routed; `E_BAD_ENUM` for derived frames |
 | `binop` | `and \| or \| xor \| add \| sub` | lane operator |
 | `lfo` | `{ on?: boolean, mode?: "rotcw"\|"rotccw"\|"slide"\|"csvStep", rate?: 1\|2\|4\|8 }` | start/stop keeps the snapshot/restore discipline; mode/rate restart the shape |
-| `dataset` | `{ csv?: string, index?: integer }` | load CSV/TSV text and/or step to a row; `index` requires a dataset |
+| `dataset` | `{ csv?: string, index?: integer }` | load CSV/TSV text and/or step to a row; `index` requires a dataset; read the result back with `getDataset()` |
 | `expression` | `{ frame: A–P, text: string }` | bind/clear a deterministic expression source (`""` clears; `E_INVALID_EXPRESSION` on bad text; clears any route/data on that operand) |
 | `source` | `{ frame: A–P, kind: "none" }` or `{ frame, kind: "data", column }` or `{ frame, kind: "frame", from: "<lane>.<a\|b\|z>" }` | bind/unbind one input to a dataset column or frame route (lanes 1–8); `E_BAD_STATE` for a column outside the current dataset, `E_BAD_ARGS` for a self-route; clears any expression on that operand |
 | `record` | `boolean` | `true` arms a fresh transient take, `false` freezes; rows are read via `getLog()` |
@@ -409,7 +444,7 @@ Automation hooks (additive attributes only):
 
 ```json
 {
-  "id": "bitwave", "title": "BitWave", "version": "1.4.0", "schemaVersion": 1,
+  "id": "bitwave", "title": "BitWave", "version": "1.5.0", "schemaVersion": 1,
   "description": "…compute Z = A op B for any lane (the shipped range is 1–8; the
                   default instrument boots with 3)…",
   "urls": { "app": "bitwave-v2.html", "manifest": "agent/manifest.json",
@@ -469,7 +504,7 @@ Commands: `manifest`, `analyze_register`, `evaluate_lane`, `compare_operands`,
 Newline-delimited JSON-RPC 2.0 over stdio, zero dependencies.
 
 - `initialize` → `{ protocolVersion: "2025-06-18", capabilities: { tools: {} },
-  serverInfo: { name: "bitwave", version: "1.4.0" } }`
+  serverInfo: { name: "bitwave", version: "1.5.0" } }`
 - `notifications/initialized` → no response.
 - `ping` → `{}`.
 - `tools/list` → `{ tools: [{ name, description, inputSchema }] }` (pure tools only).
@@ -525,7 +560,11 @@ selector (the active select carries `[data-agent-lane]`), a non-live `lane`/`fra
 is a truthful `E_OUT_OF_RANGE` with no state change and no event, and an eight-lane
 schema-4 document loads from its canonical compact deeplink reporting eight stable lane
 keys with frames `A`–`P`/`Z1`–`Z8`, `setLane(8)` working, and the frames view rendering
-one card per global frame.
+one card per global frame; and for the dataset readback (1.5.0): `getDataset()` is `null`
+on a fresh page, `setDataset({csv})` round-trips through it exactly (columns, raw rows with
+leading zeros, cursor, `kinds`, `widths`, and `getState().dataset.row` agreement), an
+invalid `setDataset` is refused and leaves the prior dataset untouched, the full matrix
+stays out of `getState()`/`#bitwave-state`, and a read emits no change event.
 
 ## 13. File ownership (when multiple agents build this)
 

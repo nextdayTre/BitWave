@@ -82,7 +82,7 @@ test("manifest --json prints exactly one envelope on stdout", () => {
   assert.equal(envelope.schemaVersion, 1);
   assert.equal(envelope.tool, "manifest");
   assert.equal(envelope.data.id, "bitwave");
-  assert.equal(envelope.data.version, "1.4.0");
+  assert.equal(envelope.data.version, "1.5.0");
   assert.equal(envelope.deeplink, null);
   assert.deepEqual(envelope.warnings, []);
 });
@@ -162,7 +162,7 @@ test("state --project reports the eight-lane fixture by stable key", () => {
   assert.deepEqual(Object.keys(state.lanes), ["1", "2", "3", "4", "5", "6", "7", "8"]);
   assert.equal(state.lane, 8);
   assert.equal(state.frame, "O");
-  assert.equal(state.bridge.version, "1.4.0");
+  assert.equal(state.bridge.version, "1.5.0");
 });
 
 test("the CLI deeplink equals the app's canonical builder for the same state", () => {
@@ -239,7 +239,7 @@ test("MCP initialize / ping / tools-list", () => {
   assert.equal(initialize.result.protocolVersion, PROTOCOL_VERSION);
   assert.equal(PROTOCOL_VERSION, "2025-06-18");
   assert.deepEqual(initialize.result.capabilities, { tools: {} });
-  assert.deepEqual(initialize.result.serverInfo, { name: "bitwave", version: "1.4.0" });
+  assert.deepEqual(initialize.result.serverInfo, { name: "bitwave", version: "1.5.0" });
 
   assert.equal(handleMessage({ jsonrpc: "2.0", method: "notifications/initialized" }), null);
   assert.deepEqual(handleMessage({ jsonrpc: "2.0", id: 2, method: "ping" }).result, {});

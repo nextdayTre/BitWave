@@ -8,10 +8,18 @@ BitWave: a bit register rendered as a wavetable. 1-8 lanes (default: three) of
 - Onboarding: `AGENTS.md`; manifest: `agent/manifest.json`; examples: `agent/examples/`.
 - Browser bridge: `window.bitwave`; hidden state: `#bitwave-state`;
   ready: `body[data-agent-ready='true']`; events: `bitwave:ready`, `bitwave:change`.
-- Toolset 1.4.0; `.bitwave` schema 4 (schema 1/2/3 load and upgrade). Bridge additions:
+- Toolset 1.5.0; `.bitwave` schema 4 (schema 1/2/3 load and upgrade). Bridge additions:
+  `getDataset()` (opt-in matrix readback; `null` with no dataset),
   `setExpression(frame, text)`, `setSource(frame, source)`, `setRoute(frame, from)`,
   `record(on)`, `getLog({limit})`; state additions:
   `recording:{on,rows}`, `lanes[*].expressions`.
+- Dataset readback is opt-in: `getDataset()` returns
+  `{columns, rows, index, kinds, widths}` (raw imported cells, leading zeros preserved;
+  `kinds`/`widths` from the shared per-column typing) or `null`; read-only and synchronous,
+  fresh copies, no change event. The full matrix is never in `getState()` /
+  `#bitwave-state` / change payloads — their `dataset` is `{columns, rows:count, index,
+  row}` (metadata plus the current row only). `setDataset({csv,index})` keeps its existing
+  validation/errors and is how processed data is loaded.
 - Lane range 1-8 (frames A-P and Z1-Z8), matching the shipped app cap; the default
   instrument boots with lanes 1/2/3. `setLane`/`setFrame` accept only lanes the live tree
   carries (a non-live lane is `E_OUT_OF_RANGE`, never a lane creation). The stage-bar lane
@@ -19,7 +27,7 @@ BitWave: a bit register rendered as a wavetable. 1-8 lanes (default: three) of
   (`manifest.ui.laneSelect` = `#stageBar .lane-select`).
 - `getState().lanes` reports exactly the live lanes, keyed by the stable lane key
   (`"1"`..`"8"`, gaps allowed, ascending numeric order); state `bridge.version` is
-  `1.4.0`.
+  `1.5.0`.
 - `.bitwave` schema 4 keys `lanes` by the stable lane key (`"1"`..`"13"`; gaps allowed,
   at most 8 lanes per document, ascending numeric order); `build_deeplink` accepts
   schema 1-4 and always canonicalises to schema 4.

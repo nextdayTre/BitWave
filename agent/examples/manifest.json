@@ -5,7 +5,7 @@
   "data": {
     "id": "bitwave",
     "title": "BitWave",
-    "version": "1.4.0",
+    "version": "1.5.0",
     "schemaVersion": 1,
     "description": "BitWave renders a bit register as a wavetable: compute Z = A op B for any lane (the shipped range is 1–8; the default instrument boots with 3), compare operators, parse CSV/TSV datasets and build canonical #bw= deeplinks from one shared, deterministic core.",
     "urls": {

@@ -67,7 +67,7 @@ dependencies. Stdout is the protocol channel and never carries logs; a clean
 stdin EOF exits 0.
 
 - `initialize` → `{ protocolVersion: "2025-06-18", capabilities: { tools: {} },
-  serverInfo: { name: "bitwave", version: "1.4.0" } }`
+  serverInfo: { name: "bitwave", version: "1.5.0" } }`
 - `notifications/initialized` → no response
 - `ping` → `{}`
 - `tools/list` → `{ tools: [{ name, description, inputSchema }] }` (the six pure tools)

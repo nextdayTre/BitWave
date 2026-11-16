@@ -23,7 +23,7 @@ import { serializeProject, type ProjectDoc, type ProjectViewState } from "./proj
 
 export const TOOL_ID = "bitwave";
 export const TOOL_TITLE = "BitWave";
-export const TOOLSET_VERSION = "1.4.0";
+export const TOOLSET_VERSION = "1.5.0";
 export const SCHEMA_VERSION = 1;
 export const DEFAULT_WIDTH: RegisterSize = 64;
 

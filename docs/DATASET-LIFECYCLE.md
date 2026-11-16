@@ -1,12 +1,20 @@
 # Dataset lifecycle — design note
 
 **Status: exploration, revised 2026-11-16 (process-centric acceptance test). Not
-approved, no shipped change.** Companion to [`ROUTING-IO-MODEL.md`](ROUTING-IO-MODEL.md).
+approved as a whole; the data-plane readback subset landed in toolset 1.5.0 (D48), no
+other shipped change.** Companion to [`ROUTING-IO-MODEL.md`](ROUTING-IO-MODEL.md).
 This note started as a data-plane note (read → process → write → compare). The author's
 follow-up reframed the acceptance test around **the process itself and its provenance**:
 BitWave should not be a visualizer that runs on a black box. The external algorithm still
 runs outside the instrument; the intermediate steps and the citation travel with the data,
 so a user sees the transformation unfold and another person or agent can reproduce it.
+
+**Landed so far (2026-11-16):** the **dataset readback** — `window.bitwave.getDataset()`
+returns the live matrix `{ columns, rows, index, kinds, widths }` (or `null`), opt-in and
+read-only, with `getState()`/change payloads still carrying metadata only (D48, toolset
+1.5.0). The write path is unchanged (`setDataset({ csv })`). Everything else below —
+step timeline/playback, provenance/citation, dataset export, formal dataset tools and
+labels — remains future design.
 
 ## 0. The test case and the revised acceptance test
 
@@ -84,7 +92,13 @@ acceptance test is:
 ### 1.3 Agent surface
 
 - `getState().dataset` = `{ columns, rows, index, row }` — names, count, cursor and the
-  **current row only**; the full matrix is not exposed.
+  **current row only**; the full matrix is not exposed in state.
+- **Dataset readback (landed, toolset 1.5.0, D48):** `window.bitwave.getDataset()` returns
+  the live matrix `{ columns, rows, index, kinds, widths }` or `null` when no dataset is
+  loaded — read-only, synchronous, fresh copies, no change event. `kinds`/`widths` come
+  from the shared `columnMode`/`columnWidth`; `rows` are the raw imported cells (leading
+  zeros preserved). It is opt-in: `getState()`/`#bitwave-state`/change payloads stay
+  metadata-only.
 - The bridge setter exists: `setState({ dataset: { csv, index } })` parses and replaces the
   live dataset; `setState({ dataset: { index } })` moves the cursor.
 - Tools: `parse_dataset` parses a CSV **string supplied by the caller**; there is no
@@ -131,7 +145,7 @@ black-box "process" button that hides what happened; a sparkline with no states.
 
 | capability | today | missing | minimal shape |
 |---|---|---|---|
-| read the loaded data | `getState().dataset` current-row-only | full matrix / CSV readback | `getDataset` returning columns + rows (bounded) and/or a CSV form, opt-in |
+| read the loaded data | `getState().dataset` current-row-only; **`getDataset()` full matrix landed (toolset 1.5.0, opt-in)** | CSV/export form, bounds/hints and a formal tool | `getDataset` returning columns + rows (bounded) and/or a CSV form, opt-in |
 | load processed data | bridge `setState({dataset:{csv}})` | formal discoverable dataset tools | `setDataset`/`importDataset` wrapping the setter |
 | step sequence | none | **timeline of states with labels, cursor, playback** | dataset timeline (snapshots or step columns) + step transport |
 | compare steps | row stepper only; A·B within a step | a way to see/record a step progression | playback + Record integration; step-to-step comparison later |
@@ -144,10 +158,11 @@ black-box "process" button that hides what happened; a sparkline with no states.
 
 ### 4.1 Data plane (unchanged from the I/O note)
 
-1. **Dataset readback** (`getDataset`): `{ columns, rows, index }` or CSV; bounded,
-   deterministic, read-only, never part of change-event state.
+1. **Dataset readback** (`getDataset`) — **landed in toolset 1.5.0 (D48)** as
+   `{ columns, rows, index, kinds, widths }`, read-only, deterministic, opt-in, never part
+   of change-event state; the CSV/export form and documented bounds remain future.
 2. **Formal dataset write** (`setDataset`/`importDataset`): wrap the existing setter; same
-   validation/errors.
+   validation/errors (the existing bridge `setDataset({csv,index})` is unchanged).
 3. **Dataset export** (human): explicit `export dataset` CSV; observations/take exports
    stay separate.
 4. **Labels**: derive display labels from bound columns (`A · Colors`); no schema change
@@ -234,7 +249,7 @@ provenance: {
 user: I have Colors loaded. Sort it with the bubble-sort repo and show me the steps.
 
 agent:
-  data = bitwave.getDataset()                    # new: full rows
+  data = bitwave.getDataset()                    # opt-in readback (landed, toolset 1.5.0)
   steps = external_sort_with_trace(data, params) # external; emits labelled states
   bitwave.setDataset({
     steps: [

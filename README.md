@@ -208,8 +208,9 @@ this in the console:
 
 ```js
 window.bitwave.schemaVersion            // 1
-window.bitwave.version                  // "1.4.0"
+window.bitwave.version                  // "1.5.0"
 window.bitwave.getState()               // full UI state (schema 1); lanes = the live set
+window.bitwave.getDataset()             // loaded matrix or null (opt-in readback)
 window.bitwave.getManifest()            // manifest data
 window.bitwave.tools()                  // tool definitions
 window.bitwave.call("compare_operands", { a: "8ADEFEDA85210125", b: "FFFFFFFF00000000" })
@@ -232,6 +233,24 @@ returns, and a no-op setter emits no change event. Headless state extraction nee
 driver — the page exposes `body[data-agent-ready="true"]`, a hidden
 `<pre id="bitwave-state" data-schema-version="1">` containing `JSON.stringify(getState())`,
 and the `bitwave:ready` / `bitwave:change` events.
+
+**Dataset load and readback (since toolset 1.5.0).** Processed data is loaded exactly as
+before with `setDataset({ csv })` (or `{ index }` to move the cursor). The matrix is read
+back with the opt-in getter `getDataset()`, which returns
+`{ columns, rows, index, kinds, widths }` — raw imported cells with leading zeros preserved,
+per-column `kinds` (`"hex" | "bin"`) and bit `widths` — or `null` when no dataset is loaded:
+
+```js
+window.bitwave.setDataset({ csv: "word,flags\n8ADEFEDA,1010\n11223344,1100" });
+window.bitwave.getDataset();
+// { columns: ["word","flags"], rows: [["8ADEFEDA","1010"],["11223344","1100"]],
+//   index: 0, kinds: ["hex","bin"], widths: [32,4] }
+```
+
+`getDataset()` is read-only and synchronous, returns fresh copies, and emits no change
+event. The full matrix never appears in `getState()` / `#bitwave-state` / change payloads:
+their `dataset` stays `{ columns, rows: <count>, index, row }` (metadata plus the current
+row only).
 
 ### 3. Node CLI and MCP server
 
@@ -271,7 +290,7 @@ catalogue.
 ```powershell
 node agent/gen-agent-artifacts.mjs --check   # manifest + examples current (deterministic)
 node agent/selftest.mjs                      # CLI + MCP + canonical vectors: 26 checks
-node agent/verify-browser.mjs                # independent headless-browser checklist: 34 checks
+node agent/verify-browser.mjs                # independent headless-browser checklist: 39 checks
 npm test                                     # includes the agent-tools/state tests
 ```
 

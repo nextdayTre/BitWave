@@ -1,6 +1,6 @@
 # BitWave — implementation status
 
-**Updated:** 2026-11-14 · **Phase:** F0 **done**, F1 **done**, F2 spine + render + UI modules done (pointer/lane controllers still in `main.js`), F3 source table + frame routing **done**, F4 accessibility + IA **done**, F5 persistence & reach **done**, **F6 distribution done**, the **agent interface done** (2026-11-08), the **external-routing slice done** (2026-11-08, D40) — expression sources, a DAW-style Record/log, `.bitwave` schema 3, and bridge `setExpression`/`record`/`getLog` (toolset 1.1.0) — the **frame-navigation pair done** (2026-11-14, D41/D42), the **dynamic-lanes pass complete** (D43–D46, 2026-11-14): core naming primitives, state lane-key identity, `.bitwave` schema 4 + migration (D44), the compact `#bw=` codec + budget proof (D45), the live 1–8 lane UI (D46: native per-pane lane dropdown, frames-view add/duplicate/delete, `2L` source rows, `3L` Record rows), the **agent-surface + docs slice** (toolset 1.4.0: agent lane range 1–8, frames `A`–`P`/`Z1`–`Z8`, lane dropdown selector in the manifest, eight-lane verification + fixture, docs/screenshots), and the **GUI rearrangement done** (2026-11-14, D47: top-bar VIEW + 2D/3D toggle, per-pane hinge + copy menu, always-present readout truth disclosure, bottom VIEW row removed). The plan's funded path is complete; Tauri remains deferred (D37).
+**Updated:** 2026-11-16 · **Phase:** F0 **done**, F1 **done**, F2 spine + render + UI modules done (pointer/lane controllers still in `main.js`), F3 source table + frame routing **done**, F4 accessibility + IA **done**, F5 persistence & reach **done**, **F6 distribution done**, the **agent interface done** (2026-11-08), the **external-routing slice done** (2026-11-08, D40) — expression sources, a DAW-style Record/log, `.bitwave` schema 3, and bridge `setExpression`/`record`/`getLog` (toolset 1.1.0) — the **frame-navigation pair done** (2026-11-14, D41/D42), the **dynamic-lanes pass complete** (D43–D46, 2026-11-14): core naming primitives, state lane-key identity, `.bitwave` schema 4 + migration (D44), the compact `#bw=` codec + budget proof (D45), the live 1–8 lane UI (D46: native per-pane lane dropdown, frames-view add/duplicate/delete, `2L` source rows, `3L` Record rows), the **agent-surface + docs slice** (toolset 1.4.0: agent lane range 1–8, frames `A`–`P`/`Z1`–`Z8`, lane dropdown selector in the manifest, eight-lane verification + fixture, docs/screenshots), the **GUI rearrangement done** (2026-11-14, D47: top-bar VIEW + 2D/3D toggle, per-pane hinge + copy menu, always-present readout truth disclosure, bottom VIEW row removed), and the **dataset readback done** (2026-11-16, D48: `window.bitwave.getDataset()` opt-in full-matrix readback, toolset 1.5.0 — state/schema/UI unchanged; timeline, steps/playback and provenance remain future). The plan's funded path is complete; Tauri remains deferred (D37).
 **Source of truth:** [`PLAN.md`](PLAN.md) for the plan, [`DECISIONS.md`](DECISIONS.md) for choices taken, [`DESIGN.md`](DESIGN.md) for the visual contract. `index.html` is still untouched and remains the shipping instrument.
 
 ## Author decisions (2026-11-06)
@@ -42,7 +42,8 @@ cell enough? Confirm before the matrix lands in the app.
 | **Frame navigation** | **Done (2026-11-14)** | A/B/Z1 readout labels are focus buttons bound to the whole-word hex entry (D41); the pop-out frame navigator is replaced by the stage-level **frames view** — equal cards per frame, lane columns, mini-splines, per-card eyes, `unpair B`, horizontal scroll arrows/track, `Lanes`/Esc return, and a perpetual `+` tile that names the 3-lane cap until dynamic lanes (D42). Canvas hidden while open; strip/meta/controls stay live; default pixels unchanged when closed. |
 | **Dynamic lanes (D43–D46)** | **Done (2026-11-14)** | **Core naming primitives** and **state lane-key identity** landed; **`.bitwave` schema 4 + migration (D44)**: `lanes` keyed by the stable lane key (`"1"`..`"13"`, gaps allowed, at most `APP_LANE_CAP` (8) lanes, ascending numeric order), schema 1/2/3 documents and `#bw=` links load and upgrade on read, 9 lanes/invalid keys refused, Z never stored; **compact share codec + budget proof (D45)**: canonical `#bw=` links are compact (8 lanes/256-bit = 1260 chars against the unchanged 2000 budget), legacy JSON links load, dataset then expressions drop with explicit flags; **live lane UI (D46)**: the tree holds the document's whole 1–8 lane set, the stage bar uses a native per-pane lane dropdown (`Lane 1`…`Lane 8`, `[data-agent-lane]`), the frames view `+` adds lanes and each lane head duplicates/deletes (reference-counted inline confirmation), the source table shows `2L` grouped rows and Record rows are `3L`; **agent-surface + docs slice (toolset 1.4.0)**: agent lane range 1–8 (`FrameRef.slotKey` optional, legacy lanes 1–3 only), frames `A`–`P`/`Z1`–`Z8`, `laneSelect` manifest selector, bridge refuses non-live lanes with `E_OUT_OF_RANGE`, `examples/eight-lanes.bitwave.json` + eight-lane verifier/screenshot, contract/AGENTS/llms/README/DESIGN/ecosystem docs updated. Gate counts at the time of the slice: `npm test` 179, browser harness 59/59 (60/60 with parity vs the then-current D46 UI artifact — 6/6 states pixel-identical), `agent/selftest.mjs` 26/26, `agent/verify-browser.mjs` 34/34, PWA 8/8. The later **D47 GUI rearrangement** intentionally changes the rendered re-homed regions (top bar, pane heads, readout row, removed bottom row), so `--compare` parity stops at the D47 artifact and the current browser gate is 61/61. |
 | **Routing I/O exploration** | **Note only** | [`docs/ROUTING-IO-MODEL.md`](docs/ROUTING-IO-MODEL.md) (2026-11-16) inventories the current frame/lane/route/source model and separates the essential graph semantics (shared width, `Z = A op B`, clocked evaluation, delays) from the lane housing (fixed three-register groups, lane-scoped names, columns/split/source-row grouping). It compares rack-view-only, reference operands (schema 5) and a frame/operator port graph (schema 6), maps the Multiband-Expressor sidechain through each, lists the I/O semantics to settle and a headless measurement plan. **No code, contract or schema change; the expressor remains a committed spike.** |
-| **Dataset lifecycle exploration** | **Note only** | [`docs/DATASET-LIFECYCLE.md`](docs/DATASET-LIFECYCLE.md) (2026-11-16, revised) starts from the author's sorting acceptance test and now centers on the **process, not just endpoints**: a step-annotated timeline (`Colors Input → Bubble Sort Step 1 … → Sorted Output`) with a transport/playback, provenance/citation (library, URL+commit, parameters, generated-by, optional hashes), export and a reproducibility loop for a second agent — while the external algorithm stays outside BitWave. The data-plane audit remains (one active dataset, CSV import/auto-binding, stepping, `getState().dataset` current-row-only, bridge dataset setter, no readback/export tool), with the minimal readback/export, formal dataset tools, derived labels and dataset export. Recommended step encoding: snapshots first, step columns later. Explicitly defers function frames/global frame identity and in-page code execution. **No code or contract change.** |
+| **Dataset lifecycle exploration** | **Note only (readback subset shipped)** | [`docs/DATASET-LIFECYCLE.md`](docs/DATASET-LIFECYCLE.md) (2026-11-16, revised) starts from the author's sorting acceptance test and now centers on the **process, not just endpoints**: a step-annotated timeline (`Colors Input → Bubble Sort Step 1 … → Sorted Output`) with a transport/playback, provenance/citation (library, URL+commit, parameters, generated-by, optional hashes), export and a reproducibility loop for a second agent — while the external algorithm stays outside BitWave. The data-plane audit remains (one active dataset, CSV import/auto-binding, stepping, `getState().dataset` current-row-only, bridge dataset setter); the **dataset readback subset shipped as toolset 1.5.0 / D48** (`getDataset()` — see the Dataset readback row below). Still future: dataset export, formal dataset tools, derived labels and the whole step/provenance timeline. Recommended step encoding: snapshots first, step columns later. Explicitly defers function frames/global frame identity and in-page code execution. |
+| **Dataset readback (D48)** | **Done (2026-11-16)** | `window.bitwave.getDataset()` (additive bridge getter; toolset 1.5.0): returns `{ columns, rows, index, kinds, widths }` for the live dataset or `null` with none — raw imported cells (leading zeros preserved), `kinds`/`widths` from the shared `columnMode`/`columnWidth`, the current row cursor; read-only, synchronous, fresh copies, no state change/event; the full matrix stays out of `getState()`/`#bitwave-state`/change payloads. `setDataset({csv,index})` and its validation are unchanged. No agent tool, no UI, state schema 1 and `.bitwave` schema 4 unchanged. Contract/AGENTS/llms/README/DATASET-LIFECYCLE docs updated; verifier 34→39 checks. Timeline/steps/playback/provenance remain future. |
 | **F6 Distribution** | **Done** | Hosted/installable PWA build (`dist/hosted/`): manifest + maskable icons, hash-versioned app-shell service worker, relative URLs, offline reload. The committed single-file `bitwave-v2.html` is untouched and still has zero external references (asserted). `npm run check:pwa` proves install/offline against the real built output; deploy/install/privacy guidance in [`docs/hosting.md`](docs/hosting.md). Tauri 2 deferred (D37). |
 
 ## F4 progress (2026-11-06) — complete
@@ -334,7 +335,61 @@ token, font or style was added.
   where layout references changed. The re-homed regions are the documented parity
   exception (the toolset-1.4.0 artifact differs there by design).
 
+## Dataset readback (2026-11-16) — done (D48)
+
+**Minimal data-plane slice, not a lifecycle slice.** The live bridge could load processed
+data (`setDataset({csv})`) but could not read the loaded dataset back. Toolset 1.5.0 adds
+one additive bridge getter for exactly that; state schema `1`, `.bitwave` schema `4`, the
+six tools, the write path and the rendered instrument are unchanged.
+
+- **API.** `window.bitwave.getDataset()` returns `null` when no dataset is loaded, else
+  `{ columns, rows, index, kinds, widths }` — the live parsed matrix (raw imported cells,
+  leading zeros preserved), the current row cursor, and per-column `kinds`
+  (`"hex" | "bin"` from `columnMode`) / `widths` (from `columnWidth`) computed by the shared
+  core in `src/core/csv.ts`. Read-only, synchronous, fresh copies, no state change and no
+  `bitwave:change` event.
+- **Opt-in.** The full matrix never enters `getState()`, `#bitwave-state` or a change
+  payload: `state.dataset` stays `{columns, rows:<count>, index, row}` (metadata plus the
+  current row only). The getter is the only surface that carries every cell.
+- **Load path unchanged.** `setDataset({ csv, index })` keeps its wrapper, validation and
+  closed error set: an invalid CSV is still `E_BAD_STATE` and an out-of-range cursor
+  `E_OUT_OF_RANGE`, both leaving the prior dataset untouched.
+- **Contract/toolset.** Toolset `1.5.0` (additive bridge surface); the contract documents
+  the getter in §6 (opt-in/full-matrix rule, `null` case) and §7 (bridge list + behaviour);
+  `TOOLSET_VERSION` bumped, `agent/manifest.json` + examples regenerated, tests/selftest/
+  verifier pins moved to 1.5.0. No new agent tool (it is a bridge getter, not a pure tool).
+- **Verification.** `agent/verify-browser.mjs` grows 34 → **39** checks: (a) `null` on a
+  fresh page, (b) an exact `setDataset({csv})` → `getDataset()` round-trip (columns, raw
+  rows with leading zeros, stepped cursor, `kinds`, `widths`, `getState().dataset.row`
+  agreement), (c) an invalid `setDataset` refused with the prior dataset untouched,
+  (d) `getState()`/`#bitwave-state` carrying metadata only (no full rows), and (e) no
+  change event and fresh copies per read.
+- **Docs.** `docs/AGENT-INTERFACE.md` (§1/§2/§6/§7/§8/§10/§12), `AGENTS.md`, `llms.txt`,
+  `README.md`, this file, `DECISIONS.md` D48, and a status note in
+  `docs/DATASET-LIFECYCLE.md` (readback landed; timeline/steps/playback, provenance,
+  export, formal tools and labels remain future).
+- **No UI change.** No new button/panel and no layout move; parity against the `76b1753`
+  artifact is 6/6 states pixel-identical.
+
 ## Verified this session
+
+### Dataset-readback slice gates (2026-11-16, D48 / toolset 1.5.0)
+
+- `npm test` → **179 tests, all pass, 0 fail** (167 + 12; the change is a browser bridge
+  getter, so no core tests were added).
+- `npm run typecheck` → **clean**.
+- `node agent/gen-agent-artifacts.mjs --check` → **8 files current** after intentional
+  regeneration (toolset 1.5.0 in `agent/manifest.json` and `agent/examples/manifest.json`).
+- `node agent/selftest.mjs` → **26/26** (version pins moved to 1.5.0).
+- `npm run build` → **`bitwave-v2.html` 343.3 KB**, single file, no external references.
+- `node tools/browser-check.mjs` → **61/61** (unchanged; the UI was not touched).
+- `node agent/verify-browser.mjs` → **39/39** (up from 34: the five dataset-readback
+  checks; every existing check kept).
+- `node tools/build-pwa.mjs && node tools/check-pwa.mjs` → **8/8**.
+- Parity: `node tools/browser-check.mjs --compare <HEAD artifact>` → **6/6 states
+  pixel-identical** (62/62 checks with `--compare`). The first attempt flagged the known
+  compositing-flaky `3d-focus-z1` state; the immediate retry was clean and byte-identical,
+  the same behaviour recorded for the D45 slice.
 
 ### GUI-rearrangement slice gates (2026-11-14, D47)
 
@@ -691,3 +746,8 @@ infrastructure):
    The 3-D hinge is shipped as session-only presentation; persist `fold` with the
    dynamic-lanes schema bump (gap 14). The readout jitter fix is shipped (`#trend` fixed
    slot, browser check).
+7. **Dataset lifecycle (design only after the readback):** the dataset readback shipped as
+   D48/toolset 1.5.0 (`getDataset()`); what remains in
+   [`docs/DATASET-LIFECYCLE.md`](docs/DATASET-LIFECYCLE.md) is future design — dataset
+   export, formal dataset tools, derived labels, and the step timeline/playback with
+   provenance/citation and the reproducibility loop. None of it is approved or shipped.

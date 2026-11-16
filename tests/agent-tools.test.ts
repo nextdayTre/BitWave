@@ -50,7 +50,7 @@ test("manifest is JSON-safe, versioned and strips run functions", () => {
   const manifest = getManifest();
   assert.equal(manifest.id, "bitwave");
   assert.equal(manifest.schemaVersion, SCHEMA_VERSION);
-  assert.equal(manifest.version, "1.4.0");
+  assert.equal(manifest.version, "1.5.0");
   assert.equal(manifest.tools.length, 6);
   assert.deepEqual(manifest.errorCodes, [...ERROR_CODES]);
   assert.ok(!("run" in manifest.tools[0]));

@@ -103,7 +103,7 @@ Every tool answer uses one envelope — `{ ok, schemaVersion, tool, data, deepli
 on success, `{ ok:false, schemaVersion, tool, error:{ code, message, hint? }, warnings }`
 on failure — with a closed error-code set. The manifest
 (`agent/manifest.json`, byte-identical to `getManifest()`) is the machine-readable
-identity: id `bitwave`, toolset `1.4.0`, `schemaVersion: 1`, `urls`, `deeplink`,
+identity: id `bitwave`, toolset `1.5.0`, `schemaVersion: 1`, `urls`, `deeplink`,
 `ui` selectors (including `ui.laneSelect` for the stage-bar lane dropdown), `tools`,
 `errorCodes`, `invariants`, and the reserved `relatedTools`.
 
