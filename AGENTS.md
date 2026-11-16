@@ -238,6 +238,7 @@ node agent/verify-browser.mjs
 | `docs/BITWAVE-ECOSYSTEM-MAP.md` | sibling tools and what a handoff would carry |
 | `docs/DYNAMIC-LANES.md` | design note (shipped): lane-count ceiling (13/8), the live 1–8 lane set, `+`/dup/del, compact share budget; D43–D46 |
 | `docs/ROUTING-IO-MODEL.md` | design note (exploration): lanes as computation vs housing, sends/fan-out, reference operands vs a frame/operator port graph, expressor sidechain I/O, cost/measurement plan |
+| `docs/DATASET-LIFECYCLE.md` | design note (exploration): dataset readback/export, formal dataset tools, frame labels, before/after compare flow, agent sorting workflow; function-frame/global-identity model deferred |
 | `docs/EXTERNAL-ROUTING.md` | shipped slice: Record/log and expression operands (schema 3, toolset 1.1.0) |
 | `agent/manifest.json` | generated capability manifest (tools, selectors, errors) |
 | `agent/examples/` | generated example envelopes, one per tool |

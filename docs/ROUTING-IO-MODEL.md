@@ -312,6 +312,8 @@ Keep the shipped instrument untouched for now. In order:
 
 - `spike/multiband-expressor.html` — one nibble-snapped band, per-band expression/amount,
   snapshot apply/revert; the current expressor probe.
+- [`DATASET-LIFECYCLE.md`](DATASET-LIFECYCLE.md) — the data-plane companion: dataset
+  readback/export, frame labels, before/after compare; the sorting-prompt acceptance test.
 - `docs/DYNAMIC-LANES.md` — the lane set, naming and cap precedent (D43–D46).
 - `docs/EXTERNAL-ROUTING.md` — expressions, Record and the per-operand source model.
 - `DECISIONS.md` D33–D47 — persistence, routes, source kinds, lane set, re-homing.
