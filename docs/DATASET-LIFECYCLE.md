@@ -199,12 +199,52 @@ for their operator. No lane refactor, no function frames, no wires.
   first version; named datasets are a later question.
 - **A new comparison chart.** The existing A·B wave and truth table are the comparison.
 
-## 8. Relation to the author's other tool
+## 8. Relation to Nibsort (author's earlier data-surface tool)
 
-The author has an earlier unrelated data-surface tool that may inform this API. This note
-defines the minimal BitWave-side surface independently; if that tool provides a useful
-dataset model or export shape, it can be adapted in a follow-up without changing the
-lifecycle above. No dependency is assumed.
+The author shared **Nibsort** (`Divine-Beauty-Proportion`, outside this repo): a
+zero-dependency tool for sorting/searching/grouping CSV data by **positions inside hex
+and binary strings**, with a Python CLI and a standalone browser spreadsheet GUI. It was
+built before BitWave and was inspected as a possible data-surface starting point.
+
+What it is:
+
+| part | what | notes |
+|---|---|---|
+| `gui/engine.js` (~30 KB) | pure browser+Node engine: parse delimited text, normalise hex/bin cells to bit strings, `COLUMN:SELECTOR:MODIFIER` field language (`n5`, `b12-17`, `B3`, `msb/lsb`, `pad`), sort/filter/match/group/profile | DOM-free, zero deps; values compared as bit strings (leading zeros matter); the Python suite (23 tests, passing) is the reference |
+| `gui/app.js`, `index.html`, `style.css` (~85 KB) | standalone spreadsheet UI: nibble ruler sort, sort pipeline, filters, search, lookup/histogram, profile heatmap, cell inspector, CSV paste/open/export, copy CLI | standalone document; not part of BitWave |
+| `nibsort/*.py` + tests | Python CLI (`info/sort/find/group/profile`) and 23 unit tests | separate runtime; zero deps |
+
+Overlap and relevance:
+
+| capability | BitWave today | Nibsort | reuse reading |
+|---|---|---|---|
+| CSV/TSV parse, per-column hex/bin typing, padding | `src/core/csv.ts` (tested, register-aligned) | equivalent, bit-string based | **do not duplicate**; keep `csv.ts` as the one implementation |
+| position-based query language (nibble/bit/byte, MSB/LSB) | none | strong, thoughtfully aligned with BitWave's nibble-first model | useful **vocabulary** if we ever add a dataset query/inspector; not needed for readback |
+| sort/filter/group/profile over a dataset | only dataset stepping | yes | separate "dataset workspace" capability; out of scope for the lifecycle slice |
+| cell inspector / nibble breakdown | BitWave already has the nibble strip/readouts | per-cell breakdown | concepts overlap; BitWave's own surfaces are closer to the instrument |
+| dataset export / paste | no dataset export via UI/agent (gap in §4) | export CSV, paste data | confirms the gap; BitWave should add its own export/readback |
+| agent/CLI access | bridge/CLI tools (gap: no dataset readback) | Python CLI, no agent schema/manifest | Nibsort CLI could be an **external companion** an agent runs, not a BitWave dependency |
+
+**Verdict:** treat Nibsort as a **reference and possible companion, not a merge target**.
+
+- Do **not** embed the GUI or depend on the Python package: BitWave is a single-file
+  instrument with one DOM-free core, one state tree and one agent contract; a second
+  spreadsheet app/runtime would duplicate parsers, add a second UX and complicate the
+  build/packaging for no lifecycle-slice benefit.
+- The interesting reusable artifact is `gui/engine.js`: it is pure, zero-dep and its field
+  language is close to BitWave's nibble/bit identity. If BitWave later specifies a
+  **positional dataset workspace / query tools**, the right move is to port the field
+  language and comparison semantics into a DOM-free `src/core/dataset-query.ts` with its
+  own tests (the Python suite is the behavioural reference; the JS port currently has no
+  dedicated tests), and add a provenance/licence note (the author owns the tool; the repo
+  has no LICENSE file, so a reuse decision should record the terms).
+- For the sorting prompt, Nibsort is **not required**: that workflow needs dataset
+  readback/export, labels and a before/after comparison, not positional sorting. If the
+  agent happens to need positional sorting, Nibsort's CLI is a reasonable external tool —
+  no dependency, no bundle.
+
+The minimal surface in §4 is unchanged by this assessment and remains independent of
+Nibsort.
 
 ## 9. Open questions
 
