@@ -22,7 +22,8 @@
 import { buildSpline, evalSpline } from "../core/spline.ts";
 import { APP_LANE_CAP } from "../core/lanedefs.ts";
 import { setFocus, toggleFrameVisibility } from "../state/actions.ts";
-import { liveLaneKeys, S, curLane, focusKey, frameName } from "../state/instrument.ts";
+import { describeInput } from "../state/bindings.ts";
+import { OPSYM, liveLaneKeys, S, curLane, focusKey, frameName } from "../state/instrument.ts";
 import { routing } from "../state/routing.ts";
 import { toHexOf } from "../render/readouts.js";
 
@@ -53,13 +54,28 @@ export function createFrameNavigator(deps) {
   const framesLeft = document.getElementById("framesLeft");
   const framesRight = document.getElementById("framesRight");
   const framesThumb = document.getElementById("framesThumb");
+  const framesTree = document.getElementById("framesTree");
+  const framesLaneCount = document.getElementById("framesLaneCount");
+  const framesTitle = document.getElementById("framesTitle");
+  const framesSub = document.getElementById("framesSub");
+  const framesFilters = document.getElementById("framesFilters");
   const SVG_NS = "http://www.w3.org/2000/svg";
   const FRAME_ORDER = ["a", "b", "z"];
+  const FILTER_TITLES = {
+    all: "All Frames",
+    operands: "Operand Frames",
+    derived: "Derived Frames",
+    visible: "Visible in 2D",
+  };
   /** Lane key whose delete button is showing its inline confirmation. */
   let pendingDelete = null;
+  /** Transient visual filter in the frames browser (resets to "all" on open). */
+  let filterMode = "all";
 
   const prefersReducedMotion = () =>
     window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  const compactHex = (hex) => (hex.length > 10 ? `${hex.slice(0, 4)}\u2026${hex.slice(-4)}` : hex);
 
   /* ── previews ─────────────────────────────────────────────────────────── */
 
@@ -67,8 +83,8 @@ export function createFrameNavigator(deps) {
     const vals = reg.target;
     if (!vals || vals.length === 0) return "";
     const w = 160;
-    const h = 28;
-    const pad = 2;
+    const h = 44;
+    const pad = 4;
     const xs = vals.map((_, j) => (vals.length === 1 ? w / 2 : (j / (vals.length - 1)) * w));
     const ys = vals.map((v) => h - pad - (v / 15) * (h - pad * 2));
     const sp = buildSpline(xs, ys);
@@ -83,17 +99,58 @@ export function createFrameNavigator(deps) {
   function makePreview(reg, frame) {
     const svg = document.createElementNS(SVG_NS, "svg");
     svg.setAttribute("class", `frame-preview ${frame}`);
-    svg.setAttribute("viewBox", "0 0 160 28");
+    svg.setAttribute("viewBox", "0 0 160 44");
     svg.setAttribute("preserveAspectRatio", "none");
     svg.setAttribute("aria-hidden", "true");
-    const line = document.createElementNS(SVG_NS, "polyline");
-    line.setAttribute("points", previewPoints(reg));
-    svg.appendChild(line);
+
+    const mid = document.createElementNS(SVG_NS, "line");
+    mid.setAttribute("class", "frame-mid");
+    mid.setAttribute("x1", "0");
+    mid.setAttribute("y1", "22");
+    mid.setAttribute("x2", "160");
+    mid.setAttribute("y2", "22");
+    svg.appendChild(mid);
+
+    const points = previewPoints(reg);
+    if (points) {
+      const area = document.createElementNS(SVG_NS, "polygon");
+      area.setAttribute("class", "frame-area");
+      area.setAttribute("points", `0,44 ${points} 160,44`);
+      svg.appendChild(area);
+
+      if (frame === "z") {
+        const glow = document.createElementNS(SVG_NS, "polyline");
+        glow.setAttribute("class", "frame-glow");
+        glow.setAttribute("points", points);
+        svg.appendChild(glow);
+      }
+
+      const line = document.createElementNS(SVG_NS, "polyline");
+      line.setAttribute("class", "frame-line");
+      line.setAttribute("points", points);
+      svg.appendChild(line);
+    }
     return svg;
   }
 
   const frameReg = (sl, frame) => (frame === "a" ? sl.A : frame === "b" ? sl.B : sl.Z);
   const frameSub = (frame) => (frame === "z" ? "derived" : "operand");
+
+  function frameRoleBadge(sl, frame) {
+    if (frame === "z") return { text: "derived", accent: true };
+    const info = describeInput(sl, frame);
+    if (info.source.kind === "data") return { text: "data", accent: false };
+    if (info.source.kind === "frame") return { text: info.state, accent: true };
+    if (info.source.kind === "expr") return { text: "expr", accent: true };
+    return { text: "operand", accent: false };
+  }
+
+  function matchesFilter(sl, frame) {
+    if (filterMode === "operands") return frame !== "z";
+    if (filterMode === "derived") return frame === "z";
+    if (filterMode === "visible") return sl.frameVis[frame];
+    return true;
+  }
 
   /* ── visibility eyes ──────────────────────────────────────────────────── */
 
@@ -153,9 +210,15 @@ export function createFrameNavigator(deps) {
     const active = laneKey === S.laneKey && focusKey(sl) === frame;
     const visible = sl.frameVis[frame];
     const hex = toHexOf(reg);
+    const role = frameRoleBadge(sl, frame);
+    const dimmed = !matchesFilter(sl, frame);
 
     const wrap = document.createElement("div");
-    wrap.className = "frame-card-wrap" + (active ? " is-active" : "") + (visible ? "" : " is-hidden");
+    wrap.className =
+      "frame-card-wrap"
+      + (active ? " is-active" : "")
+      + (visible ? "" : " is-hidden")
+      + (dimmed ? " is-dimmed" : "");
     wrap.dataset.lane = laneKey;
     wrap.dataset.frame = frame;
 
@@ -166,17 +229,30 @@ export function createFrameNavigator(deps) {
     btn.setAttribute("aria-label", `Lane ${laneKey} · ${name} ${frameSub(frame)} · ${hex}`);
     btn.title = `Lane ${laneKey} · ${name} (${frameSub(frame)}) · ${hex}`;
 
-    const glyph = document.createElement("span");
-    glyph.className = "frame-glyph";
-    glyph.textContent = name;
     const box = document.createElement("span");
     box.className = "frame-box";
     box.appendChild(makePreview(reg, frame));
-    btn.append(glyph, box);
+
+    const glyph = document.createElement("span");
+    glyph.className = "frame-glyph";
+    glyph.textContent = name;
+
+    btn.append(box, glyph);
     btn.addEventListener("click", () => chooseCard(laneKey, frame));
 
+    const extra = document.createElement("div");
+    extra.className = "frame-card-extra";
+    extra.setAttribute("aria-hidden", "true");
+    const roleEl = document.createElement("span");
+    roleEl.className = "frame-role" + (role.accent ? " is-accent" : "");
+    roleEl.textContent = role.text;
+    const hexEl = document.createElement("span");
+    hexEl.className = "frame-hex";
+    hexEl.textContent = compactHex(hex);
+    extra.append(roleEl, hexEl);
+
     const eye = makeEyeButton(laneKey, frame);
-    wrap.append(btn, eye);
+    wrap.append(btn, extra, eye);
     return wrap;
   }
 
@@ -310,6 +386,12 @@ export function createFrameNavigator(deps) {
     head.appendChild(btn);
 
     const sl = S.lanes[laneKey];
+    const opBadge = document.createElement("span");
+    opBadge.className = "lane-op-badge";
+    const sym = OPSYM[sl.binop] || "\u2295";
+    opBadge.textContent = `${frameName(laneKey, "a")} ${sym} ${frameName(laneKey, "b")}`;
+    head.appendChild(opBadge);
+
     if (active && sl.showB && !S.view3d) {
       const unpairBtn = document.createElement("button");
       unpairBtn.type = "button";
@@ -381,7 +463,7 @@ export function createFrameNavigator(deps) {
 
   function buildLaneColumn(laneKey) {
     const col = document.createElement("div");
-    col.className = "lane-col";
+    col.className = "lane-col" + (laneKey === S.laneKey ? " is-active" : "");
     col.dataset.lane = laneKey;
     col.setAttribute("role", "group");
     col.setAttribute("aria-label", `Lane ${laneKey}`);
@@ -437,6 +519,162 @@ export function createFrameNavigator(deps) {
     return col;
   }
 
+  /* ── sidebar + header (browser organization) ──────────────────────────── */
+
+  function scrollLaneIntoView(laneKey) {
+    const col = framesGrid.querySelector(`.lane-col[data-lane="${laneKey}"]`);
+    if (!col) return;
+    col.scrollIntoView({
+      behavior: prefersReducedMotion() ? "auto" : "smooth",
+      inline: "nearest",
+      block: "nearest",
+    });
+  }
+
+  function syncFilterUi() {
+    if (!framesFilters) return;
+    for (const btn of framesFilters.querySelectorAll(".frames-filter")) {
+      const on = btn.dataset.filter === filterMode;
+      btn.setAttribute("aria-pressed", String(on));
+    }
+  }
+
+  function renderSidebar(laneKeys) {
+    if (framesLaneCount) {
+      framesLaneCount.textContent = `${laneKeys.length} / ${APP_LANE_CAP}`;
+    }
+    if (framesTitle) {
+      framesTitle.textContent = FILTER_TITLES[filterMode] || "All Frames";
+    }
+    if (framesSub) {
+      const total = laneKeys.length * 3;
+      const laneWord = laneKeys.length === 1 ? "lane" : "lanes";
+      framesSub.textContent = `${total} frames · ${laneKeys.length} ${laneWord} · click a card to focus · eye toggles 2D`;
+    }
+    syncFilterUi();
+    if (!framesTree) return;
+
+    framesTree.textContent = "";
+
+    /* Summary row: All Frames */
+    const allBtn = document.createElement("button");
+    allBtn.type = "button";
+    allBtn.className = "fs-item fs-all" + (filterMode === "all" ? " is-active" : "");
+    allBtn.setAttribute("aria-pressed", String(filterMode === "all"));
+    const allLabel = document.createElement("span");
+    allLabel.className = "fs-label";
+    allLabel.textContent = "All Frames";
+    const allCount = document.createElement("span");
+    allCount.className = "fs-badge";
+    allCount.textContent = String(laneKeys.length * 3);
+    allBtn.append(allLabel, allCount);
+    allBtn.addEventListener("click", () => {
+      filterMode = "all";
+      renderGrid();
+      framesScroll.scrollTo({ left: 0, behavior: prefersReducedMotion() ? "auto" : "smooth" });
+    });
+    framesTree.appendChild(allBtn);
+
+    /* Lanes section */
+    const lanesSec = document.createElement("div");
+    lanesSec.className = "fs-section";
+    const lanesHeading = document.createElement("div");
+    lanesHeading.className = "fs-sec-head";
+    const lanesTitle = document.createElement("span");
+    lanesTitle.textContent = "Lanes";
+    const lanesNum = document.createElement("span");
+    lanesNum.className = "fs-sec-count";
+    lanesNum.textContent = String(laneKeys.length);
+    lanesHeading.append(lanesTitle, lanesNum);
+    lanesSec.appendChild(lanesHeading);
+
+    for (const laneKey of laneKeys) {
+      const sl = S.lanes[laneKey];
+      const active = laneKey === S.laneKey;
+      const sym = OPSYM[sl.binop] || "\u2295";
+      const row = document.createElement("button");
+      row.type = "button";
+      row.className = "fs-item" + (active ? " is-active" : "");
+      row.dataset.treeLane = laneKey;
+      row.setAttribute("aria-pressed", String(active));
+      row.title = `Focus lane ${laneKey} (${frameName(laneKey, "a")} ${sym} ${frameName(laneKey, "b")} → ${frameName(laneKey, "z")})`;
+
+      const dot = document.createElement("span");
+      dot.className = "fs-dot";
+      dot.setAttribute("aria-hidden", "true");
+
+      const label = document.createElement("span");
+      label.className = "fs-label";
+      label.textContent = `Lane ${laneKey}`;
+
+      const badge = document.createElement("span");
+      badge.className = "fs-badge";
+      badge.textContent = `${frameName(laneKey, "a")}${sym}${frameName(laneKey, "b")}`;
+
+      row.append(dot, label, badge);
+      row.addEventListener("click", () => {
+        S.copyArmed = false;
+        store.patch(() => {
+          if (S.laneKey !== laneKey) selectLane(laneKey);
+          syncViewUi();
+          syncEditUi();
+          renderStrip();
+          updateReadouts();
+        });
+        renderGrid();
+        scrollLaneIntoView(laneKey);
+      });
+      lanesSec.appendChild(row);
+    }
+    framesTree.appendChild(lanesSec);
+
+    /* Focused lane quick frames section */
+    const focusedLane = curLane();
+    if (focusedLane) {
+      const fk = focusedLane.key;
+      const curSec = document.createElement("div");
+      curSec.className = "fs-section";
+      const curHeading = document.createElement("div");
+      curHeading.className = "fs-sec-head";
+      const curTitle = document.createElement("span");
+      curTitle.textContent = `Lane ${fk} Frames`;
+      const curNum = document.createElement("span");
+      curNum.className = "fs-sec-count";
+      curNum.textContent = "3";
+      curHeading.append(curTitle, curNum);
+      curSec.appendChild(curHeading);
+
+      for (const frame of FRAME_ORDER) {
+        const name = frameName(fk, frame);
+        const active = focusKey(focusedLane) === frame;
+        const hex = toHexOf(frameReg(focusedLane, frame));
+        const row = document.createElement("button");
+        row.type = "button";
+        row.className = "fs-item fs-frame-item" + (active ? " is-active" : "");
+        row.dataset.treeFrame = frame;
+        row.setAttribute("aria-pressed", String(active));
+        row.title = `Open ${name} (${frameSub(frame)}) · ${hex}`;
+
+        const swatch = document.createElement("span");
+        swatch.className = `fs-swatch is-${frame}`;
+        swatch.setAttribute("aria-hidden", "true");
+
+        const label = document.createElement("span");
+        label.className = "fs-label";
+        label.textContent = name;
+
+        const badge = document.createElement("span");
+        badge.className = "fs-badge";
+        badge.textContent = compactHex(hex);
+
+        row.append(swatch, label, badge);
+        row.addEventListener("click", () => chooseCard(fk, frame));
+        curSec.appendChild(row);
+      }
+      framesTree.appendChild(curSec);
+    }
+  }
+
   /* ── render ───────────────────────────────────────────────────────────── */
 
   function renderGrid() {
@@ -447,6 +685,7 @@ export function createFrameNavigator(deps) {
     const active = document.activeElement;
     const card = active && active.closest ? active.closest("[data-lane][data-frame]") : null;
     const headControl = active && active.closest ? active.closest(".lane-act, .lane-btn") : null;
+    const treeControl = active && active.closest ? active.closest(".fs-item") : null;
     const keepCard = card
       ? { lane: card.dataset.lane, frame: card.dataset.frame, eye: active.classList.contains("eye-btn") }
       : null;
@@ -456,9 +695,15 @@ export function createFrameNavigator(deps) {
           act: headControl.classList.contains("lane-btn") ? "lane-btn" : headControl.dataset.act,
         }
       : null;
+    const keepTree = treeControl
+      ? { lane: treeControl.dataset.treeLane || null, frame: treeControl.dataset.treeFrame || null }
+      : null;
+
+    const laneKeys = liveLaneKeys();
+    renderSidebar(laneKeys);
 
     framesGrid.textContent = "";
-    for (const laneKey of liveLaneKeys()) framesGrid.appendChild(buildLaneColumn(laneKey));
+    for (const laneKey of laneKeys) framesGrid.appendChild(buildLaneColumn(laneKey));
     framesGrid.appendChild(buildAddColumn());
 
     const fa = frameName(curLane().key, "a");
@@ -479,6 +724,13 @@ export function createFrameNavigator(deps) {
         ? ".lane-btn"
         : `[data-act="${keepHead.act}"]`;
       const target = framesGrid.querySelector(`[data-lane="${keepHead.lane}"] ${selector}`);
+      if (target) target.focus({ preventScroll: true });
+    } else if (keepTree && framesTree) {
+      const target = keepTree.lane
+        ? framesTree.querySelector(`[data-tree-lane="${keepTree.lane}"]`)
+        : keepTree.frame
+          ? framesTree.querySelector(`[data-tree-frame="${keepTree.frame}"]`)
+          : framesTree.querySelector(".fs-all");
       if (target) target.focus({ preventScroll: true });
     }
   }
@@ -526,6 +778,7 @@ export function createFrameNavigator(deps) {
     framesBtn.setAttribute("aria-pressed", String(open));
     framesBtn.title = open ? "Close the frames view" : "Browse every frame as a card";
     if (open) {
+      filterMode = "all";
       framesNote.textContent = "";
       renderGrid();
       framesScroll.scrollLeft = 0;
@@ -602,6 +855,16 @@ export function createFrameNavigator(deps) {
   /* ── wiring ───────────────────────────────────────────────────────────── */
 
   framesBtn.addEventListener("click", () => setOpen(!S.framesView));
+
+  if (framesFilters) {
+    framesFilters.addEventListener("click", (e) => {
+      const btn = e.target.closest(".frames-filter");
+      if (!btn || !btn.dataset.filter) return;
+      if (filterMode === btn.dataset.filter) return;
+      filterMode = btn.dataset.filter;
+      renderGrid();
+    });
+  }
 
   framesLeft.addEventListener("click", () => stepScroll(-1));
   framesRight.addEventListener("click", () => stepScroll(1));

@@ -2143,20 +2143,34 @@ function createFrameNavigator(deps) {
 	const framesLeft = document.getElementById("framesLeft");
 	const framesRight = document.getElementById("framesRight");
 	const framesThumb = document.getElementById("framesThumb");
+	const framesTree = document.getElementById("framesTree");
+	const framesLaneCount = document.getElementById("framesLaneCount");
+	const framesTitle = document.getElementById("framesTitle");
+	const framesSub = document.getElementById("framesSub");
+	const framesFilters = document.getElementById("framesFilters");
 	const SVG_NS = "http://www.w3.org/2000/svg";
 	const FRAME_ORDER = [
 		"a",
 		"b",
 		"z"
 	];
+	const FILTER_TITLES = {
+		all: "All Frames",
+		operands: "Operand Frames",
+		derived: "Derived Frames",
+		visible: "Visible in 2D"
+	};
 	/** Lane key whose delete button is showing its inline confirmation. */
 	let pendingDelete = null;
+	/** Transient visual filter in the frames browser (resets to "all" on open). */
+	let filterMode = "all";
 	const prefersReducedMotion = () => window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+	const compactHex = (hex) => hex.length > 10 ? `${hex.slice(0, 4)}\u2026${hex.slice(-4)}` : hex;
 	function previewPoints(reg) {
 		const vals = reg.target;
 		if (!vals || vals.length === 0) return "";
 		const w = 160;
-		const sp = buildSpline(vals.map((_, j) => vals.length === 1 ? w / 2 : j / (vals.length - 1) * w), vals.map((v) => 26 - v / 15 * 24));
+		const sp = buildSpline(vals.map((_, j) => vals.length === 1 ? w / 2 : j / (vals.length - 1) * w), vals.map((v) => 40 - v / 15 * 36));
 		const pts = [];
 		for (let i = 0; i <= 56; i++) {
 			const x = i / 56 * w;
@@ -2167,16 +2181,66 @@ function createFrameNavigator(deps) {
 	function makePreview(reg, frame) {
 		const svg = document.createElementNS(SVG_NS, "svg");
 		svg.setAttribute("class", `frame-preview ${frame}`);
-		svg.setAttribute("viewBox", "0 0 160 28");
+		svg.setAttribute("viewBox", "0 0 160 44");
 		svg.setAttribute("preserveAspectRatio", "none");
 		svg.setAttribute("aria-hidden", "true");
-		const line = document.createElementNS(SVG_NS, "polyline");
-		line.setAttribute("points", previewPoints(reg));
-		svg.appendChild(line);
+		const mid = document.createElementNS(SVG_NS, "line");
+		mid.setAttribute("class", "frame-mid");
+		mid.setAttribute("x1", "0");
+		mid.setAttribute("y1", "22");
+		mid.setAttribute("x2", "160");
+		mid.setAttribute("y2", "22");
+		svg.appendChild(mid);
+		const points = previewPoints(reg);
+		if (points) {
+			const area = document.createElementNS(SVG_NS, "polygon");
+			area.setAttribute("class", "frame-area");
+			area.setAttribute("points", `0,44 ${points} 160,44`);
+			svg.appendChild(area);
+			if (frame === "z") {
+				const glow = document.createElementNS(SVG_NS, "polyline");
+				glow.setAttribute("class", "frame-glow");
+				glow.setAttribute("points", points);
+				svg.appendChild(glow);
+			}
+			const line = document.createElementNS(SVG_NS, "polyline");
+			line.setAttribute("class", "frame-line");
+			line.setAttribute("points", points);
+			svg.appendChild(line);
+		}
 		return svg;
 	}
 	const frameReg = (sl, frame) => frame === "a" ? sl.A : frame === "b" ? sl.B : sl.Z;
 	const frameSub = (frame) => frame === "z" ? "derived" : "operand";
+	function frameRoleBadge(sl, frame) {
+		if (frame === "z") return {
+			text: "derived",
+			accent: true
+		};
+		const info = describeInput(sl, frame);
+		if (info.source.kind === "data") return {
+			text: "data",
+			accent: false
+		};
+		if (info.source.kind === "frame") return {
+			text: info.state,
+			accent: true
+		};
+		if (info.source.kind === "expr") return {
+			text: "expr",
+			accent: true
+		};
+		return {
+			text: "operand",
+			accent: false
+		};
+	}
+	function matchesFilter(sl, frame) {
+		if (filterMode === "operands") return frame !== "z";
+		if (filterMode === "derived") return frame === "z";
+		if (filterMode === "visible") return sl.frameVis[frame];
+		return true;
+	}
 	function frameVisLabel(laneKey, frame) {
 		return `${S.lanes[laneKey].frameVis[frame] ? "Hide" : "Show"} frame ${frameName$1(laneKey, frame)} in the 2D view`;
 	}
@@ -2226,8 +2290,10 @@ function createFrameNavigator(deps) {
 		const active = laneKey === S.laneKey && focusKey(sl) === frame;
 		const visible = sl.frameVis[frame];
 		const hex = toHexOf(reg);
+		const role = frameRoleBadge(sl, frame);
+		const dimmed = !matchesFilter(sl, frame);
 		const wrap = document.createElement("div");
-		wrap.className = "frame-card-wrap" + (active ? " is-active" : "") + (visible ? "" : " is-hidden");
+		wrap.className = "frame-card-wrap" + (active ? " is-active" : "") + (visible ? "" : " is-hidden") + (dimmed ? " is-dimmed" : "");
 		wrap.dataset.lane = laneKey;
 		wrap.dataset.frame = frame;
 		const btn = document.createElement("button");
@@ -2236,16 +2302,26 @@ function createFrameNavigator(deps) {
 		btn.setAttribute("aria-pressed", String(active));
 		btn.setAttribute("aria-label", `Lane ${laneKey} · ${name} ${frameSub(frame)} · ${hex}`);
 		btn.title = `Lane ${laneKey} · ${name} (${frameSub(frame)}) · ${hex}`;
-		const glyph = document.createElement("span");
-		glyph.className = "frame-glyph";
-		glyph.textContent = name;
 		const box = document.createElement("span");
 		box.className = "frame-box";
 		box.appendChild(makePreview(reg, frame));
-		btn.append(glyph, box);
+		const glyph = document.createElement("span");
+		glyph.className = "frame-glyph";
+		glyph.textContent = name;
+		btn.append(box, glyph);
 		btn.addEventListener("click", () => chooseCard(laneKey, frame));
+		const extra = document.createElement("div");
+		extra.className = "frame-card-extra";
+		extra.setAttribute("aria-hidden", "true");
+		const roleEl = document.createElement("span");
+		roleEl.className = "frame-role" + (role.accent ? " is-accent" : "");
+		roleEl.textContent = role.text;
+		const hexEl = document.createElement("span");
+		hexEl.className = "frame-hex";
+		hexEl.textContent = compactHex(hex);
+		extra.append(roleEl, hexEl);
 		const eye = makeEyeButton(laneKey, frame);
-		wrap.append(btn, eye);
+		wrap.append(btn, extra, eye);
 		return wrap;
 	}
 	const escapeRe = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -2356,6 +2432,11 @@ function createFrameNavigator(deps) {
 		});
 		head.appendChild(btn);
 		const sl = S.lanes[laneKey];
+		const opBadge = document.createElement("span");
+		opBadge.className = "lane-op-badge";
+		const sym = OPSYM[sl.binop] || "⊕";
+		opBadge.textContent = `${frameName$1(laneKey, "a")} ${sym} ${frameName$1(laneKey, "b")}`;
+		head.appendChild(opBadge);
 		if (active && sl.showB && !S.view3d) {
 			const unpairBtn = document.createElement("button");
 			unpairBtn.type = "button";
@@ -2419,7 +2500,7 @@ function createFrameNavigator(deps) {
 	}
 	function buildLaneColumn(laneKey) {
 		const col = document.createElement("div");
-		col.className = "lane-col";
+		col.className = "lane-col" + (laneKey === S.laneKey ? " is-active" : "");
 		col.dataset.lane = laneKey;
 		col.setAttribute("role", "group");
 		col.setAttribute("aria-label", `Lane ${laneKey}`);
@@ -2465,12 +2546,146 @@ function createFrameNavigator(deps) {
 		col.append(btn, hint);
 		return col;
 	}
+	function scrollLaneIntoView(laneKey) {
+		const col = framesGrid.querySelector(`.lane-col[data-lane="${laneKey}"]`);
+		if (!col) return;
+		col.scrollIntoView({
+			behavior: prefersReducedMotion() ? "auto" : "smooth",
+			inline: "nearest",
+			block: "nearest"
+		});
+	}
+	function syncFilterUi() {
+		if (!framesFilters) return;
+		for (const btn of framesFilters.querySelectorAll(".frames-filter")) {
+			const on = btn.dataset.filter === filterMode;
+			btn.setAttribute("aria-pressed", String(on));
+		}
+	}
+	function renderSidebar(laneKeys) {
+		if (framesLaneCount) framesLaneCount.textContent = `${laneKeys.length} / 8`;
+		if (framesTitle) framesTitle.textContent = FILTER_TITLES[filterMode] || "All Frames";
+		if (framesSub) {
+			const total = laneKeys.length * 3;
+			const laneWord = laneKeys.length === 1 ? "lane" : "lanes";
+			framesSub.textContent = `${total} frames · ${laneKeys.length} ${laneWord} · click a card to focus · eye toggles 2D`;
+		}
+		syncFilterUi();
+		if (!framesTree) return;
+		framesTree.textContent = "";
+		const allBtn = document.createElement("button");
+		allBtn.type = "button";
+		allBtn.className = "fs-item fs-all" + (filterMode === "all" ? " is-active" : "");
+		allBtn.setAttribute("aria-pressed", String(filterMode === "all"));
+		const allLabel = document.createElement("span");
+		allLabel.className = "fs-label";
+		allLabel.textContent = "All Frames";
+		const allCount = document.createElement("span");
+		allCount.className = "fs-badge";
+		allCount.textContent = String(laneKeys.length * 3);
+		allBtn.append(allLabel, allCount);
+		allBtn.addEventListener("click", () => {
+			filterMode = "all";
+			renderGrid();
+			framesScroll.scrollTo({
+				left: 0,
+				behavior: prefersReducedMotion() ? "auto" : "smooth"
+			});
+		});
+		framesTree.appendChild(allBtn);
+		const lanesSec = document.createElement("div");
+		lanesSec.className = "fs-section";
+		const lanesHeading = document.createElement("div");
+		lanesHeading.className = "fs-sec-head";
+		const lanesTitle = document.createElement("span");
+		lanesTitle.textContent = "Lanes";
+		const lanesNum = document.createElement("span");
+		lanesNum.className = "fs-sec-count";
+		lanesNum.textContent = String(laneKeys.length);
+		lanesHeading.append(lanesTitle, lanesNum);
+		lanesSec.appendChild(lanesHeading);
+		for (const laneKey of laneKeys) {
+			const sl = S.lanes[laneKey];
+			const active = laneKey === S.laneKey;
+			const sym = OPSYM[sl.binop] || "⊕";
+			const row = document.createElement("button");
+			row.type = "button";
+			row.className = "fs-item" + (active ? " is-active" : "");
+			row.dataset.treeLane = laneKey;
+			row.setAttribute("aria-pressed", String(active));
+			row.title = `Focus lane ${laneKey} (${frameName$1(laneKey, "a")} ${sym} ${frameName$1(laneKey, "b")} → ${frameName$1(laneKey, "z")})`;
+			const dot = document.createElement("span");
+			dot.className = "fs-dot";
+			dot.setAttribute("aria-hidden", "true");
+			const label = document.createElement("span");
+			label.className = "fs-label";
+			label.textContent = `Lane ${laneKey}`;
+			const badge = document.createElement("span");
+			badge.className = "fs-badge";
+			badge.textContent = `${frameName$1(laneKey, "a")}${sym}${frameName$1(laneKey, "b")}`;
+			row.append(dot, label, badge);
+			row.addEventListener("click", () => {
+				S.copyArmed = false;
+				store.patch(() => {
+					if (S.laneKey !== laneKey) selectLane(laneKey);
+					syncViewUi();
+					syncEditUi();
+					renderStrip();
+					updateReadouts();
+				});
+				renderGrid();
+				scrollLaneIntoView(laneKey);
+			});
+			lanesSec.appendChild(row);
+		}
+		framesTree.appendChild(lanesSec);
+		const focusedLane = curLane();
+		if (focusedLane) {
+			const fk = focusedLane.key;
+			const curSec = document.createElement("div");
+			curSec.className = "fs-section";
+			const curHeading = document.createElement("div");
+			curHeading.className = "fs-sec-head";
+			const curTitle = document.createElement("span");
+			curTitle.textContent = `Lane ${fk} Frames`;
+			const curNum = document.createElement("span");
+			curNum.className = "fs-sec-count";
+			curNum.textContent = "3";
+			curHeading.append(curTitle, curNum);
+			curSec.appendChild(curHeading);
+			for (const frame of FRAME_ORDER) {
+				const name = frameName$1(fk, frame);
+				const active = focusKey(focusedLane) === frame;
+				const hex = toHexOf(frameReg(focusedLane, frame));
+				const row = document.createElement("button");
+				row.type = "button";
+				row.className = "fs-item fs-frame-item" + (active ? " is-active" : "");
+				row.dataset.treeFrame = frame;
+				row.setAttribute("aria-pressed", String(active));
+				row.title = `Open ${name} (${frameSub(frame)}) · ${hex}`;
+				const swatch = document.createElement("span");
+				swatch.className = `fs-swatch is-${frame}`;
+				swatch.setAttribute("aria-hidden", "true");
+				const label = document.createElement("span");
+				label.className = "fs-label";
+				label.textContent = name;
+				const badge = document.createElement("span");
+				badge.className = "fs-badge";
+				badge.textContent = compactHex(hex);
+				row.append(swatch, label, badge);
+				row.addEventListener("click", () => chooseCard(fk, frame));
+				curSec.appendChild(row);
+			}
+			framesTree.appendChild(curSec);
+		}
+	}
 	function renderGrid() {
 		if (!S.framesView) return;
 		if (pendingDelete !== null && !S.lanes[pendingDelete]) pendingDelete = null;
 		const active = document.activeElement;
 		const card = active && active.closest ? active.closest("[data-lane][data-frame]") : null;
 		const headControl = active && active.closest ? active.closest(".lane-act, .lane-btn") : null;
+		const treeControl = active && active.closest ? active.closest(".fs-item") : null;
 		const keepCard = card ? {
 			lane: card.dataset.lane,
 			frame: card.dataset.frame,
@@ -2480,8 +2695,14 @@ function createFrameNavigator(deps) {
 			lane: headControl.closest("[data-lane]")?.dataset.lane,
 			act: headControl.classList.contains("lane-btn") ? "lane-btn" : headControl.dataset.act
 		} : null;
+		const keepTree = treeControl ? {
+			lane: treeControl.dataset.treeLane || null,
+			frame: treeControl.dataset.treeFrame || null
+		} : null;
+		const laneKeys = liveLaneKeys();
+		renderSidebar(laneKeys);
 		framesGrid.textContent = "";
-		for (const laneKey of liveLaneKeys()) framesGrid.appendChild(buildLaneColumn(laneKey));
+		for (const laneKey of laneKeys) framesGrid.appendChild(buildLaneColumn(laneKey));
 		framesGrid.appendChild(buildAddColumn());
 		const fa = frameName$1(curLane().key, "a");
 		const fb = frameName$1(curLane().key, "b");
@@ -2495,6 +2716,9 @@ function createFrameNavigator(deps) {
 		} else if (keepHead && keepHead.lane) {
 			const selector = keepHead.act === "lane-btn" ? ".lane-btn" : `[data-act="${keepHead.act}"]`;
 			const target = framesGrid.querySelector(`[data-lane="${keepHead.lane}"] ${selector}`);
+			if (target) target.focus({ preventScroll: true });
+		} else if (keepTree && framesTree) {
+			const target = keepTree.lane ? framesTree.querySelector(`[data-tree-lane="${keepTree.lane}"]`) : keepTree.frame ? framesTree.querySelector(`[data-tree-frame="${keepTree.frame}"]`) : framesTree.querySelector(".fs-all");
 			if (target) target.focus({ preventScroll: true });
 		}
 	}
@@ -2533,6 +2757,7 @@ function createFrameNavigator(deps) {
 		framesBtn.setAttribute("aria-pressed", String(open));
 		framesBtn.title = open ? "Close the frames view" : "Browse every frame as a card";
 		if (open) {
+			filterMode = "all";
 			framesNote.textContent = "";
 			renderGrid();
 			framesScroll.scrollLeft = 0;
@@ -2597,6 +2822,13 @@ function createFrameNavigator(deps) {
 		setOpen(false, { returnFocus });
 	}
 	framesBtn.addEventListener("click", () => setOpen(!S.framesView));
+	if (framesFilters) framesFilters.addEventListener("click", (e) => {
+		const btn = e.target.closest(".frames-filter");
+		if (!btn || !btn.dataset.filter) return;
+		if (filterMode === btn.dataset.filter) return;
+		filterMode = btn.dataset.filter;
+		renderGrid();
+	});
 	framesLeft.addEventListener("click", () => stepScroll(-1));
 	framesRight.addEventListener("click", () => stepScroll(1));
 	framesScroll.addEventListener("scroll", updateScrollbar, { passive: true });
@@ -8937,23 +9169,26 @@ var getPad = () => PAD;
 	boot();
 })();</script>
   <style rel="stylesheet" crossorigin>:root {
-    --bg:        #08090c;
-    --panel:     #0d1015;
-    --panel-hi:  #12161d;
-    --line:      #1b212b;
-    --line-soft: #141920;
-    --text:      #e8edf5;
-    --dim:       #67728a;
-    --dimmer:    #3f4859;
-    --accent:    #34d399;
-    --accent-hi: #5eead4;
-    --accent-low:#22c55e;
-    --panel-hover:#181d26;
-    --line-hi:   #2a3341;
-    --inf:       #f5b544;
-    --stage-glow:#0b0e13;
-    --handle-hi: #eafaf3;
-    --pad:       40px;
+    --bg:           #08090c;
+    --surface:      #0a0c10;
+    --panel:        #0d1015;
+    --panel-hi:     #12161d;
+    --panel-hover:  #181d26;
+    --line:         #1b212b;
+    --line-soft:    #141920;
+    --line-hi:      #2a3341;
+    --text:         #e8edf5;
+    --dim:          #67728a;
+    --dimmer:       #3f4859;
+    --accent:       #34d399;
+    --accent-hi:    #5eead4;
+    --accent-low:   #22c55e;
+    --accent-soft:  rgba(52, 211, 153, 0.10);
+    --accent-border:rgba(52, 211, 153, 0.38);
+    --inf:          #f5b544;
+    --stage-glow:   #0b0e13;
+    --handle-hi:    #eafaf3;
+    --pad:          40px;
     --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
     --sans: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   }
@@ -9006,36 +9241,80 @@ var getPad = () => PAD;
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 24px;
-    padding: 16px var(--pad) 14px;
-    border-bottom: 1px solid var(--line-soft);
+    gap: 20px;
+    padding: 10px var(--pad);
+    background: var(--panel);
+    border-bottom: 1px solid var(--line);
   }
 
-  .title { display: flex; align-items: baseline; gap: 12px; min-width: 0; }
+  .title { display: flex; align-items: center; gap: 14px; min-width: 0; }
+
+  .brand {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    flex: 0 0 auto;
+  }
 
   h1 {
     margin: 0;
-    font-size: 16px;
+    font-size: 15px;
     font-weight: 600;
-    letter-spacing: -0.01em;
+    letter-spacing: -0.015em;
+    color: var(--text);
+  }
+
+  .brand-wave {
+    width: 26px;
+    height: 12px;
+    display: block;
+    flex: 0 0 auto;
+  }
+
+  .brand-wave path {
+    fill: none;
+    stroke: var(--accent);
+    stroke-width: 1.6;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    opacity: 0.85;
   }
 
   .title p {
     margin: 0;
-    font-size: 12px;
+    padding-left: 14px;
+    border-left: 1px solid var(--line);
+    font-size: 11.5px;
     color: var(--dim);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
   }
 
-  .sizer { display: flex; align-items: center; gap: 14px; flex: 0 0 auto; }
+  .sizer {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex: 0 0 auto;
+    padding: 3px 12px;
+    background: var(--surface);
+    border: 1px solid var(--line-soft);
+    border-radius: 6px;
+  }
 
   .sizer label {
-    font-size: 10.5px;
-    letter-spacing: 0.09em;
+    font-family: var(--mono);
+    font-size: 9.5px;
+    letter-spacing: 0.1em;
     text-transform: uppercase;
-    color: var(--dimmer);
+    color: var(--dim);
+  }
+
+  .header-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: 0 0 auto;
   }
 
   /* D47: the wave-view control lives in the header (VIEW + 3D toggle), just
@@ -9045,19 +9324,36 @@ var getPad = () => PAD;
     align-items: center;
     gap: 8px;
     flex: 0 0 auto;
+    padding: 2px 3px 2px 9px;
+    background: var(--surface);
+    border: 1px solid var(--line-soft);
+    border-radius: 6px;
   }
 
   .view-label {
-    font-size: 10.5px;
-    letter-spacing: 0.09em;
+    font-family: var(--mono);
+    font-size: 9.5px;
+    letter-spacing: 0.1em;
     text-transform: uppercase;
-    color: var(--dimmer);
+    color: var(--dim);
+  }
+
+  .header-view .op,
+  #helpBtn {
+    min-height: 26px;
+    padding: 3px 9px;
+    font-size: 11px;
+  }
+
+  #helpBtn {
+    min-width: 28px;
+    border-radius: 6px;
   }
 
   input[type="range"] {
     -webkit-appearance: none;
     appearance: none;
-    width: clamp(110px, 16vw, 190px);
+    width: clamp(110px, 15vw, 180px);
     /* DESIGN §9: 24px minimum interactive target. */
     height: 24px;
     background: transparent;
@@ -9066,45 +9362,52 @@ var getPad = () => PAD;
 
   input[type="range"]::-webkit-slider-runnable-track {
     height: 2px;
-    background: var(--line);
+    background: var(--line-hi);
     border-radius: 2px;
   }
 
   input[type="range"]::-webkit-slider-thumb {
     -webkit-appearance: none;
-    width: 24px;
-    height: 24px;
-    margin-top: -11px;
+    width: 13px;
+    height: 13px;
+    margin-top: -5.5px;
     border-radius: 50%;
     background: var(--accent);
     border: 2px solid var(--bg);
-    box-shadow: 0 0 0 1px var(--accent);
+    box-shadow: 0 0 0 1px var(--accent), 0 0 8px rgba(52, 211, 153, 0.35);
+    transition: transform 100ms ease, box-shadow 100ms ease;
+  }
+
+  input[type="range"]:hover::-webkit-slider-thumb {
+    transform: scale(1.1);
+    box-shadow: 0 0 0 1px var(--accent-hi), 0 0 10px rgba(52, 211, 153, 0.5);
   }
 
   input[type="range"]::-moz-range-track {
     height: 2px;
-    background: var(--line);
+    background: var(--line-hi);
     border-radius: 2px;
   }
 
   input[type="range"]::-moz-range-thumb {
-    width: 24px;
-    height: 24px;
+    width: 13px;
+    height: 13px;
     border-radius: 50%;
     background: var(--accent);
     border: 2px solid var(--bg);
-    box-shadow: 0 0 0 1px var(--accent);
+    box-shadow: 0 0 0 1px var(--accent), 0 0 8px rgba(52, 211, 153, 0.35);
   }
 
   input[type="range"]:focus-visible { outline: none; }
-  input[type="range"]:focus-visible::-webkit-slider-thumb { box-shadow: 0 0 0 4px rgba(52,211,153,0.25); }
+  input[type="range"]:focus-visible::-webkit-slider-thumb { box-shadow: 0 0 0 4px rgba(52,211,153,0.28); }
 
   #sizeOut {
     font-family: var(--mono);
-    font-size: 12px;
+    font-size: 11.5px;
     color: var(--text);
-    min-width: 132px;
+    min-width: 126px;
     text-align: right;
+    white-space: nowrap;
     font-variant-numeric: tabular-nums;
   }
 
@@ -9153,7 +9456,7 @@ var getPad = () => PAD;
     position: absolute;
     left: 0;
     right: 0;
-    top: 7px;
+    top: 8px;
     z-index: 2;
     display: flex;
     align-items: center;
@@ -9163,27 +9466,43 @@ var getPad = () => PAD;
     user-select: none;
   }
 
+  .stage-bar.is-frames {
+    top: 10px;
+    left: 212px;
+  }
+
   .stage-bar.is-split {
     display: grid;
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-    padding: 0;
+    justify-items: center;
+    gap: 12px;
+    padding: 0 12px;
   }
 
   .pane-head {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    gap: 8px;
+    gap: 6px;
     min-width: 0;
-    padding: 0 12px;
+    max-width: 100%;
+    padding: 3px 8px;
+    background: rgba(13, 16, 21, 0.86);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    border: 1px solid var(--line);
+    border-radius: 7px;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
     pointer-events: auto;
     /* D47: with the per-pane hinge and copy opener the head can wrap instead of
        pushing the page sideways at 360 px (split panes are only half as wide). */
     flex-wrap: wrap;
     row-gap: 4px;
+    transition: border-color 110ms linear;
   }
 
   .stage-bar.is-split .pane-head { cursor: pointer; }
+  .stage-bar.is-split .pane-head.focused { border-color: var(--accent-border); }
 
   .focus-dot {
     width: 6px;
@@ -9201,13 +9520,13 @@ var getPad = () => PAD;
 
   .op.mini {
     font-size: 10.5px;
-    padding: 2px 7px;
+    padding: 2px 8px;
     line-height: 1.35;
   }
 
   .seg.mini .op {
     font-size: 10.5px;
-    padding: 2px 7px;
+    padding: 2px 8px;
     line-height: 1.35;
   }
 
@@ -9218,9 +9537,9 @@ var getPad = () => PAD;
     font-family: var(--mono);
     font-size: 10.5px;
     line-height: 1.35;
-    padding: 2px 6px;
+    padding: 2px 7px;
     min-height: 24px;
-    min-width: 68px;
+    min-width: 70px;
     max-width: 112px;
     background: var(--panel-hi);
     border: 1px solid var(--line);
@@ -9231,12 +9550,15 @@ var getPad = () => PAD;
 
   .lane-select:hover { border-color: var(--line-hi); }
 
-  .pane-head.focused .lane-select { border-color: rgba(52,211,153,0.4); }
+  .pane-head.focused .lane-select { border-color: rgba(52,211,153,0.42); }
 
   .stage-expr {
     font-family: var(--mono);
     font-size: 10.5px;
     color: var(--dim);
+    padding: 2px 7px;
+    border-radius: 4px;
+    background: rgba(255, 255, 255, 0.03);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -9252,12 +9574,12 @@ var getPad = () => PAD;
   .pane-fold,
   .pane-copy {
     font-size: 10.5px;
-    padding: 2px 7px;
+    padding: 2px 8px;
     line-height: 1.35;
     white-space: nowrap;
   }
 
-  /* ── frames view — the stage as a lane/frame browser (D42) ───────────── */
+  /* ── frames view — GitWave-inspired lane/frame browser (D42/D46) ─────── */
   .stage.is-frames canvas,
   .stage.is-frames .hint { visibility: hidden; }
 
@@ -9267,8 +9589,6 @@ var getPad = () => PAD;
     inset: 0;
     display: flex;
     flex-direction: column;
-    gap: 8px;
-    padding: 36px var(--pad) 8px;
     background: var(--bg);
     overflow: hidden;
   }
@@ -9277,55 +9597,341 @@ var getPad = () => PAD;
 
   /* The bars sit above the overlay; the stage bar's only visible control in
      this view is `Lanes`, so it must opt back into pointer events. */
-  #lanesBtn { pointer-events: auto; }
+  #lanesBtn {
+    pointer-events: auto;
+    padding: 3px 12px;
+    font-size: 11px;
+    border-color: var(--accent-border);
+    background: rgba(13, 16, 21, 0.92);
+    color: var(--accent);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+  }
+  #lanesBtn:hover {
+    background: var(--panel-hover);
+    border-color: var(--accent);
+  }
+
+  .frames-shell {
+    flex: 1 1 auto;
+    min-height: 0;
+    display: flex;
+    overflow: hidden;
+  }
+
+  /* Left lane-index sidebar (GitWave source-tree layout) */
+  .frames-sidebar {
+    flex: 0 0 212px;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    background: var(--panel);
+    border-right: 1px solid var(--line);
+    overflow: hidden;
+  }
+
+  .fs-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 12px 14px 10px;
+    border-bottom: 1px solid var(--line-soft);
+  }
+
+  .fs-title {
+    font-family: var(--mono);
+    font-size: 9.5px;
+    font-weight: 600;
+    letter-spacing: 0.11em;
+    text-transform: uppercase;
+    color: var(--accent);
+    opacity: 0.85;
+  }
+
+  .fs-count {
+    font-family: var(--mono);
+    font-size: 9.5px;
+    color: var(--dim);
+    padding: 1px 6px;
+    border-radius: 99px;
+    background: var(--surface);
+    border: 1px solid var(--line-soft);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .fs-tree {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 8px 8px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    scrollbar-width: thin;
+    scrollbar-color: var(--line-hi) transparent;
+  }
+
+  .fs-section {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    margin-top: 10px;
+  }
+
+  .fs-sec-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 2px 8px 4px;
+    font-family: var(--mono);
+    font-size: 9px;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--dimmer);
+  }
+
+  .fs-sec-count {
+    font-variant-numeric: tabular-nums;
+    color: var(--dimmer);
+  }
+
+  .fs-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    min-height: 28px;
+    padding: 4px 8px;
+    border: 1px solid transparent;
+    border-radius: 5px;
+    background: transparent;
+    color: var(--dim);
+    font-family: var(--sans);
+    font-size: 11.5px;
+    text-align: left;
+    cursor: pointer;
+    transition: background-color 100ms linear, color 100ms linear, border-color 100ms linear;
+  }
+
+  .fs-item:hover {
+    background: var(--panel-hi);
+    color: var(--text);
+  }
+
+  .fs-item.is-active {
+    background: var(--accent-soft);
+    border-color: rgba(52, 211, 153, 0.25);
+    color: var(--text);
+  }
+
+  .fs-item:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: -1px;
+  }
+
+  .fs-all {
+    font-weight: 500;
+  }
+
+  .fs-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--dimmer);
+    flex: 0 0 auto;
+  }
+
+  .fs-item.is-active .fs-dot {
+    background: var(--accent);
+    box-shadow: 0 0 6px rgba(52, 211, 153, 0.65);
+  }
+
+  .fs-swatch {
+    width: 12px;
+    height: 0;
+    border-top: 1.5px solid var(--accent);
+    flex: 0 0 auto;
+    opacity: 0.75;
+  }
+  .fs-swatch.is-b { border-top-style: dashed; }
+  .fs-swatch.is-z { border-top-width: 2px; opacity: 1; box-shadow: 0 0 5px rgba(52, 211, 153, 0.55); }
+
+  .fs-label {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .fs-frame-item .fs-label {
+    font-family: var(--mono);
+    font-size: 11px;
+    font-weight: 600;
+  }
+
+  .fs-badge {
+    flex: 0 0 auto;
+    font-family: var(--mono);
+    font-size: 9.5px;
+    color: var(--dimmer);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .fs-item.is-active .fs-badge { color: var(--accent); }
+
+  /* Right browser pane */
+  .frames-main {
+    flex: 1 1 auto;
+    min-width: 0;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    padding: 10px var(--pad) 6px 22px;
+    gap: 8px;
+    background: radial-gradient(120% 90% at 50% 20%, var(--stage-glow) 0%, var(--bg) 72%);
+    overflow: hidden;
+  }
+
+  .frames-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    flex-wrap: wrap;
+    padding-bottom: 7px;
+    border-bottom: 1px solid var(--line-soft);
+  }
+
+  .frames-heading {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+  }
+
+  .frames-title {
+    margin: 0;
+    font-size: 14px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    color: var(--text);
+  }
+
+  .frames-sub {
+    margin: 0;
+    font-size: 11px;
+    color: var(--dim);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .frames-filters {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    flex-wrap: wrap;
+  }
+
+  .frames-filter {
+    font-family: var(--sans);
+    font-size: 10.5px;
+    padding: 2px 9px;
+    color: var(--dim);
+    background: var(--surface);
+    border-color: var(--line-soft);
+  }
+
+  .frames-filter:hover {
+    color: var(--text);
+    border-color: var(--line-hi);
+  }
 
   .frames-scroll {
-    flex: 1;
+    flex: 1 1 auto;
     min-height: 0;
     overflow-x: auto;
-    overflow-y: hidden;
+    overflow-y: auto;
     scrollbar-width: none;
+    padding: 2px 2px 4px;
   }
   .frames-scroll::-webkit-scrollbar { display: none; }
   .frames-scroll:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
   .frames-grid {
     display: flex;
-    align-items: flex-start;
-    gap: 24px;
+    align-items: stretch;
+    gap: 14px;
     min-height: 100%;
   }
 
   .lane-col {
     display: flex;
     flex-direction: column;
-    gap: 10px;
+    gap: 6px;
     flex: 0 0 auto;
-    width: clamp(190px, 19vw, 272px);
+    width: clamp(210px, 19.5vw, 264px);
+    padding: 8px 10px 9px;
+    background: rgba(13, 16, 21, 0.72);
+    border: 1px solid var(--line-soft);
+    border-radius: 8px;
+    transition: border-color 120ms linear, background-color 120ms linear;
   }
+
+  .lane-col.is-active {
+    background: rgba(15, 20, 26, 0.9);
+    border-color: rgba(52, 211, 153, 0.30);
+  }
+
+  .lane-col.is-add {
+    width: 146px;
+    background: rgba(13, 16, 21, 0.32);
+    border: 1px dashed var(--line);
+    justify-content: center;
+    align-items: center;
+  }
+
+  .lane-col.is-add .lane-head { display: none; }
 
   .lane-head {
     display: flex;
     align-items: center;
     justify-content: space-between;
     flex-wrap: wrap;
-    gap: 4px 8px;
-    min-height: 20px;
+    gap: 4px 6px;
+    min-height: 24px;
+    padding-bottom: 6px;
+    border-bottom: 1px solid var(--line-soft);
   }
 
   .lane-btn {
-    padding: 2px 4px;
+    padding: 2px 6px;
     border: 0;
-    border-radius: 3px;
+    border-radius: 4px;
     background: transparent;
     color: var(--dim);
     font-family: var(--mono);
-    font-size: 9.5px;
-    letter-spacing: 0.09em;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
     cursor: pointer;
+    transition: color 100ms linear, background-color 100ms linear;
   }
   .lane-btn:hover { color: var(--text); background: var(--panel-hover); }
-  .lane-btn[aria-pressed="true"] { color: var(--accent); }
+  .lane-btn[aria-pressed="true"] {
+    color: var(--accent);
+    background: var(--accent-soft);
+  }
+
+  .lane-op-badge {
+    font-family: var(--mono);
+    font-size: 9.5px;
+    color: var(--dimmer);
+    white-space: nowrap;
+  }
+  .lane-col.is-active .lane-op-badge { color: var(--dim); }
 
   /* D46: compact duplicate/delete controls in each lane head. */
   .lane-actions { display: inline-flex; align-items: center; gap: 2px; margin-left: auto; }
@@ -9334,20 +9940,21 @@ var getPad = () => PAD;
     min-width: 24px;
     min-height: 24px;
     padding: 2px 5px;
-    border: 0;
-    border-radius: 3px;
+    border: 1px solid transparent;
+    border-radius: 4px;
     background: transparent;
     color: var(--dimmer);
-    font-family: var(--sans);
+    font-family: var(--mono);
     font-size: 9px;
-    letter-spacing: 0.06em;
+    letter-spacing: 0.05em;
     text-transform: uppercase;
     cursor: pointer;
+    transition: color 100ms linear, background-color 100ms linear, border-color 100ms linear;
   }
-  .lane-act:hover { color: var(--text); background: var(--panel-hover); }
+  .lane-act:hover { color: var(--text); background: var(--panel-hover); border-color: var(--line); }
   .lane-act:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-  .lane-act[aria-disabled="true"] { color: var(--dimmer); cursor: default; }
-  .lane-act.is-danger { color: var(--inf, #f5b544); }
+  .lane-act[aria-disabled="true"] { color: var(--dimmer); opacity: 0.5; cursor: default; }
+  .lane-act.is-danger { color: var(--inf, #f5b544); border-color: rgba(245, 181, 68, 0.35); }
 
   .lane-head.is-confirming { gap: 6px; }
 
@@ -9364,93 +9971,166 @@ var getPad = () => PAD;
   .lane-confirm-actions { display: inline-flex; gap: 2px; flex: 0 0 auto; }
 
   .unpair-btn {
-    padding: 2px 5px;
+    padding: 2px 6px;
     border: 0;
-    border-radius: 3px;
+    border-radius: 4px;
     background: transparent;
-    color: var(--dimmer);
-    font-family: var(--sans);
+    color: var(--dim);
+    font-family: var(--mono);
     font-size: 9px;
-    letter-spacing: 0.06em;
+    letter-spacing: 0.05em;
     text-transform: uppercase;
     cursor: pointer;
   }
   .unpair-btn:hover { color: var(--text); background: var(--panel-hover); }
 
-  .frame-card-wrap { position: relative; }
+  .frame-card-wrap {
+    position: relative;
+    transition: opacity 140ms ease;
+  }
+  .frame-card-wrap.is-dimmed { opacity: 0.24; }
+  .frame-card-wrap.is-dimmed:hover { opacity: 0.7; }
 
   .frame-card {
     display: flex;
-    align-items: center;
-    gap: 10px;
+    flex-direction: column;
+    gap: 4px;
     width: 100%;
-    padding: 0;
-    border: 0;
-    background: transparent;
+    padding: 5px 7px 5px;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    background: var(--bg);
     text-align: left;
     cursor: pointer;
+    transition: border-color 120ms linear, background-color 120ms linear, box-shadow 120ms linear;
   }
 
-  .frame-card .frame-glyph { width: 22px; flex: 0 0 auto; text-align: center; }
+  .frame-card:hover {
+    border-color: var(--line-hi);
+    background: var(--surface);
+  }
+
+  .frame-card[aria-pressed="true"] {
+    border-color: var(--accent);
+    background: linear-gradient(180deg, rgba(52, 211, 153, 0.08) 0%, rgba(10, 12, 16, 0.95) 100%);
+    box-shadow: 0 0 0 1px rgba(52, 211, 153, 0.22), 0 6px 18px rgba(0, 0, 0, 0.35);
+  }
 
   .frame-box {
-    flex: 1 1 auto;
     display: block;
-    height: clamp(54px, 8.5vh, 84px);
-    border: 1px solid var(--line);
-    border-radius: 3px;
-    background: var(--stage-glow);
+    width: 100%;
+    height: clamp(38px, 6.2vh, 58px);
+    border-radius: 4px;
+    background: radial-gradient(100% 100% at 50% 50%, rgba(52, 211, 153, 0.04) 0%, transparent 75%);
     overflow: hidden;
   }
   .frame-box .frame-preview { height: 100%; }
 
-  .frame-card:hover .frame-box { border-color: var(--line-hi); }
-  .frame-card[aria-pressed="true"] .frame-box {
-    border-color: var(--accent);
-    box-shadow: 0 0 0 1px rgba(52, 211, 153, 0.22);
+  .frame-glyph {
+    font-family: var(--mono);
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 1.4;
+    color: var(--text);
   }
+
   .frame-card[aria-pressed="true"] .frame-glyph { color: var(--accent); }
-  .frame-card-wrap.is-hidden .frame-preview { opacity: 0.4; }
+
+  /* Visual-only card metadata overlay (role pill + compact hex) kept outside
+     the <button> so WCAG 2.5.3 Label-in-Name matches the button's aria-label
+     cleanly while clicks pass right through to the card button. */
+  .frame-card-extra {
+    position: absolute;
+    left: 31px;
+    right: 8px;
+    bottom: 6px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+    pointer-events: none;
+    user-select: none;
+  }
+
+  .frame-role {
+    font-family: var(--mono);
+    font-size: 8.5px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--dimmer);
+    padding: 1px 4px;
+    border-radius: 3px;
+    background: rgba(255, 255, 255, 0.03);
+  }
+
+  .frame-role.is-accent {
+    color: var(--accent);
+    background: var(--accent-soft);
+  }
+
+  .frame-hex {
+    font-family: var(--mono);
+    font-size: 9.5px;
+    color: var(--dim);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .frame-card-wrap.is-hidden .frame-preview { opacity: 0.28; }
   .frame-card-wrap.is-hidden .frame-glyph { color: var(--dimmer); }
 
   .frame-card-wrap .eye-btn {
     position: absolute;
-    top: 2px;
-    right: 2px;
+    top: 5px;
+    right: 5px;
     width: 24px;
     height: 24px;
     margin: 0;
+    background: rgba(8, 9, 12, 0.72);
+    border-radius: 4px;
   }
 
   .frame-add {
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 100%;
-    height: clamp(54px, 8.5vh, 84px);
-    border: 1px solid var(--line);
-    border-radius: 3px;
-    background: transparent;
-    color: var(--accent-low);
-    font: 400 18px/1 var(--mono);
+    width: 56px;
+    height: 56px;
+    border: 1px solid var(--line-hi);
+    border-radius: 50%;
+    background: var(--panel);
+    color: var(--accent);
+    font: 400 22px/1 var(--mono);
     cursor: pointer;
+    transition: border-color 120ms linear, background-color 120ms linear, color 120ms linear;
   }
-  .frame-add:hover { border-color: var(--accent); color: var(--accent); }
-  .frame-add[aria-disabled="true"] { color: var(--dim); }
+  .frame-add:hover {
+    border-color: var(--accent);
+    background: var(--accent-soft);
+    color: var(--accent-hi);
+  }
+  .frame-add[aria-disabled="true"] {
+    color: var(--dim);
+    border-color: var(--line);
+    background: transparent;
+  }
   .frame-add-hint {
-    padding-left: 2px;
-    font-family: var(--sans);
-    font-size: 9px;
-    letter-spacing: 0.06em;
+    font-family: var(--mono);
+    font-size: 9.5px;
+    letter-spacing: 0.08em;
     text-transform: uppercase;
-    color: var(--dimmer);
+    color: var(--dim);
   }
 
   .frames-foot {
     display: flex;
     align-items: center;
     gap: 16px;
-    min-height: 24px;
+    min-height: 28px;
+    padding-top: 6px;
+    border-top: 1px solid var(--line-soft);
     color: var(--dim);
     font-size: 10px;
   }
@@ -9473,52 +10153,56 @@ var getPad = () => PAD;
   .frames-scrollbar {
     display: flex;
     align-items: center;
-    gap: 10px;
-    flex: 1 1 320px;
-    min-width: 160px;
+    gap: 8px;
+    flex: 0 1 280px;
+    min-width: 140px;
   }
 
   .frames-arrow {
     width: 26px;
     height: 26px;
     padding: 0;
-    border: 0;
-    border-radius: 3px;
+    border: 1px solid transparent;
+    border-radius: 4px;
     background: transparent;
     color: var(--accent);
-    font-size: 13px;
+    font-size: 11px;
     line-height: 1;
     cursor: pointer;
   }
-  .frames-arrow:hover { background: var(--panel-hover); }
+  .frames-arrow:hover { background: var(--panel-hover); border-color: var(--line); }
   .frames-arrow:disabled {
     color: var(--dimmer);
     background: transparent;
+    border-color: transparent;
     cursor: default;
   }
 
   .frames-track {
     position: relative;
     flex: 1 1 auto;
-    height: 2px;
-    border-radius: 1px;
+    height: 3px;
+    border-radius: 2px;
     background: var(--line);
   }
   .frames-thumb {
     position: absolute;
-    top: -1px;
+    top: 0;
     left: 0;
-    height: 4px;
+    height: 3px;
     border-radius: 2px;
-    background: var(--accent-low);
-    opacity: 0.75;
+    background: var(--accent);
+    opacity: 0.55;
   }
 
   @media (max-width: 720px) {
-    .frames-view { padding: 30px 16px 6px; }
-    .lane-col { width: 200px; }
+    .stage-bar.is-frames { left: 0; top: 6px; }
+    .frames-sidebar { display: none; }
+    .frames-main { padding: 34px 16px 6px; gap: 8px; }
+    .frames-sub { display: none; }
+    .lane-col { width: 204px; padding: 8px 9px 9px; }
     .frames-legend { display: none; }
-    .frames-scrollbar { flex-basis: 180px; }
+    .frames-scrollbar { flex: 1 1 180px; }
   }
 
   .fp-head {
@@ -9526,30 +10210,57 @@ var getPad = () => PAD;
     align-items: center;
     justify-content: space-between;
     gap: 10px;
-    padding: 8px 10px;
-    border-bottom: 1px solid var(--line-soft);
+    padding: 9px 12px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--line);
   }
 
   .fp-title {
     margin: 0;
+    font-family: var(--mono);
     font-size: 10px;
-    letter-spacing: 0.09em;
+    font-weight: 600;
+    letter-spacing: 0.1em;
     text-transform: uppercase;
     color: var(--dim);
   }
 
-  .frame-glyph { font-family: var(--mono); font-size: 11.5px; color: var(--text); }
-
-  .frame-preview { display: block; width: 100%; height: 24px; }
-  .frame-preview polyline {
-    fill: none;
-    stroke: var(--accent);
-    stroke-width: 1.2;
-    stroke-opacity: 0.8;
+  .frame-preview { display: block; width: 100%; height: 100%; }
+  .frame-preview .frame-mid {
+    stroke: var(--line-hi);
+    stroke-width: 1;
+    stroke-dasharray: 2 3;
+    stroke-opacity: 0.45;
     vector-effect: non-scaling-stroke;
   }
-  .frame-preview.z polyline { stroke-width: 1.7; stroke-opacity: 1; }
-  .frame-preview.b polyline { stroke-dasharray: 4 3; }
+  .frame-preview .frame-area {
+    fill: rgba(52, 211, 153, 0.08);
+    stroke: none;
+  }
+  .frame-preview.b .frame-area { fill: rgba(52, 211, 153, 0.04); }
+  .frame-preview.z .frame-area { fill: rgba(52, 211, 153, 0.13); }
+  .frame-preview .frame-glow {
+    fill: none;
+    stroke: rgba(52, 211, 153, 0.22);
+    stroke-width: 5;
+    vector-effect: non-scaling-stroke;
+  }
+  .frame-preview .frame-line {
+    fill: none;
+    stroke: var(--accent);
+    stroke-width: 1.4;
+    stroke-opacity: 0.88;
+    vector-effect: non-scaling-stroke;
+  }
+  .frame-preview.z .frame-line {
+    stroke: var(--accent-hi);
+    stroke-width: 1.8;
+    stroke-opacity: 1;
+  }
+  .frame-preview.b .frame-line {
+    stroke-dasharray: 4 3;
+    stroke-opacity: 0.78;
+  }
 
   .eye-btn {
     display: inline-flex;
@@ -9564,11 +10275,12 @@ var getPad = () => PAD;
     background: transparent;
     color: var(--dim);
     cursor: pointer;
+    transition: background-color 100ms linear, color 100ms linear;
   }
   .eye-btn:hover { background: var(--panel-hover); color: var(--text); }
   .eye-btn svg {
-    width: 16px;
-    height: 16px;
+    width: 15px;
+    height: 15px;
     fill: none;
     stroke: currentColor;
     stroke-width: 1.3;
@@ -9586,7 +10298,8 @@ var getPad = () => PAD;
     align-items: center;
     justify-content: space-between;
     gap: 8px;
-    padding: 7px 10px;
+    padding: 8px 12px;
+    background: var(--surface);
     border-top: 1px solid var(--line-soft);
     color: var(--dim);
     font-size: 10px;
@@ -9601,16 +10314,19 @@ var getPad = () => PAD;
   .sources-panel {
     position: absolute;
     z-index: 3;
-    top: 8px;
-    bottom: 8px;
+    top: 10px;
+    bottom: 10px;
     right: var(--pad);
-    width: min(440px, calc(100% - 2 * var(--pad)));
+    width: min(448px, calc(100% - 2 * var(--pad)));
     display: flex;
     flex-direction: column;
     overflow: hidden;
-    background: var(--panel);
-    border: 1px solid var(--line);
-    border-radius: 5px;
+    background: rgba(13, 16, 21, 0.96);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid var(--line-hi);
+    border-radius: 8px;
+    box-shadow: 0 16px 48px rgba(0, 0, 0, 0.55);
   }
 
   .src-body { overflow: auto; padding: 2px 10px 6px; }
@@ -9713,9 +10429,9 @@ var getPad = () => PAD;
   /* ── bit strip ─────────────────────────────────────────── */
   .strip {
     position: relative;
-    border-top: 1px solid var(--line-soft);
-    background: var(--panel);
-    padding: 12px 0 10px;
+    border-top: 1px solid var(--line);
+    background: var(--surface);
+    padding: 10px 0 9px;
     overflow-x: auto;
     overflow-y: hidden;
   }
@@ -9724,11 +10440,13 @@ var getPad = () => PAD;
   .strip::before {
     content: attr(data-edit);
     position: absolute;
-    left: 5px;
-    top: 13px;
+    left: 6px;
+    top: 11px;
     font-family: var(--mono);
     font-size: 9px;
-    color: var(--dimmer);
+    font-weight: 600;
+    color: var(--accent);
+    opacity: 0.65;
     letter-spacing: 0.08em;
     pointer-events: none;
   }
@@ -9750,10 +10468,11 @@ var getPad = () => PAD;
     flex: 1 1 0;
     min-width: 0;
     padding: 2px 0 3px;
-    border-radius: 3px;
+    border-radius: 4px;
+    transition: background-color 90ms linear;
   }
 
-  .nib.hot { background: rgba(52,211,153,0.07); }
+  .nib.hot { background: rgba(52,211,153,0.08); }
 
   /* The whole nibble is one semantic target and the keyboard editor's focus
      unit (DESIGN §8 nibble spinbutton / §10.32). The ring wraps the nibble,
@@ -9762,7 +10481,7 @@ var getPad = () => PAD;
   .nib:focus-visible {
     outline: 2px solid var(--accent);
     outline-offset: -1px;
-    background: rgba(52,211,153,0.10);
+    background: rgba(52,211,153,0.12);
   }
 
   /* The bit glyphs keep a natural monospace pitch and stay centred in
@@ -9835,9 +10554,9 @@ var getPad = () => PAD;
   .meta {
     display: flex;
     align-items: center;
-    gap: 10px 22px;
+    gap: 8px 18px;
     flex-wrap: wrap;
-    padding: 9px var(--pad);
+    padding: 7px var(--pad);
     border-top: 1px solid var(--line-soft);
     background: var(--panel);
     font-family: var(--mono);
@@ -9852,16 +10571,21 @@ var getPad = () => PAD;
     align-items: center;
     gap: 6px;
     padding: 3px 9px;
-    border: 1px solid var(--line);
+    border: 1px solid rgba(52, 211, 153, 0.25);
     border-radius: 99px;
+    background: rgba(52, 211, 153, 0.06);
     color: var(--accent);
-    font-size: 10.5px;
-    letter-spacing: 0.05em;
+    font-size: 10px;
+    letter-spacing: 0.06em;
     text-transform: uppercase;
     white-space: nowrap;
   }
 
-  .badge.flat { color: var(--dim); }
+  .badge.flat {
+    color: var(--dim);
+    border-color: var(--line);
+    background: var(--surface);
+  }
 
   /* "level" / "step-up" / "step-down" must not resize the wrapping meta row;
      reserve the longest label's slot and center the current word in it. */
@@ -9870,14 +10594,14 @@ var getPad = () => PAD;
     justify-content: center;
   }
 
-  .kv { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+  .kv { display: flex; align-items: baseline; gap: 7px; min-width: 0; }
 
   .kv > span {
-    font-family: var(--sans);
-    font-size: 10px;
-    letter-spacing: 0.09em;
+    font-family: var(--mono);
+    font-size: 9.5px;
+    letter-spacing: 0.08em;
     text-transform: uppercase;
-    color: var(--dimmer);
+    color: var(--dim);
   }
 
   /* D41: the A/B/Z1 readout labels are the frame lens — label-sized buttons
@@ -9888,24 +10612,26 @@ var getPad = () => PAD;
     justify-content: center;
     min-inline-size: 24px;
     min-block-size: 24px;
-    padding: 0 3px;
-    border: 0;
-    border-radius: 3px;
+    padding: 0 5px;
+    border: 1px solid transparent;
+    border-radius: 4px;
     background: transparent;
-    font-family: var(--sans);
+    font-family: var(--mono);
     font-size: 10px;
-    letter-spacing: 0.09em;
+    font-weight: 600;
+    letter-spacing: 0.06em;
     text-transform: uppercase;
-    color: var(--dimmer);
+    color: var(--dim);
     cursor: pointer;
-    transition: color 90ms linear, background 90ms linear;
+    transition: color 90ms linear, background-color 90ms linear, border-color 90ms linear;
   }
 
-  .kv > .lens-btn:hover { color: var(--text); background: var(--panel-hover); }
+  .kv > .lens-btn:hover { color: var(--text); background: var(--panel-hover); border-color: var(--line); }
 
   .kv > .lens-btn[aria-pressed="true"] {
     color: var(--accent);
-    background: rgba(52, 211, 153, 0.1);
+    background: var(--accent-soft);
+    border-color: rgba(52, 211, 153, 0.35);
   }
 
   .kv > .lens-btn:focus-visible {
@@ -9931,13 +10657,13 @@ var getPad = () => PAD;
      closing the body can never move the hex readouts horizontally. */
   .truth-disclosure {
     flex: 0 0 auto;
-    inline-size: 132px;
+    inline-size: 140px;
     border: 1px solid var(--line);
-    border-radius: 5px;
-    background: var(--panel-hi);
+    border-radius: 6px;
+    background: var(--surface);
     font-family: var(--mono);
-    font-size: 10.5px;
-    line-height: 1.35;
+    font-size: 10px;
+    line-height: 1.3;
   }
 
   /* Header button is the disclosure control: live algebra, chevron, a 24 px
@@ -9950,11 +10676,11 @@ var getPad = () => PAD;
     min-block-size: 24px;
     padding: 3px 8px;
     border: 0;
-    border-radius: 4px;
+    border-radius: 5px;
     background: transparent;
     font-family: var(--mono);
     font-size: 9.5px;
-    letter-spacing: 0.06em;
+    letter-spacing: 0.05em;
     color: var(--dim);
     text-align: left;
     cursor: pointer;
@@ -9971,7 +10697,8 @@ var getPad = () => PAD;
   .truth-chev {
     flex: 0 0 auto;
     width: 8px;
-    color: var(--dimmer);
+    color: var(--accent);
+    opacity: 0.7;
     font-size: 9px;
   }
 
@@ -9981,12 +10708,15 @@ var getPad = () => PAD;
     text-overflow: ellipsis;
   }
 
-  .truth-body { padding: 0 9px 5px; }
+  .truth-body {
+    padding: 3px 9px 5px;
+    border-top: 1px solid var(--line-soft);
+  }
 
   .truth {
     font-family: var(--mono);
-    font-size: 10.5px;
-    line-height: 1.35;
+    font-size: 10px;
+    line-height: 1.3;
   }
 
   .truth-grid {
@@ -10003,7 +10733,7 @@ var getPad = () => PAD;
 
   .truth-grid span { text-align: center; font-variant-numeric: tabular-nums; }
   .truth-grid .th {
-    font-size: 9px;
+    font-size: 8.5px;
     letter-spacing: 0.08em;
     text-transform: uppercase;
     color: var(--dimmer);
@@ -10027,35 +10757,74 @@ var getPad = () => PAD;
   .truth-grid.ar .ct { text-align: left; border-left-width: 0; padding-left: 0; }
   .truth-grid.ar .ct.yes { color: var(--inf); }
 
-  /* ── controls ─────────────────────────────────────────── */
+  /* ── controls — GitWave-inspired numbered module dock ─── */
   .controls {
     display: flex;
-    align-items: center;
-    gap: 10px 26px;
+    align-items: stretch;
+    gap: 8px;
     flex-wrap: wrap;
-    padding: 11px var(--pad) 14px;
+    padding: 10px var(--pad) 12px;
     border-top: 1px solid var(--line);
     background: var(--panel);
   }
 
-  .group { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+  .group {
+    display: flex;
+    align-items: center;
+    align-content: flex-start;
+    gap: 6px 6px;
+    flex-wrap: wrap;
+    min-width: 0;
+    max-width: 100%;
+    padding: 7px 11px 9px;
+    background: var(--surface);
+    border: 1px solid var(--line-soft);
+    border-radius: 7px;
+  }
+
+  /* Structured 2-row dock proportions on desktop, graceful wrap on narrow screens */
+  .controls > .group:nth-of-type(1) { flex: 1 1 760px; }
+  .controls > .group:nth-of-type(2) { flex: 0 1 auto; }
+  .controls > .group:nth-of-type(3) { flex: 1 1 600px; gap: 5px 4px; }
+  .controls > .group:nth-of-type(4) { flex: 0 0 auto; gap: 5px 5px; padding: 7px 10px 9px; }
+  .controls > .group:nth-of-type(5) { flex: 0 0 auto; gap: 5px 5px; padding: 7px 10px 9px; }
+  .controls > .group:nth-of-type(3) button.op,
+  .controls > .group:nth-of-type(4) button.op,
+  .controls > .group:nth-of-type(5) button.op { padding: 3px 6.5px; font-size: 10.5px; }
+  .controls > .group:nth-of-type(3) select,
+  .controls > .group:nth-of-type(5) select { padding: 2px 5px; font-size: 10.5px; }
 
   .group > label {
-    font-size: 10px;
-    letter-spacing: 0.09em;
+    flex: 1 0 100%;
+    width: 0;
+    min-width: 100%;
+    font-family: var(--mono);
+    font-size: 9px;
+    font-weight: 600;
+    letter-spacing: 0.1em;
     text-transform: uppercase;
-    color: var(--dimmer);
-    margin-right: 1px;
+    color: var(--dim);
+    margin: 0 0 2px;
+    padding-bottom: 4px;
+    border-bottom: 1px solid var(--line-soft);
   }
+
+  .controls > .group:nth-of-type(1) > label::before { content: "01 // "; color: var(--accent); opacity: 0.78; }
+  .controls > .group:nth-of-type(2) > label::before { content: "02 // "; color: var(--accent); opacity: 0.78; }
+  .controls > .group:nth-of-type(3) > label::before { content: "03 // "; color: var(--accent); opacity: 0.78; }
+  .controls > .group:nth-of-type(4) > label::before { content: "04 // "; color: var(--accent); opacity: 0.78; }
+  .controls > .group:nth-of-type(5) > label::before { content: "05 // "; color: var(--accent); opacity: 0.78; }
 
   button.op {
     font-family: var(--mono);
-    font-size: 11.5px;
+    font-size: 11px;
+    line-height: 1.3;
+    min-height: 26px;
     color: var(--text);
     background: var(--panel-hi);
     border: 1px solid var(--line);
     border-radius: 5px;
-    padding: 5px 10px;
+    padding: 4px 8px;
     cursor: pointer;
     transition: background-color 110ms linear, border-color 110ms linear, color 110ms linear;
   }
@@ -10063,7 +10832,7 @@ var getPad = () => PAD;
   button.op:hover { background: var(--panel-hover); border-color: var(--line-hi); }
   button.op:active { transform: translateY(0.5px); }
   button.op:focus-visible { outline: none; box-shadow: 0 0 0 2px rgba(52,211,153,0.35); }
-  button.op.accent { color: var(--accent); border-color: rgba(52,211,153,0.28); }
+  button.op.accent { color: var(--accent); border-color: rgba(52,211,153,0.25); }
   button.op.accent:hover { border-color: rgba(52,211,153,0.5); }
 
   button.op.on,
@@ -10071,7 +10840,7 @@ var getPad = () => PAD;
   button.op[aria-checked="true"] {
     color: var(--accent);
     border-color: rgba(52,211,153,0.5);
-    background: rgba(52,211,153,0.10);
+    background: var(--accent-soft);
   }
 
   /* Reserved space (DESIGN §9): an inapplicable control stays in place,
@@ -10090,7 +10859,7 @@ var getPad = () => PAD;
 
   /* segmented A | B | C */
   .seg { display: flex; }
-  .seg .op { border-radius: 0; padding: 5px 9px; }
+  .seg .op { border-radius: 0; padding: 4px 8px; }
   .seg .op:first-child { border-radius: 5px 0 0 5px; }
   .seg .op:last-child { border-radius: 0 5px 5px 0; }
   .seg .op + .op { margin-left: -1px; }
@@ -10114,41 +10883,46 @@ var getPad = () => PAD;
 
   select {
     font-family: var(--mono);
-    font-size: 11.5px;
+    font-size: 11px;
+    line-height: 1.3;
+    min-height: 26px;
     color: var(--text);
     background: var(--panel-hi);
     border: 1px solid var(--line);
     border-radius: 5px;
-    padding: 5px 6px;
+    padding: 3px 6px;
     cursor: pointer;
+    transition: border-color 110ms linear;
   }
 
+  select:hover { border-color: var(--line-hi); }
   select:focus-visible { outline: none; box-shadow: 0 0 0 2px rgba(52,211,153,0.35); }
 
   .spacer { flex: 1 1 0; }
 
   .excount {
     font-family: var(--mono);
-    font-size: 11px;
+    font-size: 10.5px;
     color: var(--dim);
     font-variant-numeric: tabular-nums;
-    min-width: 54px;
+    min-width: 46px;
     text-align: center;
   }
 
   /* ── F4 IA: register edit, copy menu, keyboard map ───────── */
 
   .sub-label {
-    font-size: 9px;
-    letter-spacing: 0.08em;
+    font-family: var(--mono);
+    font-size: 8.5px;
+    letter-spacing: 0.09em;
     text-transform: uppercase;
     color: var(--dimmer);
-    margin-left: 2px;
+    margin-left: 3px;
   }
 
   .edit-target {
     font-family: var(--mono);
-    font-size: 11px;
+    font-size: 10.5px;
     color: var(--dim);
     white-space: nowrap;
     font-variant-numeric: tabular-nums;
@@ -10156,26 +10930,28 @@ var getPad = () => PAD;
 
   .hex-entry {
     font-family: var(--mono);
-    font-size: 12px;
+    font-size: 11.5px;
+    min-height: 26px;
     color: var(--text);
-    background: var(--panel-hi);
+    background: var(--bg);
     border: 1px solid var(--line);
     border-radius: 5px;
-    padding: 5px 8px;
+    padding: 4px 8px;
     width: 20ch;
+    max-width: 100%;
     text-align: right;
     letter-spacing: 0.02em;
     font-variant-numeric: tabular-nums;
   }
 
   .hex-entry::placeholder { color: var(--dimmer); }
-  .hex-entry:focus-visible { outline: none; box-shadow: 0 0 0 2px rgba(52,211,153,0.35); }
+  .hex-entry:focus-visible { outline: none; border-color: var(--accent-border); box-shadow: 0 0 0 2px rgba(52,211,153,0.28); }
   .hex-entry:disabled { opacity: 0.42; cursor: default; }
   .hex-entry.invalid { border-color: rgba(245,181,68,0.7); }
 
   .b-state {
     font-family: var(--mono);
-    font-size: 10.5px;
+    font-size: 10px;
     color: var(--dim);
     white-space: nowrap;
     min-width: 34px;
@@ -10186,12 +10962,14 @@ var getPad = () => PAD;
   .project-menu {
     position: fixed;
     z-index: 20;
-    min-width: 110px;
+    min-width: 124px;
     padding: 4px;
-    background: var(--panel);
-    border: 1px solid var(--line);
-    border-radius: 5px;
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+    background: rgba(13, 16, 21, 0.97);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid var(--line-hi);
+    border-radius: 7px;
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.55);
   }
 
   .copy-menu .op,
@@ -10211,9 +10989,11 @@ var getPad = () => PAD;
   /* Dataset / project status line (F5) — visible feedback under source. */
   .src-status {
     flex: 1 1 100%;
+    width: 0;
+    min-width: 100%;
     margin-top: 2px;
-    font-family: var(--sans);
-    font-size: 10px;
+    font-family: var(--mono);
+    font-size: 9.5px;
     letter-spacing: 0.03em;
     color: var(--dim);
   }
@@ -10227,15 +11007,17 @@ var getPad = () => PAD;
     left: 50%;
     top: 50%;
     transform: translate(-50%, -50%);
-    width: min(430px, calc(100% - 2 * var(--pad)));
+    width: min(440px, calc(100% - 2 * var(--pad)));
     max-height: calc(100dvh - 40px);
     display: flex;
     flex-direction: column;
     overflow: hidden;
-    background: var(--panel);
-    border: 1px solid var(--line);
-    border-radius: 5px;
-    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+    background: rgba(13, 16, 21, 0.97);
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+    border: 1px solid var(--line-hi);
+    border-radius: 8px;
+    box-shadow: 0 16px 48px rgba(0, 0, 0, 0.6);
   }
 
   .help-body { overflow: auto; padding: 2px 14px 14px; }
@@ -10386,19 +11168,19 @@ var getPad = () => PAD;
 
   @media (max-width: 720px) {
     :root { --pad: 16px; }
-    header { flex-wrap: wrap; gap: 12px; padding-top: 12px; padding-bottom: 12px; }
+    header { flex-wrap: wrap; gap: 10px; padding-top: 10px; padding-bottom: 10px; }
     .title p { display: none; }
-    .sizer { width: 100%; order: 2; }
+    .sizer { width: 100%; order: 2; gap: 8px; padding: 3px 10px; }
     /* D47: the VIEW control stays beside `?` on the first header row. */
-    .header-view { order: 1; }
-    #helpBtn { order: 1; }
-    .sizer input[type="range"] { flex: 1 1 auto; width: auto; }
-    #sizeOut { min-width: 0; }
-    .controls { gap: 8px 16px; }
+    .header-actions { order: 1; }
+    .sizer input[type="range"] { flex: 1 1 auto; width: auto; min-width: 72px; }
+    #sizeOut { min-width: 0; font-size: 11px; }
+    .controls { gap: 8px; }
+    .controls > .group:nth-of-type(n) { flex: 1 1 100%; }
     .kv.wide { flex-basis: 100%; }
     .strip::before { top: 8px; }
     .stage-expr { display: none; }
-    .pane-head { gap: 5px; padding: 0 4px; }
+    .pane-head { gap: 5px; padding: 3px 6px; }
   }
 
   /* ── accessibility floor ─────────────────────────────────── */
@@ -10431,8 +11213,13 @@ var getPad = () => PAD;
     .focus-dot,
     .eye-btn,
     .lane-btn,
+    .lane-act,
+    .lane-col,
     .frame-card,
+    .frame-card-wrap,
     .frame-add,
+    .fs-item,
+    .pane-head,
     .unpair-btn,
     .frames-arrow,
     .lens-btn,
@@ -10447,7 +11234,12 @@ var getPad = () => PAD;
 
 <header>
   <div class="title">
-    <h1>BitWave</h1>
+    <div class="brand">
+      <h1>BitWave</h1>
+      <svg class="brand-wave" viewBox="0 0 28 12" aria-hidden="true">
+        <path d="M1 7 C4 1, 7 1, 10 6 S16 11, 19 5 S24 1, 27 6" />
+      </svg>
+    </div>
     <p>registers as waveforms — every nibble is a sample</p>
   </div>
   <div class="sizer">
@@ -10458,11 +11250,13 @@ var getPad = () => PAD;
   <!-- D47: the wave-view control lives in the top bar (VIEW + 3D), immediately
        left of the help `?`; the bottom VIEW row is gone. Same id, pressed state,
        title and keyboard path as before. -->
-  <div class="header-view" role="group" aria-label="view">
-    <span class="view-label" aria-hidden="true">view</span>
-    <button class="op" id="depthBtn" aria-pressed="false" title="Show the depth field: A at frame 1, Z at 128, B at 256">3D</button>
+  <div class="header-actions">
+    <div class="header-view" role="group" aria-label="view">
+      <span class="view-label" aria-hidden="true">view</span>
+      <button class="op" id="depthBtn" aria-pressed="false" title="Show the depth field: A at frame 1, Z at 128, B at 256">3D</button>
+    </div>
+    <button class="op" id="helpBtn" type="button" aria-expanded="false" aria-controls="helpPanel" aria-keyshortcuts="?" title="Keyboard map (?)">?</button>
   </div>
-  <button class="op" id="helpBtn" type="button" aria-expanded="false" aria-controls="helpPanel" aria-keyshortcuts="?" title="Keyboard map (?)">?</button>
 </header>
 
 <main>
@@ -10492,23 +11286,47 @@ var getPad = () => PAD;
   </aside>
 
   <!-- D42/D46: the frames view replaces the pop-out navigator. The stage swaps to
-       a card grid (one column per live lane, one equal card per frame); `Lanes`
-       in the stage bar returns. Cards are buttons; eyes keep 2-D visibility;
-       the + tile adds a lane and each lane head duplicates/deletes. -->
+       a structured browser: a left lane-tree sidebar + right card grid (one column
+       per live lane, one equal card per frame); `Lanes` in the stage bar returns.
+       Cards are buttons; eyes keep 2-D visibility; the + tile adds a lane and each
+       lane head duplicates/deletes. -->
   <div class="frames-view" id="framesView" hidden role="region" aria-label="Frames — every lane and frame">
-    <div class="frames-scroll" id="framesScroll" tabindex="0" role="group"
-         aria-label="Frame cards — arrow keys scroll">
-      <div class="frames-grid" id="framesGrid"></div>
-    </div>
-    <div class="frames-foot">
-      <span class="frames-legend" id="framesLegend">A solid · Z glow · B dashed</span>
-      <span class="frames-note" id="framesNote" role="status" aria-live="polite"></span>
-      <div class="frames-scrollbar" role="group" aria-label="Horizontal frame scroll">
-        <button class="frames-arrow" id="framesLeft" type="button"
-                aria-label="Scroll frames left" title="Scroll frames left" disabled>◀</button>
-        <span class="frames-track" aria-hidden="true"><span class="frames-thumb" id="framesThumb"></span></span>
-        <button class="frames-arrow" id="framesRight" type="button"
-                aria-label="Scroll frames right" title="Scroll frames right">▶</button>
+    <div class="frames-shell">
+      <div class="frames-sidebar" id="framesSidebar" aria-label="Lanes index">
+        <div class="fs-head">
+          <span class="fs-title">01 // lanes</span>
+          <span class="fs-count" id="framesLaneCount">3 / 8</span>
+        </div>
+        <div class="fs-tree" id="framesTree"></div>
+      </div>
+      <div class="frames-main">
+        <div class="frames-header">
+          <div class="frames-heading">
+            <h2 class="frames-title" id="framesTitle">All Frames</h2>
+            <p class="frames-sub" id="framesSub">9 frames · 3 lanes · click a card to focus · eye toggles 2D</p>
+          </div>
+          <div class="frames-filters" id="framesFilters" role="group" aria-label="Filter frames">
+            <button class="op mini frames-filter" type="button" data-filter="all" aria-pressed="true">All</button>
+            <button class="op mini frames-filter" type="button" data-filter="operands" aria-pressed="false">Operands</button>
+            <button class="op mini frames-filter" type="button" data-filter="derived" aria-pressed="false">Derived</button>
+            <button class="op mini frames-filter" type="button" data-filter="visible" aria-pressed="false">Visible</button>
+          </div>
+        </div>
+        <div class="frames-scroll" id="framesScroll" tabindex="0" role="group"
+             aria-label="Frame cards — arrow keys scroll">
+          <div class="frames-grid" id="framesGrid"></div>
+        </div>
+        <div class="frames-foot">
+          <span class="frames-legend" id="framesLegend">A solid · Z glow · B dashed</span>
+          <span class="frames-note" id="framesNote" role="status" aria-live="polite"></span>
+          <div class="frames-scrollbar" role="group" aria-label="Horizontal frame scroll">
+            <button class="frames-arrow" id="framesLeft" type="button"
+                    aria-label="Scroll frames left" title="Scroll frames left" disabled>◀</button>
+            <span class="frames-track" aria-hidden="true"><span class="frames-thumb" id="framesThumb"></span></span>
+            <button class="frames-arrow" id="framesRight" type="button"
+                    aria-label="Scroll frames right" title="Scroll frames right">▶</button>
+          </div>
+        </div>
       </div>
     </div>
   </div>

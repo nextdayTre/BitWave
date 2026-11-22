@@ -194,6 +194,30 @@ path required):
 } } }
 ```
 
+### 4. Inside DeepSeek Harness
+
+Two private, local bundles carry BitWave into a DeepSeek Harness profile (verified
+against DSH `0.2.2-rc.3`): [`dsh-plugin/`](dsh-plugin/README.md) and
+[`dsh-mcp/`](dsh-mcp/README.md). Neither changes the toolset, the state schema or the
+artifact.
+
+| bundle | surface | what it is |
+|---|---|---|
+| `dsh-plugin/` | a **BitWave** page in the left sidebar | the built `bitwave-v2.html` embedded byte-for-byte in a client module (`sidebar.panellist` entry + `main` page) |
+| `dsh-mcp/` | `mcp__bitwave__<tool>` tools | a configuration-only patch connecting `agent/mcp-server.mjs` over stdio |
+
+`dsh-plugin/client.js` is **generated** — `node dsh-plugin/build.mjs` inlines the built
+artifact and `--check` fails when it drifts; `node dsh-plugin/verify-client.mjs` proves
+the loader contract, both slot registrations and a byte-identical embed without a
+browser. The page is a render of the same file, not a second implementation: no core
+module is duplicated and no number is recomputed.
+
+Known limits of the embedded page: it keeps the instrument's own colours instead of the
+host theme, share links are inert (the `#bw=` mirror has no meaning inside an embedded
+document), and the 650 ms autosave debounce means the last edit can be lost when leaving
+the page. `dsh-mcp` binds absolute paths for this checkout, so both paths in its patch
+move with the repo.
+
 ## Where the truth lives
 
 | file | role |
@@ -220,7 +244,11 @@ Rules:
    stage-bar lane buttons with a lane dropdown and added the frames-view lane-management
    controls by design; the GUI-rearrangement slice (D47) re-homed the view toggle into the
    top bar, the hinge and copy menu into each pane head, and the truth table into an
-   always-present readout disclosure — a layout change with unchanged behaviour).
+   always-present readout disclosure — a layout change with unchanged behaviour; the D51
+   GUI visual cleanup organized the frames view into a two-zone browser with a lane
+   sidebar and filter pills, framed the five control groups as numbered dock modules
+   `01 // SOURCE`…`05 // MOTION`, and refined the header/stage HUD styling without changing
+   behaviour, schemas or core maths).
 
 Acceptance checks:
 
@@ -244,10 +272,13 @@ node agent/verify-browser.mjs
 | `docs/ROUTING-IO-MODEL.md` | design note (exploration): lanes as computation vs housing, sends/fan-out, reference operands vs a frame/operator port graph, expressor sidechain I/O, cost/measurement plan |
 | `docs/DATASET-LIFECYCLE.md` | design note (exploration, revised): dataset readback/export + formal tools, step timeline/playback, provenance/citation and reproducibility, agent sorting-process workflow; function-frame/global-identity model deferred |
 | `docs/EXTERNAL-ROUTING.md` | shipped slice: Record/log and expression operands (schema 3, toolset 1.1.0) |
+| `docs/CONSTRAINTS.md` | constraint tiers: invariants vs product commitments vs provisional facts, with re-derivation triggers; the model → document → view rule (D50) |
 | `agent/manifest.json` | generated capability manifest (tools, selectors, errors) |
 | `agent/examples/` | generated example envelopes, one per tool |
 | `agent/README.md` | transports guide: CLI commands, MCP server, selftest, generator |
 | `agent/verify-browser.mjs` | independent CDP checklist for the agent layer |
+| `dsh-plugin/` | DeepSeek Harness page bundle: the instrument as a sidebar page, generated `client.js` (D49) |
+| `dsh-mcp/` | DeepSeek Harness MCP bundle: connects `agent/mcp-server.mjs` as `mcp__bitwave__*` (D49) |
 | `examples/eight-lanes.bitwave.json` | committed eight-lane schema-4 fixture (used by the tests, verifier and screenshot recipe) |
 | `docs/agent/*.png` | reproducible screenshots of the documented states (six now, including eight-lanes) |
 | `llms.txt` | compact machine onboarding |

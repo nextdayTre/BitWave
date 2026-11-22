@@ -542,30 +542,37 @@ The easing constant is deliberately high (`0.24`) — fast enough to feel like t
   (rather than scrolls sideways) at 360/720 px. Drawn exclusively from `--panel-hi`,
   `--line`, `--text`, `--dim`, `--dimmer` and `--accent`; the select uses the same tokens
   and is at least 24 px tall.
-- **Frames view** (`.frames-view`) — the `frames` button swaps the **stage** to a card
-  browser (`Lanes` in the stage bar returns; Esc also returns). The grid is one column per
-  **live** lane, one **equal card per frame** (operand A, operand B, derived Z), each card
-  a bordered box holding a mini spline of the settled register with the frame's global name
-  at its left; a dim lane head carries the lane name, `unpair B` for the focused lane in
-  2-D with B live, and compact **`dup` / `del`** lane-management controls (D46); each card
-  carries a 24 px visibility eye (2-D visibility only; disabled in 3-D). Choosing a card
-  focuses that frame **and returns to the lanes view** — the one deliberate exception to
-  §10.24, because the view replaces the stage rather than floating over it. The `+` tile is
-  the **live add-lane** control: it allocates the lowest free stable key, creates a blank
-  lane (zero registers, XOR, focus A, all frames visible, no expressions or CSV columns) and
-  focuses it; it is `aria-disabled` only at the eight-lane cap, where its accessible name
-  and title explain that a lane must be deleted first. `dup` duplicates the lane's values,
-  operator, lenses, visibility, expressions and CSV mapping **but not routes or parked
-  bases**, then focuses the copy. `del` shows an **inline confirmation** naming how many
-  routes/expressions reference the lane's frames, needs a second confirming click, cancels
-  on Esc (without leaving the view) and reports the result in the footer note; the last
-  remaining lane cannot be deleted. The canvas and hint are hidden (`visibility`) while the
-  view is open; the strip, meta and controls stay live. The footer carries the legend and a
-  horizontal scroll affordance (arrow buttons + track/thumb) for many lanes; the scroll
-  region is one Tab stop and scrolls with `←/→`. Cards are buttons (Tab, `Enter`/`Space`);
-  the view adds no hue and no motion beyond the scroll. Closing returns to the exact
-  2-D/3-D view and focus; with the default three lanes the view keeps the same card
-  geometry (only the lane-head controls and the `+` hint are new).
+- **Frames view** (`.frames-view`) — the `frames` button swaps the **stage** to a two-zone
+  browser (`Lanes` in the stage bar returns; Esc also returns). Under D51, a `01 // LANES`
+  left sidebar tree (hidden ≤720 px) lists `All Frames`, every live lane with its operator
+  badge (`A ⊕ B`, etc.) and quick-jump frame rows for the focused lane; the right browser
+  header carries the title, live frame/lane count, centered `Lanes` return pill and
+  transient `All | Operands | Derived | Visible` filter pills (non-matching cards dim;
+  resets to `All` on open). The grid is one elevated track column per **live** lane, one
+  **equal card per frame** (operand A, operand B, derived Z), each card a self-contained
+  waveform tile holding a mini spline of the settled register (area fill, midpoint guide,
+  `Z` glow), global frame name, role/binding badge and compact hex preview (kept in a
+  non-interactive `.frame-card-extra` sibling for WCAG 2.5.3 Label-in-Name compliance); a
+  lane head carries the lane name, live operator expression, `unpair B` for the focused
+  lane in 2-D with B live, and compact **`dup` / `del`** lane-management controls (D46);
+  each card carries a 24 px visibility eye (2-D visibility only; disabled in 3-D). Choosing
+  a card focuses that frame **and returns to the lanes view** — the one deliberate
+  exception to §10.24, because the view replaces the stage rather than floating over it. The
+  `+` tile is the **live add-lane** control: it allocates the lowest free stable key,
+  creates a blank lane (zero registers, XOR, focus A, all frames visible, no expressions or
+  CSV columns) and focuses it; it is `aria-disabled` only at the eight-lane cap, where its
+  accessible name and title explain that a lane must be deleted first. `dup` duplicates the
+  lane's values, operator, lenses, visibility, expressions and CSV mapping **but not routes
+  or parked bases**, then focuses the copy. `del` shows an **inline confirmation** naming
+  how many routes/expressions reference the lane's frames, needs a second confirming click,
+  cancels on Esc (without leaving the view) and reports the result in the footer note; the
+  last remaining lane cannot be deleted. The canvas and hint are hidden (`visibility`)
+  while the view is open; the strip, meta and controls stay live. The footer carries the
+  legend and a horizontal scroll affordance (arrow buttons + track/thumb) for many lanes;
+  the scroll region is one Tab stop and scrolls with `←/→`. Cards are buttons (Tab,
+  `Enter`/`Space`); the view stays strictly within the existing emerald/slate palette and
+  all three frame rows fit cleanly at 1440×900 without vertical clipping. Closing returns
+  to the exact 2-D/3-D view and focus.
 - **Copy menu** (`.copy-menu`) — each pane head owns a `copy to…` opener (D47). It opens an
   explicit `role="menu"` anchored under that opener with one `role="menuitem"` per **live
   lane except the pane's source lane** (built on every open; the menu's accessible name is
@@ -1180,3 +1187,9 @@ them.
    `index.html` stays untouched as the reference build.
 6. **Any new control must declare its keyboard path and accessible name in §8** and
    implement it before shipping. A control a keyboard-only user cannot reach is not done.
+7. **Classify before you constrain.** [`docs/CONSTRAINTS.md`](docs/CONSTRAINTS.md) (D50)
+   separates invariants from product commitments from provisional facts. A provisional
+   number — the link budget, a px density, the width or op enum, the lanes presentation — is
+   re-derived by the proposal that outgrows it, not cited as a veto; evaluate
+   **model → document → view**, and treat the lanes/3-D view as a projection, not the
+   structure.

@@ -15,20 +15,22 @@ no network, no dependencies — **open it directly in a browser.**
 
 - **`bitwave-v2.html`** — the current build, generated from `src/`. A live lane set of
   **1–8 lanes** (the boot instrument has three; add, duplicate and delete in the frames
-  view, cap 8), the always-visible stage bar (a native per-pane lane dropdown, frames,
+  view, cap 8), the always-visible stage bar HUD (a native per-pane lane dropdown, frames,
   split, a per-pane 3-D `A far`/`B far` hinge and a per-pane `copy to…` menu), the
-  **frames view** (every frame as an equal card, with lane scrolling and a
-  `+` tile that adds lanes), per-frame visibility eyes, the frame focus lens
-  (A/B/Z1, C/D/Z2, E/F/Z3 … O/P/Z8), the `2L`-row **source table** (CSV columns, frame
+  **frames browser** (a `01 // LANES` sidebar tree, `All | Operands | Derived | Visible`
+  filter pills, elevated lane track cards with waveform previews/role badges/hex readouts,
+  lane scrolling and a `+` tile that adds lanes), per-frame visibility eyes, the frame focus
+  lens (A/B/Z1, C/D/Z2, E/F/Z3 … O/P/Z8), the `2L`-row **source table** (CSV columns, frame
   outputs or deterministic expressions, with driven inputs locked), wheel-to-adjust hex,
   an explicit copy-to-lane menu, the **A/B/Z1 readout labels as focus buttons** (choose
   the frame the strip and word entry edit), an always-present collapsible **truth
-  disclosure** in the readout row, a whole-word hex entry, CSV stepper,
-  observation CSV export, DAW-style Record/log, LFO, split 3-D with a per-lane **hinge**
-  that swaps which operand is far vs near, and a keyboard-editable strip (every nibble is
-  a spinbutton). The top bar carries the `VIEW` label + 2-D/3-D toggle beside `?`.
-  Work is **persisted**: `.bitwave` save/open, autosave across reloads, and the state is
-  shareable through the URL fragment. A `demo` button loads an embedded 8-row dataset.
+  disclosure** in the readout row, a structured numbered control dock (`01 // SOURCE`
+  through `05 // MOTION`), a whole-word hex entry, CSV stepper, observation CSV export,
+  DAW-style Record/log, LFO, split 3-D with a per-lane **hinge** that swaps which operand is
+  far vs near, and a keyboard-editable strip (every nibble is a spinbutton). The top bar
+  carries the `VIEW` label + 2-D/3-D toggle beside `?`. Work is **persisted**: `.bitwave`
+  save/open, autosave across reloads, and the state is shareable through the URL fragment.
+  A `demo` button loads an embedded 8-row dataset.
 - **`index.html`** — untouched original reference build.
 
 **Persistence at a glance.** The address bar always carries the current state as

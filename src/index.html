@@ -53,7 +53,12 @@
 
 <header>
   <div class="title">
-    <h1>BitWave</h1>
+    <div class="brand">
+      <h1>BitWave</h1>
+      <svg class="brand-wave" viewBox="0 0 28 12" aria-hidden="true">
+        <path d="M1 7 C4 1, 7 1, 10 6 S16 11, 19 5 S24 1, 27 6" />
+      </svg>
+    </div>
     <p>registers as waveforms — every nibble is a sample</p>
   </div>
   <div class="sizer">
@@ -64,11 +69,13 @@
   <!-- D47: the wave-view control lives in the top bar (VIEW + 3D), immediately
        left of the help `?`; the bottom VIEW row is gone. Same id, pressed state,
        title and keyboard path as before. -->
-  <div class="header-view" role="group" aria-label="view">
-    <span class="view-label" aria-hidden="true">view</span>
-    <button class="op" id="depthBtn" aria-pressed="false" title="Show the depth field: A at frame 1, Z at 128, B at 256">3D</button>
+  <div class="header-actions">
+    <div class="header-view" role="group" aria-label="view">
+      <span class="view-label" aria-hidden="true">view</span>
+      <button class="op" id="depthBtn" aria-pressed="false" title="Show the depth field: A at frame 1, Z at 128, B at 256">3D</button>
+    </div>
+    <button class="op" id="helpBtn" type="button" aria-expanded="false" aria-controls="helpPanel" aria-keyshortcuts="?" title="Keyboard map (?)">?</button>
   </div>
-  <button class="op" id="helpBtn" type="button" aria-expanded="false" aria-controls="helpPanel" aria-keyshortcuts="?" title="Keyboard map (?)">?</button>
 </header>
 
 <main>
@@ -98,23 +105,47 @@
   </aside>
 
   <!-- D42/D46: the frames view replaces the pop-out navigator. The stage swaps to
-       a card grid (one column per live lane, one equal card per frame); `Lanes`
-       in the stage bar returns. Cards are buttons; eyes keep 2-D visibility;
-       the + tile adds a lane and each lane head duplicates/deletes. -->
+       a structured browser: a left lane-tree sidebar + right card grid (one column
+       per live lane, one equal card per frame); `Lanes` in the stage bar returns.
+       Cards are buttons; eyes keep 2-D visibility; the + tile adds a lane and each
+       lane head duplicates/deletes. -->
   <div class="frames-view" id="framesView" hidden role="region" aria-label="Frames — every lane and frame">
-    <div class="frames-scroll" id="framesScroll" tabindex="0" role="group"
-         aria-label="Frame cards — arrow keys scroll">
-      <div class="frames-grid" id="framesGrid"></div>
-    </div>
-    <div class="frames-foot">
-      <span class="frames-legend" id="framesLegend">A solid · Z glow · B dashed</span>
-      <span class="frames-note" id="framesNote" role="status" aria-live="polite"></span>
-      <div class="frames-scrollbar" role="group" aria-label="Horizontal frame scroll">
-        <button class="frames-arrow" id="framesLeft" type="button"
-                aria-label="Scroll frames left" title="Scroll frames left" disabled>◀</button>
-        <span class="frames-track" aria-hidden="true"><span class="frames-thumb" id="framesThumb"></span></span>
-        <button class="frames-arrow" id="framesRight" type="button"
-                aria-label="Scroll frames right" title="Scroll frames right">▶</button>
+    <div class="frames-shell">
+      <div class="frames-sidebar" id="framesSidebar" aria-label="Lanes index">
+        <div class="fs-head">
+          <span class="fs-title">01 // lanes</span>
+          <span class="fs-count" id="framesLaneCount">3 / 8</span>
+        </div>
+        <div class="fs-tree" id="framesTree"></div>
+      </div>
+      <div class="frames-main">
+        <div class="frames-header">
+          <div class="frames-heading">
+            <h2 class="frames-title" id="framesTitle">All Frames</h2>
+            <p class="frames-sub" id="framesSub">9 frames · 3 lanes · click a card to focus · eye toggles 2D</p>
+          </div>
+          <div class="frames-filters" id="framesFilters" role="group" aria-label="Filter frames">
+            <button class="op mini frames-filter" type="button" data-filter="all" aria-pressed="true">All</button>
+            <button class="op mini frames-filter" type="button" data-filter="operands" aria-pressed="false">Operands</button>
+            <button class="op mini frames-filter" type="button" data-filter="derived" aria-pressed="false">Derived</button>
+            <button class="op mini frames-filter" type="button" data-filter="visible" aria-pressed="false">Visible</button>
+          </div>
+        </div>
+        <div class="frames-scroll" id="framesScroll" tabindex="0" role="group"
+             aria-label="Frame cards — arrow keys scroll">
+          <div class="frames-grid" id="framesGrid"></div>
+        </div>
+        <div class="frames-foot">
+          <span class="frames-legend" id="framesLegend">A solid · Z glow · B dashed</span>
+          <span class="frames-note" id="framesNote" role="status" aria-live="polite"></span>
+          <div class="frames-scrollbar" role="group" aria-label="Horizontal frame scroll">
+            <button class="frames-arrow" id="framesLeft" type="button"
+                    aria-label="Scroll frames left" title="Scroll frames left" disabled>◀</button>
+            <span class="frames-track" aria-hidden="true"><span class="frames-thumb" id="framesThumb"></span></span>
+            <button class="frames-arrow" id="framesRight" type="button"
+                    aria-label="Scroll frames right" title="Scroll frames right">▶</button>
+          </div>
+        </div>
       </div>
     </div>
   </div>
