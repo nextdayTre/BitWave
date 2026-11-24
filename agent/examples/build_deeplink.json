@@ -1,0 +1,15 @@
+{
+  "ok": true,
+  "schemaVersion": 1,
+  "tool": "build_deeplink",
+  "data": {
+    "fragment": "#bw=WzUsOCxbMSwwLDEsMiwwXSxbWzEsImlBIiwiOEEiLDAsMiwwLDAsIjAiLC0xLC0xXSxbMiwiOEEiLCJBQSIsMCwyLDAsMSwiMCIsLTEsLTFdLFszLCJEdyIsImlBIiwwLDAsMCwxLCIwIiwtMSwtMV1dLFtdLFtdXQ",
+    "payloadChars": 162,
+    "withinBudget": true,
+    "datasetDropped": false,
+    "expressionsDropped": false,
+    "url": "http://localhost:8000/#bw=WzUsOCxbMSwwLDEsMiwwXSxbWzEsImlBIiwiOEEiLDAsMiwwLDAsIjAiLC0xLC0xXSxbMiwiOEEiLCJBQSIsMCwyLDAsMSwiMCIsLTEsLTFdLFszLCJEdyIsImlBIiwwLDAsMCwxLCIwIiwtMSwtMV1dLFtdLFtdXQ"
+  },
+  "deeplink": "http://localhost:8000/#bw=WzUsOCxbMSwwLDEsMiwwXSxbWzEsImlBIiwiOEEiLDAsMiwwLDAsIjAiLC0xLC0xXSxbMiwiOEEiLCJBQSIsMCwyLDAsMSwiMCIsLTEsLTFdLFszLCJEdyIsImlBIiwwLDAsMCwxLCIwIiwtMSwtMV1dLFtdLFtdXQ",
+  "warnings": []
+}

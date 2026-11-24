@@ -1,0 +1,39 @@
+{
+  "id": "./",
+  "name": "BitWave — a register you can see",
+  "short_name": "BitWave",
+  "description": "A bit register rendered as a wavetable: drag nibbles, apply bitwise and arithmetic ops, step data. Offline, zero dependencies.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#08090c",
+  "theme_color": "#08090c",
+  "lang": "en",
+  "dir": "ltr",
+  "categories": [
+    "education",
+    "music",
+    "utilities"
+  ],
+  "icons": [
+    {
+      "src": "./icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "./icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "./icons/icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}
