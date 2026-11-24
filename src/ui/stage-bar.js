@@ -27,13 +27,21 @@
  * focused lane.
  */
 
-import { S, curLane, liveLaneKeys } from "../state/instrument.ts";
+import {
+  S,
+  curFreeFrame,
+  curLane,
+  freeFrameName,
+  liveFreeFrameKeys,
+  liveLaneKeys,
+} from "../state/instrument.ts";
 
 export function createStageBar(deps) {
   const {
     element,
     framesBtn,
     selectLane,
+    selectFreeFrame,
     selectLaneInPane,
     setSplitMode,
     focusSplitPane,
@@ -51,12 +59,16 @@ export function createStageBar(deps) {
     select.setAttribute("aria-label", paneIdx === 1 ? "Lane (second pane)" : "Lane");
     select.title = paneIdx === 1
       ? "Select the lane shown in the second pane"
-      : "Select the lane shown in this pane";
+      : "Select the lane or free frame shown in this pane";
     select.addEventListener("change", (ev) => {
       ev.stopPropagation();
-      const key = select.value;
-      if (S.split3d) selectLaneInPane(paneIdx, key);
-      else selectLane(key);
+      const val = select.value;
+      if (val.startsWith("F")) {
+        if (selectFreeFrame) selectFreeFrame(val.slice(1));
+        return;
+      }
+      if (S.split3d) selectLaneInPane(paneIdx, val);
+      else selectLane(val);
     });
     return select;
   }
@@ -157,27 +169,65 @@ export function createStageBar(deps) {
     }
   }
 
-  /** Keep one pane's native select in step with the live lane set and value. */
-  function syncSelect(select, active, laneKeys) {
-    const wanted = laneKeys.map((key) => ({ value: key, label: `Lane ${key}` }));
-    const current = [...select.options].map((option) => ({ value: option.value, label: option.textContent }));
-    const same = current.length === wanted.length
-      && current.every((option, i) => option.value === wanted[i].value && option.label === wanted[i].label);
+  /** Keep one pane's native select in step with the live lane set (and free frames). */
+  function syncSelect(select, active, laneKeys, freeKeys = []) {
+    const wanted = [
+      ...laneKeys.map((key) => ({ value: key, label: `Lane ${key}`, group: "Lanes" })),
+      ...freeKeys.map((key) => {
+        const ff = S.freeFrames[key];
+        const name = freeFrameName(key);
+        return {
+          value: name,
+          label: ff && ff.label ? `${name} · ${ff.label}` : name,
+          group: "Free Frames",
+        };
+      }),
+    ];
+    const current = [...select.options].map((option) => ({
+      value: option.value,
+      label: option.textContent,
+      group: option.parentElement && option.parentElement.tagName === "OPTGROUP"
+        ? option.parentElement.label
+        : "Lanes",
+    }));
+    const wantGrouped = freeKeys.length > 0;
+    const isGrouped = select.querySelector("optgroup") !== null;
+    const same = wantGrouped === isGrouped
+      && current.length === wanted.length
+      && current.every((option, i) =>
+        option.value === wanted[i].value && option.label === wanted[i].label && option.group === wanted[i].group);
     if (!same) {
       select.textContent = "";
-      for (const option of wanted) {
-        const el = document.createElement("option");
-        el.value = option.value;
-        el.textContent = option.label;
-        select.appendChild(el);
+      if (!wantGrouped) {
+        for (const option of wanted) {
+          const el = document.createElement("option");
+          el.value = option.value;
+          el.textContent = option.label;
+          select.appendChild(el);
+        }
+      } else {
+        const laneGroup = document.createElement("optgroup");
+        laneGroup.label = "Lanes";
+        const freeGroup = document.createElement("optgroup");
+        freeGroup.label = "Free Frames";
+        for (const option of wanted) {
+          const el = document.createElement("option");
+          el.value = option.value;
+          el.textContent = option.label;
+          (option.group === "Free Frames" ? freeGroup : laneGroup).appendChild(el);
+        }
+        select.append(laneGroup, freeGroup);
       }
     }
     if (select.value !== active) select.value = active;
     if (select.dataset.lane !== active) select.dataset.lane = active;
-    /* The active (visible) select is the documented lane selector; keep the
-       hook synchronous with the value so selector-driven tooling never sees a
-       stale lane between a setter and the next render. */
-    if (select.getAttribute("data-agent-lane") !== active) select.setAttribute("data-agent-lane", active);
+    if (active.startsWith("F")) {
+      if (select.hasAttribute("data-agent-lane")) select.removeAttribute("data-agent-lane");
+      if (select.getAttribute("data-agent-frame") !== active) select.setAttribute("data-agent-frame", active);
+    } else {
+      if (select.hasAttribute("data-agent-frame")) select.removeAttribute("data-agent-frame");
+      if (select.getAttribute("data-agent-lane") !== active) select.setAttribute("data-agent-lane", active);
+    }
   }
 
   function clearAgentLane(select) {
@@ -228,15 +278,15 @@ export function createStageBar(deps) {
 
     const { p0, p1 } = stageDom;
     const laneKeys = liveLaneKeys();
+    const freeKeys = liveFreeFrameKeys();
     const canCopy = laneKeys.length > 1;
-    /* Only the panes actually on screen advertise a lane; the hidden mirror and
-       the frames-view stage must not carry a stale [data-agent-lane]. */
     clearAgentLane(p0.select);
     clearAgentLane(p1.select);
+    p0.select.removeAttribute("data-agent-frame");
+    p1.select.removeAttribute("data-agent-frame");
     element.classList.toggle("is-split", S.split3d);
     element.dataset.view = S.view3d ? (S.split3d ? "split" : "3d") : "2d";
 
-    /* Frames view: the stage is the card grid; the bar shrinks to `Lanes`. */
     const framesOn = S.framesView === true;
     element.classList.toggle("is-frames", framesOn);
     stageDom.lanesBtn.hidden = !framesOn;
@@ -246,9 +296,9 @@ export function createStageBar(deps) {
       return;
     }
 
-    if (!S.view3d) {
-      /* 2-D: one pane head, the lane set, a reserved-space disabled split and
-         no hinge (it only means something in the depth field). */
+    const ff = curFreeFrame();
+    if (ff) {
+      const name = freeFrameName(ff.key);
       p0.dot.hidden = true;
       p0.wrap.classList.add("focused");
       p0.wrap.hidden = false;
@@ -256,7 +306,31 @@ export function createStageBar(deps) {
       p0.spBtn.setAttribute("aria-pressed", "false");
       p0.spBtn.classList.remove("on");
       setSplitEnabled(p0.spBtn, false);
-      syncSelect(p0.select, S.laneKey, laneKeys);
+      p0.spBtn.title = "Split is for paired lanes";
+      syncSelect(p0.select, name, laneKeys, freeKeys);
+      const parts = [name];
+      if (ff.label) parts.push(ff.label);
+      else parts.push("free frame");
+      if (ff.sourceNote) parts.push(ff.sourceNote);
+      p0.expr.textContent = parts.join(" \u00B7 ");
+      p0.fold.hidden = true;
+      p0.copy.dataset.lane = "";
+      p0.copy.setAttribute("aria-disabled", "true");
+      p0.copy.setAttribute("aria-label", `copy to… — duplicate free frames in frames view`);
+      p0.copy.title = "Copy to… is for paired lanes (duplicate free frames in the frames view)";
+      p1.wrap.hidden = true;
+      return;
+    }
+
+    if (!S.view3d) {
+      p0.dot.hidden = true;
+      p0.wrap.classList.add("focused");
+      p0.wrap.hidden = false;
+      p0.spBtn.hidden = false;
+      p0.spBtn.setAttribute("aria-pressed", "false");
+      p0.spBtn.classList.remove("on");
+      setSplitEnabled(p0.spBtn, false);
+      syncSelect(p0.select, S.laneKey, laneKeys, freeKeys);
       p0.expr.textContent = laneExprText(curLane(), true);
       syncFold(p0, S.laneKey);
       syncCopy(p0, S.laneKey, canCopy);
@@ -273,7 +347,7 @@ export function createStageBar(deps) {
       p0.spBtn.setAttribute("aria-pressed", "false");
       p0.spBtn.classList.remove("on");
       setSplitEnabled(p0.spBtn, true);
-      syncSelect(p0.select, S.laneKey, laneKeys);
+      syncSelect(p0.select, S.laneKey, laneKeys, freeKeys);
       p0.expr.textContent = laneExprText(sl, true);
       syncFold(p0, S.laneKey);
       syncCopy(p0, S.laneKey, canCopy);

@@ -40,14 +40,26 @@ import {
   normalizeAgentPatch,
 } from "../core/agent-tools.ts";
 import { buildUiState } from "../core/agent-state.ts";
-import { frameRefFromName, laneKeyFromNumber } from "../core/agent-defaults.ts";
+import {
+  APP_FREE_FRAME_CAP,
+  frameRefFromName,
+  freeFrameKeyFromName,
+  freeFrameName,
+  laneKeyFromNumber,
+} from "../core/agent-defaults.ts";
 import { columnMode, columnWidth, parseDataset } from "../core/csv.ts";
 import { SIZES } from "../core/registers.ts";
 import { captureProject } from "../state/project-bridge.ts";
 import { DEMO } from "../state/dataset.ts";
-import { S, focusEditable, regOf, syncTarget } from "../state/instrument.ts";
+import { S, activeEditable, regOf, syncTarget } from "../state/instrument.ts";
 import { setHexWord } from "../state/actions.ts";
-import { driverName, isFocusDriven, isInputDriven } from "../state/bindings.ts";
+import {
+  driverName,
+  freeDriverName,
+  isFocusDriven,
+  isFreeInputDriven,
+  isInputDriven,
+} from "../state/bindings.ts";
 import { evaluate } from "../state/routing.ts";
 import { renderStrip } from "../render/strip.js";
 import { updateReadouts } from "../render/readouts.js";
@@ -75,6 +87,10 @@ export function createAgentBridge(deps) {
     share,
     selectLane,
     selectFrame,
+    selectFreeFrame,
+    addFreeFrame: addFreeFrameImpl,
+    removeFreeFrame: removeFreeFrameImpl,
+    setFreeFrameMeta: setFreeFrameMetaImpl,
     setView: applyView,
     resizeRegister,
     setSize,
@@ -112,9 +128,12 @@ export function createAgentBridge(deps) {
       copyArmed: S.copyArmed,
       /* The take is transient session state, reported but never persisted. */
       recording: { on: S.record.on, rows: S.record.rows.length },
+      /* D53: clocked-pass expression failures, so a frozen register is
+         distinguishable from a settled one. */
+      expressionErrors: S.expressionErrors,
       /* Kept for parity with the contract wording; buildUiState derives the
          same boolean from the captured document. */
-      enabled: focusEditable() && !isFocusDriven(),
+      enabled: activeEditable() && !isFocusDriven(),
     });
   }
 
@@ -192,48 +211,91 @@ export function createAgentBridge(deps) {
     };
   }
 
+  function notLiveFree(name) {
+    const live = Object.keys(S.freeFrames).sort((a, b) => Number(a) - Number(b)).map(freeFrameName);
+    return {
+      code: "E_OUT_OF_RANGE",
+      message: `free frame ${name} is not live${live.length ? `; live free frames: ${live.join(", ")}` : "; no free frames exist"}`,
+      hint: "call addFreeFrame() or add a frame in the frames view first, then retry",
+    };
+  }
+
   function preflight(patch) {
     if (patch.lane !== undefined && !S.lanes[String(patch.lane)]) {
       return notLive(patch.lane);
     }
 
     if (patch.frame !== undefined) {
-      const ref = frameRefFromName(patch.frame);
-      if (ref && !S.lanes[ref.lane]) return notLive(ref.lane);
+      const fk = freeFrameKeyFromName(patch.frame);
+      if (fk !== null) {
+        if (!S.freeFrames[fk]) return notLiveFree(freeFrameName(fk));
+      } else {
+        const ref = frameRefFromName(patch.frame);
+        if (ref && !S.lanes[ref.lane]) return notLive(ref.lane);
+      }
     }
 
     if (patch.register) {
-      const ref = frameRefFromName(patch.register.frame);
-      if (!ref) return { code: "E_BAD_ENUM", message: "register.frame must be an operand frame (A–P)" };
-      if (ref.frame === "z") {
-        return {
-          code: "E_BAD_ENUM",
-          message: "Z is derived and cannot be written; choose an operand frame",
-        };
-      }
-      if (!S.lanes[ref.lane]) return notLive(ref.lane);
-      const sl = S.lanes[ref.lane];
-      if (isInputDriven(sl, ref.frame)) {
-        const driver = driverName(sl, ref.frame) || "a route";
-        return {
-          code: "E_DRIVEN_INPUT",
-          message: `${ref.name} is driven by ${driver}; unplug it in sources`,
-          hint: "set the operand's source to none (or bind a different one) and retry",
-        };
+      const fk = freeFrameKeyFromName(patch.register.frame);
+      if (fk !== null) {
+        const ff = S.freeFrames[fk];
+        if (!ff) return notLiveFree(freeFrameName(fk));
+        if (isFreeInputDriven(ff)) {
+          const driver = freeDriverName(ff) || "a route";
+          return {
+            code: "E_DRIVEN_INPUT",
+            message: `${freeFrameName(fk)} is driven by ${driver}; unplug it in sources`,
+            hint: "set the frame's source to none and retry",
+          };
+        }
+      } else {
+        const ref = frameRefFromName(patch.register.frame);
+        if (!ref) return { code: "E_BAD_ENUM", message: "register.frame must be an operand frame (A–P) or free frame (F1–F16)" };
+        if (ref.frame === "z") {
+          return {
+            code: "E_BAD_ENUM",
+            message: "Z is derived and cannot be written; choose an operand or free frame",
+          };
+        }
+        if (!S.lanes[ref.lane]) return notLive(ref.lane);
+        const sl = S.lanes[ref.lane];
+        if (isInputDriven(sl, ref.frame)) {
+          const driver = driverName(sl, ref.frame) || "a route";
+          return {
+            code: "E_DRIVEN_INPUT",
+            message: `${ref.name} is driven by ${driver}; unplug it in sources`,
+            hint: "set the operand's source to none (or bind a different one) and retry",
+          };
+        }
       }
     }
 
     if (patch.expression) {
-      const ref = frameRefFromName(patch.expression.frame);
-      if (ref && !S.lanes[ref.lane]) return notLive(ref.lane);
+      const fk = freeFrameKeyFromName(patch.expression.frame);
+      if (fk !== null) {
+        if (!S.freeFrames[fk]) return notLiveFree(freeFrameName(fk));
+      } else {
+        const ref = frameRefFromName(patch.expression.frame);
+        if (ref && !S.lanes[ref.lane]) return notLive(ref.lane);
+      }
     }
 
     if (patch.source) {
-      const ref = frameRefFromName(patch.source.frame);
-      if (ref && !S.lanes[ref.lane]) return notLive(ref.lane);
+      const destFk = freeFrameKeyFromName(patch.source.frame);
+      if (destFk !== null) {
+        if (!S.freeFrames[destFk]) return notLiveFree(freeFrameName(destFk));
+      } else {
+        const ref = frameRefFromName(patch.source.frame);
+        if (ref && !S.lanes[ref.lane]) return notLive(ref.lane);
+      }
       if (patch.source.kind === "frame") {
-        const fromLane = patch.source.from.split(".")[0];
-        if (!S.lanes[fromLane]) return notLive(fromLane);
+        const fromFk = freeFrameKeyFromName(patch.source.from);
+        if (fromFk !== null) {
+          if (!S.freeFrames[fromFk]) return notLiveFree(freeFrameName(fromFk));
+        } else {
+          const fromLane = patch.source.from.split(".")[0];
+          if (!S.lanes[fromLane]) return notLive(fromLane);
+        }
       }
       if (patch.source.kind === "data" && !DEMO.cols[patch.source.column]) {
         return {
@@ -282,14 +344,18 @@ export function createAgentBridge(deps) {
   }
 
   function applyRegister(register) {
-    const ref = frameRefFromName(register.frame);
-    if (!ref) return; // normalizeAgentPatch already rejects this
-    const sl = S.lanes[ref.lane];
-    const reg = regOf(ref.frame, sl);
-    /* DESIGN §10.19: the LFO yields to a manual edit. Stop it (restoring its
-       pre-LFO snapshot) inside the same transaction, then write, so the next
-       tick cannot overwrite the new word. The UI's drag/preset/unary paths do
-       the same before touching a register. */
+    const fk = freeFrameKeyFromName(register.frame);
+    let reg = null;
+    if (fk !== null) {
+      const ff = S.freeFrames[fk];
+      if (!ff) return;
+      reg = ff.reg;
+    } else {
+      const ref = frameRefFromName(register.frame);
+      if (!ref) return;
+      const sl = S.lanes[ref.lane];
+      reg = regOf(ref.frame, sl);
+    }
     lfoStop();
     setHexWord(reg, register.hex);
     syncTarget(reg, true);
@@ -357,8 +423,13 @@ export function createAgentBridge(deps) {
       if (lane !== null) selectLane(lane);
     }
     if (patch.frame !== undefined) {
-      const ref = frameRefFromName(patch.frame);
-      if (ref) selectFrame(ref.lane, ref.frame);
+      const fk = freeFrameKeyFromName(patch.frame);
+      if (fk !== null && typeof selectFreeFrame === "function") {
+        selectFreeFrame(fk);
+      } else {
+        const ref = frameRefFromName(patch.frame);
+        if (ref) selectFrame(ref.lane, ref.frame);
+      }
     }
     if (patch.view !== undefined) applyView(patch.view);
     if (patch.width !== undefined) {
@@ -426,6 +497,9 @@ export function createAgentBridge(deps) {
     }
     try {
       runTransaction(() => applyExample(DEMO.i + delta));
+      /* A dataset step replaces bound registers; the edit field is a DOM mirror
+         of one of them, so it has to be resynced like setState does. */
+      if (syncEditUi) syncEditUi();
     } catch (_) {
       return failure("E_INTERNAL", "internal error stepping the dataset");
     }
@@ -447,6 +521,95 @@ export function createAgentBridge(deps) {
   const setRoute = (frame, from) => setSource(frame, { kind: "frame", from });
   const record = (on) => setState({ record: on });
   const reset = () => setState({ reset: true });
+
+  function resolveFreeKey(ref) {
+    if (typeof ref === "number" && Number.isInteger(ref) && ref >= 1 && ref <= APP_FREE_FRAME_CAP) {
+      return String(ref);
+    }
+    if (typeof ref !== "string") return null;
+    const trimmed = ref.trim();
+    const byName = freeFrameKeyFromName(trimmed);
+    if (byName !== null) return byName;
+    if (/^[1-9]\d*$/.test(trimmed)) {
+      const n = Number(trimmed);
+      if (n >= 1 && n <= APP_FREE_FRAME_CAP) return trimmed;
+    }
+    return null;
+  }
+
+  function addFreeFrame(options) {
+    if (options !== undefined && options !== null && (typeof options !== "object" || Array.isArray(options))) {
+      return failure("E_BAD_ARGS", "addFreeFrame(options) expects an object");
+    }
+    const opts = options || {};
+    if (Object.keys(S.freeFrames).length >= APP_FREE_FRAME_CAP) {
+      return failure("E_OUT_OF_RANGE", `${APP_FREE_FRAME_CAP} free frames is this build's maximum`);
+    }
+    if (opts.hex !== undefined && (typeof opts.hex !== "string" || !/^(?:0x)?[0-9a-f]+$/i.test(opts.hex.trim()))) {
+      return failure("E_INVALID_HEX", "addFreeFrame({hex}) must be a hexadecimal string");
+    }
+    let createdKey = null;
+    try {
+      runTransaction(() => {
+        createdKey = addFreeFrameImpl({
+          hex: opts.hex,
+          label: opts.label,
+          sourceNote: opts.sourceNote,
+        });
+        if (!createdKey) return;
+        const name = freeFrameName(createdKey);
+        if (typeof opts.expression === "string" && opts.expression.trim() !== "") {
+          applyExpressionSource(name, opts.expression);
+        } else if (opts.source && typeof opts.source === "object") {
+          applySourceSource(name, opts.source);
+        }
+        if (opts.focus === true && typeof selectFreeFrame === "function") {
+          selectFreeFrame(createdKey);
+        }
+      });
+    } catch (_) {
+      return failure("E_INTERNAL", "internal error creating free frame");
+    }
+    if (!createdKey) return failure("E_OUT_OF_RANGE", `${APP_FREE_FRAME_CAP} free frames is this build's maximum`);
+    return {
+      ok: true,
+      key: createdKey,
+      frame: freeFrameName(createdKey),
+      state: currentState(),
+      warnings: [],
+    };
+  }
+
+  function removeFreeFrame(ref) {
+    const key = resolveFreeKey(ref);
+    if (!key) return failure("E_BAD_ENUM", "removeFreeFrame expects F1–F16 or a free-frame key");
+    if (!S.freeFrames[key]) return { ok: false, error: notLiveFree(freeFrameName(key)), state: currentState() };
+    try {
+      runTransaction(() => {
+        removeFreeFrameImpl(key);
+      });
+    } catch (_) {
+      return failure("E_INTERNAL", "internal error removing free frame");
+    }
+    return { ok: true, state: currentState(), warnings: [] };
+  }
+
+  function setFreeFrameMeta(ref, meta) {
+    const key = resolveFreeKey(ref);
+    if (!key) return failure("E_BAD_ENUM", "setFreeFrameMeta expects F1–F16 or a free-frame key");
+    if (!S.freeFrames[key]) return { ok: false, error: notLiveFree(freeFrameName(key)), state: currentState() };
+    if (!meta || typeof meta !== "object" || Array.isArray(meta)) {
+      return failure("E_BAD_ARGS", "setFreeFrameMeta(ref, meta) expects an object");
+    }
+    try {
+      runTransaction(() => {
+        setFreeFrameMetaImpl(key, meta);
+      });
+    } catch (_) {
+      return failure("E_INTERNAL", "internal error updating free frame metadata");
+    }
+    return { ok: true, state: currentState(), warnings: [] };
+  }
 
   /**
    * Read the transient recorded take (newest rows last). `limit` keeps the most
@@ -577,6 +740,9 @@ export function createAgentBridge(deps) {
       setExpression,
       setSource,
       setRoute,
+      addFreeFrame,
+      removeFreeFrame,
+      setFreeFrameMeta,
       record,
       getLog,
       stepDataset,

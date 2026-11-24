@@ -15,10 +15,10 @@ import {
   normCell,
   parseDelimited,
 } from "../core/csv.ts";
-import { S, SIZES, liveLaneKeys, syncTarget } from "../state/instrument.ts";
+import { S, SIZES, liveFreeFrameKeys, liveLaneKeys, syncTarget } from "../state/instrument.ts";
 import { DEMO } from "../state/dataset.ts";
 import { DEMO_CSV, DEMO_NAME } from "../state/demo-data.ts";
-import { isInputDriven, resetBindings } from "../state/bindings.ts";
+import { isFreeInputDriven, isInputDriven, resetBindings } from "../state/bindings.ts";
 import { evaluate } from "../state/routing.ts";
 import { observations } from "../io/observations.js";
 
@@ -61,6 +61,10 @@ export function createCsvImport(deps) {
       if (sl.colA >= 0) maxBits = Math.max(maxBits, columnWidth(DEMO.rows, sl.colA));
       if (sl.colB >= 0) maxBits = Math.max(maxBits, columnWidth(DEMO.rows, sl.colB));
     }
+    for (const fk of liveFreeFrameKeys()) {
+      const ff = S.freeFrames[fk];
+      if (ff.col >= 0) maxBits = Math.max(maxBits, columnWidth(DEMO.rows, ff.col));
+    }
     let want = SIZES[0];
     for (const s of SIZES) { want = s; if (s >= maxBits) break; }
     if (want !== S.N) {
@@ -92,6 +96,14 @@ export function createCsvImport(deps) {
             sl.seededB = true;
           }
           syncTarget(sl.B, instant === true);
+        }
+      }
+      for (const fk of liveFreeFrameKeys()) {
+        const ff = S.freeFrames[fk];
+        if (ff.col >= 0 && !isFreeInputDriven(ff)) {
+          const v = cellToBits(row[ff.col], columnMode(DEMO.rows, ff.col));
+          if (v) writeBitsInto(ff.reg, v);
+          syncTarget(ff.reg, instant === true);
         }
       }
 

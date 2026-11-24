@@ -126,6 +126,7 @@
           </div>
           <div class="frames-filters" id="framesFilters" role="group" aria-label="Filter frames">
             <button class="op mini frames-filter" type="button" data-filter="all" aria-pressed="true">All</button>
+            <button class="op mini frames-filter" type="button" data-filter="free" aria-pressed="false">Free</button>
             <button class="op mini frames-filter" type="button" data-filter="operands" aria-pressed="false">Operands</button>
             <button class="op mini frames-filter" type="button" data-filter="derived" aria-pressed="false">Derived</button>
             <button class="op mini frames-filter" type="button" data-filter="visible" aria-pressed="false">Visible</button>
@@ -192,6 +193,7 @@
     <button class="op" id="csvBtn" title="Import a CSV or TSV of examples">import csv</button>
     <input type="file" id="csvFile" accept=".csv,.tsv,text/csv,text/plain" hidden />
     <button class="op" id="demoBtn" title="Load the embedded 8-row demo dataset">demo</button>
+    <button class="op" id="presetsBtn" type="button" aria-haspopup="menu" aria-expanded="false" title="Load a curated analytical / LFO modulation preset patch">presets…</button>
     <button class="op" id="projectBtn" aria-haspopup="menu" aria-expanded="false" title="Save, open or reset the project document">project…</button>
     <input type="file" id="projectFile" accept=".bitwave,.json,application/json" hidden />
     <div class="seg" id="stepSeg" role="group" aria-label="example stepper">

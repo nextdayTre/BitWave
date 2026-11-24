@@ -1,0 +1,165 @@
+{
+  "schema": 5,
+  "app": "bitwave",
+  "savedAt": "2026-01-01T00:00:00.000Z",
+  "N": 256,
+  "view": {
+    "lane": "1",
+    "view3d": false,
+    "split3d": false,
+    "activePane": 0,
+    "lfoMode": "rotcw",
+    "lfoRate": 4,
+    "activeFree": "2"
+  },
+  "lanes": {
+    "1": {
+      "a": "889AABCCDDEEEFFFFFFFEEEDDCCBAA9887655433221110000000111223345567",
+      "b": "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF00000000000000000000000000000000",
+      "showB": false,
+      "binop": "xor",
+      "edit": "a",
+      "seededB": false,
+      "lfoB": "0",
+      "colA": -1,
+      "colB": -1
+    },
+    "2": {
+      "a": "FFFFEEEDDCCBAA9887655433221110000000111223345567789AABCCDDEEEFFF",
+      "b": "00112233445566778899AAABBCCDDEEFFEEDDCCBBAAA99887766554433221100",
+      "showB": false,
+      "binop": "xor",
+      "edit": "a",
+      "seededB": true,
+      "lfoB": "0",
+      "colA": -1,
+      "colB": -1
+    },
+    "3": {
+      "a": "0001111222233334444555556666777788889999AAAAABBBBCCCCDDDDEEEEFFF",
+      "b": "889AABCCDDEEEFFFFFFFEEEDDCCBAA9887655433221110000000111223345567",
+      "showB": false,
+      "binop": "xor",
+      "edit": "a",
+      "seededB": true,
+      "lfoB": "0",
+      "colA": -1,
+      "colB": -1
+    }
+  },
+  "routes": [
+    {
+      "from": "F4",
+      "to": "1.a",
+      "mix": "set"
+    },
+    {
+      "from": "F5",
+      "to": "1.b",
+      "mix": "set"
+    },
+    {
+      "from": "F5",
+      "to": "2.a",
+      "mix": "set"
+    },
+    {
+      "from": "F6",
+      "to": "2.b",
+      "mix": "set"
+    },
+    {
+      "from": "F1",
+      "to": "3.a",
+      "mix": "set"
+    },
+    {
+      "from": "F2",
+      "to": "3.b",
+      "mix": "set"
+    }
+  ],
+  "parked": {
+    "1.a": "889AABCCDDEEEFFFFFFFEEEDDCCBAA9887655433221110000000111223345567",
+    "1.b": "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF00000000000000000000000000000000",
+    "2.a": "FFFFEEEDDCCBAA9887655433221110000000111223345567789AABCCDDEEEFFF",
+    "2.b": "00112233445566778899AAABBCCDDEEFFEEDDCCBBAAA99887766554433221100",
+    "3.a": "0001111222233334444555556666777788889999AAAAABBBBCCCCDDDDEEEEFFF",
+    "3.b": "889AABCCDDEEEFFFFFFFEEEDDCCBAA9887655433221110000000111223345567"
+  },
+  "frames": {
+    "1": {
+      "hex": "0000000000000000000000000000000000000000000000000000000000000001",
+      "col": 0,
+      "label": "k",
+      "sourceNote": "private key · toy keys 1–3"
+    },
+    "2": {
+      "hex": "79BE667EF9DCBBAC55A06295CE870B07029BFCDB2DCE28D959F2815B16F81798",
+      "col": 1,
+      "label": "x(kG)",
+      "sourceNote": "secp256k1 affine x"
+    },
+    "3": {
+      "hex": "483ADA7726A3C4655DA4FBFC0E1108A8FD17B448A68554199C47D08FFB10D4B8",
+      "col": 2,
+      "label": "y(kG)",
+      "sourceNote": "secp256k1 affine y"
+    },
+    "4": {
+      "hex": "0F715BAF5D4C2ED329785CEF29E562F73488C8A2BB9DBC5700B361D54B9B0554",
+      "col": 3,
+      "label": "sha256",
+      "sourceNote": "sha256(0x02|0x03 ‖ x)"
+    },
+    "5": {
+      "hex": "000000000000000000000000751E76E8199196D454941C45D1B3A323F1433BD6",
+      "col": 4,
+      "label": "hash160",
+      "sourceNote": "ripemd160(sha256) · 160 of 256 bits"
+    },
+    "6": {
+      "hex": "0000000000000000751E76E8199196D454941C45D1B3A323F1433BD64352F398",
+      "col": 5,
+      "label": "b58 payload",
+      "sourceNote": "0x00 ‖ hash160 ‖ checksum · 25 bytes"
+    }
+  },
+  "dataset": {
+    "cols": [
+      "key",
+      "x",
+      "y",
+      "sha256",
+      "hash160",
+      "b58_payload"
+    ],
+    "rows": [
+      [
+        "0000000000000000000000000000000000000000000000000000000000000001",
+        "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+        "483ada7726a3c4655da4fbfc0e1108a8fd17b448a68554199c47d08ffb10d4b8",
+        "0f715baf5d4c2ed329785cef29e562f73488c8a2bb9dbc5700b361d54b9b0554",
+        "751e76e8199196d454941c45d1b3a323f1433bd6",
+        "00751e76e8199196d454941c45d1b3a323f1433bd64352f398"
+      ],
+      [
+        "0000000000000000000000000000000000000000000000000000000000000002",
+        "c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5",
+        "1ae168fea63dc339a3c58419466ceaeef7f632653266d0e1236431a950cfe52a",
+        "b1c9938f01121e159887ac2c8d393a22e4476ff8212de13fe1939de2a236f0a7",
+        "06afd46bcdfd22ef94ac122aa11f241244a37ecc",
+        "0006afd46bcdfd22ef94ac122aa11f241244a37ecc18b13901"
+      ],
+      [
+        "0000000000000000000000000000000000000000000000000000000000000003",
+        "f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9",
+        "388f7b0f632de8140fe337e62a37f3566500a99934c2231b6cb9fd7584b8e672",
+        "eae10cdd2f289bdad44615809cb422d2fabe9622ed706ad5d9d3ffd2cdd1c001",
+        "7dd65592d0ab2fe0d0257d571abf032cd9db93dc",
+        "007dd65592d0ab2fe0d0257d571abf032cd9db93dcbfef55ff"
+      ]
+    ],
+    "index": 0
+  }
+}

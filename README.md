@@ -210,7 +210,7 @@ this in the console:
 
 ```js
 window.bitwave.schemaVersion            // 1
-window.bitwave.version                  // "1.5.0"
+window.bitwave.version                  // "1.6.1"
 window.bitwave.getState()               // full UI state (schema 1); lanes = the live set
 window.bitwave.getDataset()             // loaded matrix or null (opt-in readback)
 window.bitwave.getManifest()            // manifest data
@@ -302,7 +302,9 @@ The same commands have npm aliases: `npm run agent:check`, `npm run agent:selfte
 Reproducible states, `#bitwave-state` extraction and headless-Chrome recipes:
 [`docs/AGENT-SCREENSHOTS.md`](docs/AGENT-SCREENSHOTS.md). Sibling tools and what a future
 handoff would carry (no live cross-tool links in v1; manifest `relatedTools` is empty):
-[`docs/BITWAVE-ECOSYSTEM-MAP.md`](docs/BITWAVE-ECOSYSTEM-MAP.md).
+[`docs/BITWAVE-ECOSYSTEM-MAP.md`](docs/BITWAVE-ECOSYSTEM-MAP.md). Showing another tool's
+stages as waveforms (the machine.py / NumPy handoff, with a pre-flight capability report):
+[`docs/PIPELINE-HANDOFF.md`](docs/PIPELINE-HANDOFF.md).
 
 ## Design and intent
 

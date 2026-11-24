@@ -11,7 +11,7 @@
  */
 
 import { fromHex, regToBig, toHex } from "../core/registers.ts";
-import { FRAME_NAMES, S, liveLaneKeys } from "./instrument.ts";
+import { FRAME_NAMES, S, freeFrameName, liveFreeFrameKeys, liveLaneKeys } from "./instrument.ts";
 
 export const RECORD_CAP = 2048;
 
@@ -61,6 +61,10 @@ export function recordSnapshot(): boolean {
     frames[names.b] = toHex(sl.B.bits, S.N);
     frames[names.z] = toHex(sl.Z.bits, S.N);
   }
+  for (const key of liveFreeFrameKeys()) {
+    const ff = S.freeFrames[key];
+    frames[freeFrameName(key)] = toHex(ff.reg.bits, S.N);
+  }
 
   S.record.rows.push({ step: S.record.nextStep, frames });
   S.record.nextStep += 1;
@@ -98,6 +102,9 @@ export function recordCsv(): string {
   for (const key of liveLaneKeys()) {
     const names = FRAME_NAMES[key];
     header.push(names.a, names.b, names.z);
+  }
+  for (const key of liveFreeFrameKeys()) {
+    header.push(freeFrameName(key));
   }
   const lines = [header.join(",")];
   for (const row of S.record.rows) {

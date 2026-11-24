@@ -8,11 +8,13 @@ BitWave: a bit register rendered as a wavetable. 1-8 lanes (default: three) of
 - Onboarding: `AGENTS.md`; manifest: `agent/manifest.json`; examples: `agent/examples/`.
 - Browser bridge: `window.bitwave`; hidden state: `#bitwave-state`;
   ready: `body[data-agent-ready='true']`; events: `bitwave:ready`, `bitwave:change`.
-- Toolset 1.5.0; `.bitwave` schema 4 (schema 1/2/3 load and upgrade). Bridge additions:
+- Toolset 1.6.1; `.bitwave` schema 5 (schemas 1-4 load and upgrade). Bridge additions:
   `getDataset()` (opt-in matrix readback; `null` with no dataset),
   `setExpression(frame, text)`, `setSource(frame, source)`, `setRoute(frame, from)`,
-  `record(on)`, `getLog({limit})`; state additions:
-  `recording:{on,rows}`, `lanes[*].expressions`.
+  `record(on)`, `getLog({limit})`, `addFreeFrame(options)`, `removeFreeFrame(ref)`,
+  `setFreeFrameMeta(ref, {label, sourceNote})`; state additions:
+  `recording:{on,rows}`, `lanes[*].expressions`, `activeFree`, `freeFrames`,
+  `lanes[*].expressionErrors`, `freeFrames[*].expressionError`.
 - Dataset readback is opt-in: `getDataset()` returns
   `{columns, rows, index, kinds, widths}` (raw imported cells, leading zeros preserved;
   `kinds`/`widths` from the shared per-column typing) or `null`; read-only and synchronous,
@@ -25,14 +27,25 @@ BitWave: a bit register rendered as a wavetable. 1-8 lanes (default: three) of
   carries (a non-live lane is `E_OUT_OF_RANGE`, never a lane creation). The stage-bar lane
   selector is the active `select.lane-select` carrying `[data-agent-lane]`
   (`manifest.ui.laneSelect` = `#stageBar .lane-select`).
+- Free Frames `F1`-`F16` (schema 5) hold standalone registers beside the lanes: same
+  shared width, optional `label`/`sourceNote` provenance, CSV/expression/routing driven.
+  They are the way a multi-stage pipeline (e.g. NumPy outputs) is recorded. State reports
+  `activeFree` and `freeFrames` keyed by name; chains settle in one clocked tick.
 - `getState().lanes` reports exactly the live lanes, keyed by the stable lane key
   (`"1"`..`"8"`, gaps allowed, ascending numeric order); state `bridge.version` is
-  `1.5.0`.
-- `.bitwave` schema 4 keys `lanes` by the stable lane key (`"1"`..`"13"`; gaps allowed,
-  at most 8 lanes per document, ascending numeric order); `build_deeplink` accepts
-  schema 1-4 and always canonicalises to schema 4.
-- `#bw=` links use the compact codec (D45): base64url of a JSON array
-  `[tag=4, N, view, lanes, routes, parked, dataset?, x?]` with lane tuples and omitted
+  `1.6.1`.
+- A failed expression keeps the frame's last settled bits (by design) and is reported,
+  never silent: `freeFrames[*].expressionError` and `lanes[*].expressionErrors[<frame>]`
+  are non-null with the evaluator message. Treat a non-null error as "this value is
+  stale"; re-adding the missing frame resumes the chain. `driven` means routed only, so an
+  expression source has `driven:false` plus a non-null expression.
+- `.bitwave` schema 5 keys `lanes` by the stable lane key (`"1"`..`"13"`; gaps allowed,
+  at most 8 lanes per document, ascending numeric order) and adds a `frames` map for free
+  frames (`hex`, optional `col`/`visible`/`expression`/`label`/`sourceNote`) plus `F1`-`F16`
+  route/parked endpoints; `build_deeplink` accepts schema 1-5 and always canonicalises to
+  schema 5.
+- `#bw=` links use the compact codec (D45/D52): base64url of a JSON array
+  `[tag=5, N, view, lanes, routes, parked, dataset?, x?, frames?]` with lane tuples and omitted
   defaults; legacy JSON links still load. The 2000-char budget drops the dataset first
   (`datasetDropped`) and expressions second (`expressionsDropped`), never silently; an
   8-lane 256-bit document measures 1260 chars (`node tools/share-budget.mjs`). Share
@@ -42,6 +55,10 @@ BitWave: a bit register rendered as a wavetable. 1-8 lanes (default: three) of
   Record is a transient in-memory DAW take (not saved in `.bitwave`/links); float is a
   legitimate authoring format converted once at the boundary to exact values.
 - CLI: `node agent/cli.mjs help`; MCP: `node agent/mcp-server.mjs` (stdio, zero deps).
+- Pipeline handoff: `docs/PIPELINE-HANDOFF.md` + `tools/pipeline-doc.mjs` map an external
+  tool's stage table (CSV) and a small pipeline spec into a schema-5 document, printing a
+  capability report (width, padding, 16-frame/8-lane caps) before you compute;
+  `npm run check:examples` guards the committed `examples/btc-*.bitwave.json`.
 - Tools: `manifest`, `analyze_register`, `evaluate_lane`, `compare_operands`,
   `parse_dataset`, `build_deeplink`.
 - Fixtures: `examples/eight-lanes.bitwave.json` (8-lane schema 4), `examples/demo.bitwave.json`.

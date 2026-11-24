@@ -1,0 +1,19 @@
+{
+  "title": "secp256k1 avalanche: one key bit, 128 output bits",
+  "description": "Keys 1 (…0001) and 3 (…0011) differ in exactly one bit (bit 1). Their curve x, y and SHA-256 stage values do not. The three lanes are the XOR deltas: lane 1 is popcount 1, lanes 2 and 3 sit near 128 of 256. This is the concept the chain document cannot show, because it compares two runs.",
+  "width": 256,
+  "stages": [
+    { "frame": "F1", "hex": "0000000000000000000000000000000000000000000000000000000000000001", "label": "k = 1", "sourceNote": "one bit set" },
+    { "frame": "F2", "hex": "0000000000000000000000000000000000000000000000000000000000000003", "label": "k = 3", "sourceNote": "one bit moved (bit 1)" },
+    { "frame": "F3", "hex": "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798", "label": "x(1G)", "sourceNote": "secp256k1 affine x" },
+    { "frame": "F4", "hex": "f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9", "label": "x(3G)", "sourceNote": "secp256k1 affine x" },
+    { "frame": "F5", "hex": "0f715baf5d4c2ed329785cef29e562f73488c8a2bb9dbc5700b361d54b9b0554", "label": "sha(1)", "sourceNote": "sha256 of compressed pubkey 1" },
+    { "frame": "F6", "hex": "eae10cdd2f289bdad44615809cb422d2fabe9622ed706ad5d9d3ffd2cdd1c001", "label": "sha(3)", "sourceNote": "sha256 of compressed pubkey 3" }
+  ],
+  "lanes": [
+    { "lane": "1", "a": "F1", "b": "F2", "binop": "xor", "note": "input delta: exactly 1 bit" },
+    { "lane": "2", "a": "F3", "b": "F4", "binop": "xor", "note": "curve delta: ~128 of 256 bits" },
+    { "lane": "3", "a": "F5", "b": "F6", "binop": "xor", "note": "digest delta: ~128 of 256 bits" }
+  ],
+  "view": { "activeFree": "F3" }
+}

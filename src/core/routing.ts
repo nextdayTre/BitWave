@@ -1,35 +1,40 @@
 /**
- * Routing engine — cross-lane routes + delayed within-lane feedback.
+ * Routing engine — cross-lane, free-frame, and delayed feedback routes.
  *
- * Sources: A, B or Z of any lane (9 outputs). Destinations: A or B of any lane
- * (6 inputs). Z is never a destination: it is a function of its operands
- * (DESIGN §10.8). One route per input in v1; adding a second replaces the first.
+ * Sources: A, B or Z of any live lane, OR any live free frame (F1..F16, D52).
+ * Destinations: A or B of any live lane, OR any live free frame. Z is never a
+ * destination: it is a function of its operands (DESIGN §10.8). One route per
+ * input in v1; adding a second replaces the first.
  *
  * A patched input is DRIVEN. Its pre-patch value is parked when the first route
  * attaches and restored byte-identically when the last route is removed — the
  * same discipline the LFO already uses (DESIGN §10.18).
  *
- * Evaluation is clocked: markDelays() finds back edges on the lane graph and
- * flags them `delay`, topoOrder() orders the acyclic remainder, and
- * evaluateAll() samples delayed sources BEFORE writing, then resolves lanes in
- * dependency order. That makes feedback explicitly one evaluation late (z^-1)
- * instead of an algebraic loop with no fixed point, and chains settle in one
- * pass. Callers invoke it on transaction boundaries only (never per frame).
+ * Evaluation is clocked: markDelays() finds back edges on the unified graph
+ * (lanes ∪ free frames) and flags them `delay`, topoOrderNodes() orders the
+ * acyclic remainder, and evaluateAll() samples delayed sources BEFORE writing,
+ * then resolves nodes in dependency order. That makes feedback explicitly one
+ * evaluation late (z^-1) instead of an algebraic loop with no fixed point, and
+ * linear chains settle in one pass. Callers invoke it on transaction boundaries
+ * only (never per frame).
  */
 
 import type {
   DestinationPort,
   FrameKey,
+  FreeFrameKey,
+  FreeFrameMap,
   MixOp,
   OperandKey,
+  Register,
   Route,
   Lane,
   LaneKey,
   LaneMap,
   SourcePort,
 } from "./types.ts";
-import { LANE_KEYS } from "./types.ts";
-import { compareLaneKeys } from "./lanedefs.ts";
+import { LANE_KEYS, isFreePort } from "./types.ts";
+import { compareFreeFrameKeys, compareLaneKeys, freeFrameName } from "./lanedefs.ts";
 import {
   bigToReg,
   bitsToNibbles,
@@ -41,54 +46,125 @@ import { computeZ } from "./derive.ts";
 
 export interface RoutingState {
   routes: Route[];
-  /** Destination port key ("1:a") -> pre-patch bits, captured on first attach. */
+  /** Destination port key ("1:a" or "F1") -> pre-patch bits, captured on first attach. */
   parked: Map<string, Uint8Array>;
 }
+
+export type GraphNode =
+  | { kind: "lane"; key: LaneKey }
+  | { kind: "free"; key: FreeFrameKey };
 
 export const createRouting = (): RoutingState => ({ routes: [], parked: new Map() });
 
 export const portKey = (lane: LaneKey, frame: FrameKey): string => `${lane}:${frame}`;
+export const freePortKey = (freeKey: FreeFrameKey): string => freeFrameName(freeKey);
+export const portKeyOf = (port: SourcePort | DestinationPort): string =>
+  isFreePort(port) ? freePortKey(port.free) : portKey(port.lane, port.frame);
+
 export const routeKey = (from: SourcePort, to: DestinationPort): string =>
-  `${from.lane}:${from.frame}>${to.lane}:${to.frame}`;
+  `${portKeyOf(from)}>${portKeyOf(to)}`;
 
 /**
  * The lane keys present in a lane map, in canonical ascending numeric order.
- * A schema-4 document may carry a subset of `"1"`..`"13"` with gaps; the shipped
- * instrument always passes the three keys from `LANE_KEYS`.
  */
 export const laneKeysOf = (lanes: LaneMap): LaneKey[] => Object.keys(lanes).sort(compareLaneKeys);
 
-const sameDest = (a: DestinationPort, b: DestinationPort): boolean =>
-  a.lane === b.lane && a.frame === b.frame;
+/**
+ * The free-frame keys present in a free-frame map, in canonical ascending numeric order.
+ */
+export const freeFrameKeysOf = (freeFrames?: FreeFrameMap): FreeFrameKey[] =>
+  freeFrames ? Object.keys(freeFrames).sort(compareFreeFrameKeys) : [];
 
-const operandReg = (lane: Lane, frame: "a" | "b") => (frame === "a" ? lane.A : lane.B);
+const sameDest = (a: DestinationPort, b: DestinationPort): boolean => portKeyOf(a) === portKeyOf(b);
 
-/** A per-lane table keyed by the supplied stable lane keys. */
-function laneTable<T>(laneKeys: readonly LaneKey[], make: () => T): Record<LaneKey, T> {
-  const out = {} as Record<LaneKey, T>;
-  for (const key of laneKeys) out[key] = make();
-  return out;
+const operandReg = (lane: Lane, frame: "a" | "b"): Register => (frame === "a" ? lane.A : lane.B);
+
+function destReg(lanes: LaneMap, port: DestinationPort, freeFrames?: FreeFrameMap): Register {
+  if (isFreePort(port)) {
+    const ff = freeFrames?.[port.free];
+    if (!ff) throw new TypeError(`unknown free frame in route: ${port.free}`);
+    return ff.reg;
+  }
+  return operandReg(lanes[port.lane], port.frame);
 }
 
-function readPort(lanes: LaneMap, laneKey: LaneKey, frame: FrameKey): Uint8Array {
-  const lane = lanes[laneKey];
-  return frame === "z" ? lane.Z.bits : frame === "b" ? lane.B.bits : lane.A.bits;
+function readSourcePort(lanes: LaneMap, port: SourcePort, freeFrames?: FreeFrameMap): Uint8Array {
+  if (isFreePort(port)) {
+    const ff = freeFrames?.[port.free];
+    if (!ff) throw new TypeError(`unknown free frame in route: ${port.free}`);
+    return ff.reg.bits;
+  }
+  const lane = lanes[port.lane];
+  return port.frame === "z" ? lane.Z.bits : port.frame === "b" ? lane.B.bits : lane.A.bits;
+}
+
+export function isPortDriven(routing: RoutingState, port: DestinationPort): boolean {
+  const key = portKeyOf(port);
+  return routing.routes.some((r) => portKeyOf(r.to) === key);
 }
 
 export function isDriven(routing: RoutingState, lane: LaneKey, frame: "a" | "b"): boolean {
-  return routing.routes.some((r) => r.to.lane === lane && r.to.frame === frame);
+  return isPortDriven(routing, { lane, frame });
+}
+
+export function isFreeDriven(routing: RoutingState, freeKey: FreeFrameKey): boolean {
+  return isPortDriven(routing, { free: freeKey });
+}
+
+export function portDriverOf(routing: RoutingState, port: DestinationPort): Route | undefined {
+  const key = portKeyOf(port);
+  return routing.routes.find((r) => portKeyOf(r.to) === key);
 }
 
 export function driverOf(routing: RoutingState, lane: LaneKey, frame: "a" | "b"): Route | undefined {
-  return routing.routes.find((r) => r.to.lane === lane && r.to.frame === frame);
+  return portDriverOf(routing, { lane, frame });
+}
+
+export function freeDriverOf(routing: RoutingState, freeKey: FreeFrameKey): Route | undefined {
+  return portDriverOf(routing, { free: freeKey });
+}
+
+export function routesIntoPort(routing: RoutingState, port: DestinationPort): Route[] {
+  const key = portKeyOf(port);
+  return routing.routes.filter((r) => portKeyOf(r.to) === key);
 }
 
 export function routesInto(routing: RoutingState, lane: LaneKey, frame: "a" | "b"): Route[] {
-  return routing.routes.filter((r) => r.to.lane === lane && r.to.frame === frame);
+  return routesIntoPort(routing, { lane, frame });
 }
 
 export function routeById(routing: RoutingState, id: string): Route | undefined {
   return routing.routes.find((r) => r.id === id);
+}
+
+function validateSourcePort(from: SourcePort, lanes: LaneMap, freeFrames?: FreeFrameMap): void {
+  if (isFreePort(from)) {
+    if (!freeFrames || !freeFrames[from.free]) {
+      throw new TypeError(`unknown free frame in route ${JSON.stringify(from)}`);
+    }
+    return;
+  }
+  if (!lanes[from.lane]) {
+    throw new TypeError(`unknown lane in route ${JSON.stringify(from)}`);
+  }
+  if (from.frame !== "a" && from.frame !== "b" && from.frame !== "z") {
+    throw new TypeError(`unknown source frame: ${String(from.frame)}`);
+  }
+}
+
+function validateDestPort(to: DestinationPort, lanes: LaneMap, freeFrames?: FreeFrameMap): void {
+  if (isFreePort(to)) {
+    if (!freeFrames || !freeFrames[to.free]) {
+      throw new TypeError(`unknown free frame in route ${JSON.stringify(to)}`);
+    }
+    return;
+  }
+  if (!lanes[to.lane]) {
+    throw new TypeError(`unknown lane in route ${JSON.stringify(to)}`);
+  }
+  if (to.frame !== "a" && to.frame !== "b") {
+    throw new TypeError("Z is derived and cannot be a route destination (DESIGN §10.8)");
+  }
 }
 
 /**
@@ -101,58 +177,63 @@ export function addRoute(
   from: SourcePort,
   to: DestinationPort,
   mix: MixOp = "set",
+  freeFrames?: FreeFrameMap,
 ): Route {
-  if (!lanes[from.lane] || !lanes[to.lane]) {
-    throw new TypeError(`unknown lane in route ${JSON.stringify({ from, to })}`);
-  }
-  if (from.frame !== "a" && from.frame !== "b" && from.frame !== "z") {
-    throw new TypeError(`unknown source frame: ${String(from.frame)}`);
-  }
-  if (to.frame !== "a" && to.frame !== "b") {
-    throw new TypeError("Z is derived and cannot be a route destination (DESIGN §10.8)");
-  }
-  if (from.lane === to.lane && from.frame === to.frame) {
+  validateSourcePort(from, lanes, freeFrames);
+  validateDestPort(to, lanes, freeFrames);
+  if (portKeyOf(from) === portKeyOf(to)) {
     throw new Error("identity route is not a route");
   }
 
-  const hadDriver = isDriven(routing, to.lane, to.frame);
+  const hadDriver = isPortDriven(routing, to);
   // One route per input (v1): a second route replaces the first, matching the
   // "single-link socket" convention. Parking is retained across the swap.
   routing.routes = routing.routes.filter((r) => !sameDest(r.to, to));
   if (!hadDriver) {
-    const base = readPort(lanes, to.lane, to.frame);
-    routing.parked.set(portKey(to.lane, to.frame), base.slice());
+    const base = destReg(lanes, to, freeFrames).bits;
+    routing.parked.set(portKeyOf(to), base.slice());
   }
 
-  const route: Route = { id: routeKey(from, to), from: { ...from }, to: { ...to }, delay: false, mix };
+  const route: Route = {
+    id: routeKey(from, to),
+    from: { ...from },
+    to: { ...to },
+    delay: false,
+    mix,
+  };
   routing.routes.push(route);
-  markDelays(routing, laneKeysOf(lanes));
+  markDelays(routing, laneKeysOf(lanes), freeFrameKeysOf(freeFrames));
   return route;
 }
 
 /** Remove a route by id. Restores the parked base when its input becomes free. */
-export function removeRoute(routing: RoutingState, lanes: LaneMap, id: string): boolean {
+export function removeRoute(
+  routing: RoutingState,
+  lanes: LaneMap,
+  id: string,
+  freeFrames?: FreeFrameMap,
+): boolean {
   const index = routing.routes.findIndex((r) => r.id === id);
   if (index < 0) return false;
   const [route] = routing.routes.splice(index, 1);
-  if (!isDriven(routing, route.to.lane, route.to.frame)) {
-    restoreDestination(routing, lanes, route.to.lane, route.to.frame);
+  if (!isPortDriven(routing, route.to)) {
+    restorePort(routing, lanes, route.to, freeFrames);
   }
-  markDelays(routing, laneKeysOf(lanes));
+  markDelays(routing, laneKeysOf(lanes), freeFrameKeysOf(freeFrames));
   return true;
 }
 
-/** Restore a driven input's parked base. Returns false if nothing was parked. */
-export function restoreDestination(
+/** Restore a driven port's parked base (lane operand or free frame). */
+export function restorePort(
   routing: RoutingState,
   lanes: LaneMap,
-  lane: LaneKey,
-  frame: "a" | "b",
+  port: DestinationPort,
+  freeFrames?: FreeFrameMap,
 ): boolean {
-  const key = portKey(lane, frame);
+  const key = portKeyOf(port);
   const base = routing.parked.get(key);
   if (!base) return false;
-  const dest = operandReg(lanes[lane], frame);
+  const dest = destReg(lanes, port, freeFrames);
   if (base.length !== dest.bits.length) {
     throw new Error(
       `parked base for ${key} is ${base.length} bits but the register is ${dest.bits.length}; call remapParked() around a resize`,
@@ -163,65 +244,135 @@ export function restoreDestination(
   return true;
 }
 
+/** Restore a driven lane operand's parked base. Returns false if nothing was parked. */
+export function restoreDestination(
+  routing: RoutingState,
+  lanes: LaneMap,
+  lane: LaneKey,
+  frame: "a" | "b",
+): boolean {
+  return restorePort(routing, lanes, { lane, frame });
+}
+
 /** Remove every route (convenience for boot/reset paths). */
-export function clearRoutes(routing: RoutingState, lanes: LaneMap): void {
-  for (const route of [...routing.routes]) removeRoute(routing, lanes, route.id);
+export function clearRoutes(
+  routing: RoutingState,
+  lanes: LaneMap,
+  freeFrames?: FreeFrameMap,
+): void {
+  for (const route of [...routing.routes]) removeRoute(routing, lanes, route.id, freeFrames);
+}
+
+type NodeId = string;
+const laneNodeId = (key: LaneKey): NodeId => `L:${key}`;
+const freeNodeId = (key: FreeFrameKey): NodeId => `F:${key}`;
+const portNodeId = (port: SourcePort | DestinationPort): NodeId =>
+  isFreePort(port) ? freeNodeId(port.free) : laneNodeId(port.lane);
+
+function allNodeIds(
+  laneKeys: readonly LaneKey[],
+  freeKeys: readonly FreeFrameKey[],
+): NodeId[] {
+  return [...laneKeys.map(laneNodeId), ...freeKeys.map(freeNodeId)];
 }
 
 /**
- * Classify cycle-closing routes. DFS over the lane graph: an edge to a gray
- * node is a back edge and gets `delay = true`. Deterministic in ascending
- * lane-key order and route insertion order. A self-lane route (3·Z -> 3·A) is
- * always delayed.
- *
- * `laneKeys` defaults to the shipped three lanes; pass `laneKeysOf(lanes)` for a
- * schema-4 document with a different lane set.
+ * Classify cycle-closing routes. DFS over the unified graph (lanes ∪ free frames):
+ * an edge to a gray node is a back edge and gets `delay = true`. Deterministic in
+ * ascending lane-key order, then ascending free-frame order, and route insertion
+ * order. A self-lane route (3·Z -> 3·A) is always delayed.
  */
-export function markDelays(routing: RoutingState, laneKeys: readonly LaneKey[] = LANE_KEYS): void {
-  const color = laneTable<0 | 1 | 2>(laneKeys, () => 0);
-  const edges = laneTable<Route[]>(laneKeys, () => []);
-  for (const route of routing.routes) edges[route.from.lane].push(route);
+export function markDelays(
+  routing: RoutingState,
+  laneKeys: readonly LaneKey[] = LANE_KEYS,
+  freeKeys: readonly FreeFrameKey[] = [],
+): void {
+  const nodes = allNodeIds(laneKeys, freeKeys);
+  const color = new Map<NodeId, 0 | 1 | 2>();
+  const edges = new Map<NodeId, Route[]>();
+  for (const id of nodes) {
+    color.set(id, 0);
+    edges.set(id, []);
+  }
+  for (const route of routing.routes) {
+    const src = portNodeId(route.from);
+    edges.get(src)?.push(route);
+  }
 
-  const visit = (laneKey: LaneKey): void => {
-    color[laneKey] = 1;
-    for (const route of edges[laneKey]) {
-      const target = route.to.lane;
-      if (color[target] === 1) {
+  const visit = (nodeId: NodeId): void => {
+    color.set(nodeId, 1);
+    for (const route of edges.get(nodeId) ?? []) {
+      const target = portNodeId(route.to);
+      if (color.get(target) === 1) {
         route.delay = true; // back edge closes a cycle
         continue;
       }
       route.delay = false;
-      if (color[target] === 0) visit(target);
+      if (color.get(target) === 0) visit(target);
     }
-    color[laneKey] = 2;
+    color.set(nodeId, 2);
   };
 
-  for (const key of laneKeys) if (color[key] === 0) visit(key);
+  for (const id of nodes) if (color.get(id) === 0) visit(id);
 }
 
 /**
- * Dependency order over the acyclic (non-delayed) edges: a route X -> Y is
- * applied after X has settled, so chains resolve in one pass. `laneKeys`
- * defaults to the shipped three lanes; callers with a wider lane map pass
- * `laneKeysOf(lanes)`. `markDelays()` must run first (evaluateAll does).
+ * Dependency order over the unified graph (lanes ∪ free frames) for acyclic
+ * (non-delayed) edges: a route X -> Y is applied after X has settled, so chains
+ * resolve in one pass. `markDelays()` must run first (evaluateAll does).
  */
-export function topoOrder(routing: RoutingState, laneKeys: readonly LaneKey[] = LANE_KEYS): LaneKey[] {
-  const color = laneTable<0 | 1 | 2>(laneKeys, () => 0);
-  const edges = laneTable<LaneKey[]>(laneKeys, () => []);
+export function topoOrderNodes(
+  routing: RoutingState,
+  laneKeys: readonly LaneKey[] = LANE_KEYS,
+  freeKeys: readonly FreeFrameKey[] = [],
+): GraphNode[] {
+  const nodes = allNodeIds(laneKeys, freeKeys);
+  const color = new Map<NodeId, 0 | 1 | 2>();
+  const edges = new Map<NodeId, NodeId[]>();
+  for (const id of nodes) {
+    color.set(id, 0);
+    edges.set(id, []);
+  }
   for (const route of routing.routes) {
-    if (!route.delay) edges[route.from.lane].push(route.to.lane);
+    if (!route.delay) {
+      edges.get(portNodeId(route.from))?.push(portNodeId(route.to));
+    }
   }
 
-  const order: LaneKey[] = [];
-  const visit = (laneKey: LaneKey): void => {
-    color[laneKey] = 1;
-    for (const target of edges[laneKey]) if (color[target] === 0) visit(target);
-    color[laneKey] = 2;
-    order.push(laneKey);
+  const order: NodeId[] = [];
+  const visit = (nodeId: NodeId): void => {
+    color.set(nodeId, 1);
+    for (const target of edges.get(nodeId) ?? []) {
+      if (color.get(target) === 0) visit(target);
+    }
+    color.set(nodeId, 2);
+    order.push(nodeId);
   };
-  for (const key of laneKeys) if (color[key] === 0) visit(key);
+  /* Iterate in reverse so `order.reverse()` visits disconnected/expression-chained
+     nodes in natural ascending order (L:1..L:k, F:1..F:m) while preserving every
+     route edge dependency u -> v. */
+  for (let i = nodes.length - 1; i >= 0; i -= 1) {
+    const id = nodes[i];
+    if (color.get(id) === 0) visit(id);
+  }
 
-  return order.reverse();
+  return order.reverse().map((id): GraphNode =>
+    id.startsWith("F:")
+      ? { kind: "free", key: id.slice(2) }
+      : { kind: "lane", key: id.slice(2) },
+  );
+}
+
+/**
+ * Lane-only dependency order (preserved for existing callers and tests).
+ */
+export function topoOrder(
+  routing: RoutingState,
+  laneKeys: readonly LaneKey[] = LANE_KEYS,
+): LaneKey[] {
+  return topoOrderNodes(routing, laneKeys, [])
+    .filter((node): node is { kind: "lane"; key: LaneKey } => node.kind === "lane")
+    .map((node) => node.key);
 }
 
 function combine(values: Uint8Array[], N: number, mix: MixOp): Uint8Array {
@@ -244,13 +395,18 @@ function combine(values: Uint8Array[], N: number, mix: MixOp): Uint8Array {
 
 /**
  * Optional per-evaluation hooks. `applyExpression` runs after a lane's incoming
- * routes have been written and before its Z is derived; the hook writes the
- * operand bits itself (the app owns expression text and the log). Lanes are
- * visited in route dependency order, so a lane may read frames from lanes
- * upstream of it; expression-only forward references are not reordered.
+ * routes have been written and before its Z is derived; `applyFreeExpression`
+ * runs after a free frame's incoming route has been written. Nodes are visited
+ * in route dependency order, so downstream nodes see settled upstream values.
  */
 export interface EvaluateHooks {
   applyExpression?: (lane: LaneKey, frame: OperandKey, lanes: LaneMap, N: number) => void;
+  applyFreeExpression?: (
+    freeKey: FreeFrameKey,
+    lanes: LaneMap,
+    freeFrames: FreeFrameMap,
+    N: number,
+  ) => void;
 }
 
 /**
@@ -263,38 +419,56 @@ export function evaluateAll(
   lanes: LaneMap,
   N: number,
   hooks?: EvaluateHooks,
+  freeFrames?: FreeFrameMap,
 ): void {
   const laneKeys = laneKeysOf(lanes);
-  markDelays(routing, laneKeys);
-  const order = topoOrder(routing, laneKeys);
+  const freeKeys = freeFrameKeysOf(freeFrames);
+  markDelays(routing, laneKeys, freeKeys);
+  const order = topoOrderNodes(routing, laneKeys, freeKeys);
 
   // Sample every delayed source before any write: that snapshot is exactly one
   // evaluation old, and needs no stored state to survive resize or unroute.
   const delayed = new Map<string, Uint8Array>();
   for (const route of routing.routes) {
     if (route.delay) {
-      delayed.set(route.id, readPort(lanes, route.from.lane, route.from.frame).slice());
+      delayed.set(route.id, readSourcePort(lanes, route.from, freeFrames).slice());
     }
   }
 
-  for (const laneKey of order) {
-    const lane = lanes[laneKey];
-    const incoming = routing.routes.filter((r) => r.to.lane === laneKey);
+  for (const node of order) {
+    if (node.kind === "lane") {
+      const laneKey = node.key;
+      const lane = lanes[laneKey];
+      const incoming = routing.routes.filter((r) => !isFreePort(r.to) && r.to.lane === laneKey);
 
-    for (const frame of ["a", "b"] as const) {
-      const into = incoming.filter((r) => r.to.frame === frame);
-      if (into.length === 0) continue;
-      const values = into.map((r) =>
-        r.delay ? delayed.get(r.id)! : readPort(lanes, r.from.lane, r.from.frame),
-      );
-      operandReg(lane, frame).bits.set(combine(values, N, into[into.length - 1].mix));
+      for (const frame of ["a", "b"] as const) {
+        const into = incoming.filter((r) => !isFreePort(r.to) && r.to.frame === frame);
+        if (into.length === 0) continue;
+        const values = into.map((r) =>
+          r.delay ? delayed.get(r.id)! : readSourcePort(lanes, r.from, freeFrames),
+        );
+        operandReg(lane, frame).bits.set(combine(values, N, into[into.length - 1].mix));
+      }
+
+      if (hooks?.applyExpression) {
+        for (const frame of ["a", "b"] as const) hooks.applyExpression(laneKey, frame, lanes, N);
+      }
+
+      lane.Z.bits = computeZ(lane.A.bits, lane.B.bits, N, lane.binop);
+    } else if (freeFrames) {
+      const freeKey = node.key;
+      const ff = freeFrames[freeKey];
+      const into = routing.routes.filter((r) => isFreePort(r.to) && r.to.free === freeKey);
+      if (into.length > 0) {
+        const values = into.map((r) =>
+          r.delay ? delayed.get(r.id)! : readSourcePort(lanes, r.from, freeFrames),
+        );
+        ff.reg.bits.set(combine(values, N, into[into.length - 1].mix));
+      }
+      if (hooks?.applyFreeExpression) {
+        hooks.applyFreeExpression(freeKey, lanes, freeFrames, N);
+      }
     }
-
-    if (hooks?.applyExpression) {
-      for (const frame of ["a", "b"] as const) hooks.applyExpression(laneKey, frame, lanes, N);
-    }
-
-    lane.Z.bits = computeZ(lane.A.bits, lane.B.bits, N, lane.binop);
   }
 }
 

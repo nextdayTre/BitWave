@@ -8,12 +8,15 @@
 import { SIZES, type RegisterSize } from "./registers.ts";
 import type { BinOp, FrameKey, LaneKey } from "./types.ts";
 import {
+  APP_FREE_FRAME_CAP,
   APP_LANE_CAP,
   DEFAULT_LANE_COUNT,
   laneDef,
   laneDefs,
   frameNamesFor,
   frameRefFromName as lanedefsFrameRefFromName,
+  freeFrameKeyFromName,
+  freeFrameName,
   laneIndex,
   laneKeyFromNumber as lanedefsLaneKeyFromNumber,
 } from "./lanedefs.ts";
@@ -21,9 +24,11 @@ import { makeBootLanes } from "./lanes.ts";
 import { createRouting } from "./routing.ts";
 import { serializeProject, type ProjectDoc, type ProjectViewState } from "./project.ts";
 
+export { APP_FREE_FRAME_CAP, freeFrameKeyFromName, freeFrameName };
+
 export const TOOL_ID = "bitwave";
 export const TOOL_TITLE = "BitWave";
-export const TOOLSET_VERSION = "1.5.0";
+export const TOOLSET_VERSION = "1.6.1";
 export const SCHEMA_VERSION = 1;
 export const DEFAULT_WIDTH: RegisterSize = 64;
 

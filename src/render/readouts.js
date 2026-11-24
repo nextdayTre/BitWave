@@ -7,10 +7,13 @@
 import {
   OPSYM,
   S,
+  activeFrameLabel,
+  curFreeFrame,
   focusKey,
   focusReg,
   frameLabel,
   frameName,
+  freeFrameName,
   isArith,
   nibCount,
   nibValue,
@@ -20,6 +23,7 @@ import { stripEl } from "./strip.js";
 
   const metaEl = document.getElementById("meta");
   const slotBadgeEl = document.getElementById("slotBadge");
+  const truthBlockEl = document.getElementById("truthBlock");
   const truthEl = document.getElementById("truth");
   const truthToggleEl = document.getElementById("truthToggle");
   const truthTitleEl = truthToggleEl ? truthToggleEl.querySelector(".truth-title") : null;
@@ -144,13 +148,59 @@ import { stripEl } from "./strip.js";
   }
 
   function updateReadouts(withDecimal = true) {
+    const ff = curFreeFrame();
+    if (ff) {
+      const name = freeFrameName(ff.key);
+      metaEl.classList.toggle("ab", false);
+      stripEl.dataset.edit = name;
+      if (truthBlockEl) truthBlockEl.hidden = true;
+      if (slotBadgeEl) {
+        /* D53: a failed expression freezes the register at its last settled bits. */
+        const stale = S.expressionErrors[name] ?? null;
+        slotBadgeEl.hidden = false;
+        slotBadgeEl.classList.toggle("is-stale", Boolean(stale));
+        slotBadgeEl.textContent = (ff.label ? `${name} · ${ff.label}` : `${name} · free`)
+          + (stale ? " · stale" : "");
+        slotBadgeEl.title = stale
+          ? `expression did not evaluate: ${stale} — showing the last settled value`
+          : ff.sourceNote ? `${name}: ${ff.sourceNote}` : `Free frame ${name}`;
+      }
+      hexEl.textContent = toHexOf(ff.reg);
+      if (withDecimal) {
+        const d = toDecimalOf(ff.reg);
+        decEl.textContent = d;
+        decEl.title = d;
+      }
+      const n = nibCount();
+      const diff = ff.reg.target[n - 1] - ff.reg.target[0];
+      trendEl.classList.toggle("flat", diff === 0);
+      trendEl.textContent = diff < 0 ? "step-down" : diff > 0 ? "step-up" : "level";
+      const alt = [
+        S.view3d ? "3-D depth plate" : "2-D waveform",
+        `free frame ${name}`,
+        ff.label || null,
+        toHexOf(ff.reg),
+        ff.sourceNote || null,
+      ].filter(Boolean);
+      canvasEl.setAttribute("aria-label", alt.join(" · "));
+      return;
+    }
+
+    if (truthBlockEl) truthBlockEl.hidden = false;
     /* The truth table is exactly the right companion to the 3-D field. */
     metaEl.classList.toggle("ab", S.showB);
     stripEl.dataset.edit = frameLabel();
 
     if (slotBadgeEl) {
+      const focused = focusKey();
+      const laneName = frameName(S.laneKey, focused);
+      const laneStale = S.expressionErrors[laneName] ?? null;
       slotBadgeEl.hidden = !S.view3d && S.laneKey === "1";
-      slotBadgeEl.textContent = `lane ${S.laneKey}`;
+      slotBadgeEl.classList.toggle("is-stale", Boolean(laneStale));
+      slotBadgeEl.textContent = `lane ${S.laneKey}` + (laneStale ? " · stale" : "");
+      slotBadgeEl.title = laneStale
+        ? `expression did not evaluate: ${laneStale} — showing the last settled value`
+        : "";
     }
 
     if (S.showB) {

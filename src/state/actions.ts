@@ -20,20 +20,30 @@ import {
   shiftRight,
 } from "../core/ops.ts";
 import { nibblesToBits, setNibAt } from "../core/registers.ts";
-import type { BinOp, LaneKey } from "../core/types.ts";
-import { removeRoute, portKey } from "../core/routing.ts";
+import { isFreePort, type BinOp, type FreeFrameKey, type LaneKey } from "../core/types.ts";
+import { freePortKey, portKey, removeRoute } from "../core/routing.ts";
 import {
+  FREE_FRAME_LABEL_MAX,
+  FREE_FRAME_NOTE_MAX,
+  sanitizeFreeFrameText,
+} from "../core/lanedefs.ts";
+import {
+  APP_FREE_FRAME_CAP,
   APP_LANE_CAP,
   S,
+  liveFreeFrameKeys,
   liveLaneKeys,
+  makeFreeFrameState,
   makeLaneState,
+  nextFreeFrameKey,
   nextFreeLaneKey,
   nibValue,
   type FrameKey,
+  type FreeFrameState,
   type LaneState,
   type Reg,
 } from "./instrument.ts";
-import { coreLanes, routing } from "./routing.ts";
+import { coreFreeFrames, coreLanes, routing } from "./routing.ts";
 
 export type UnaryOp = "rol" | "ror" | "shl" | "shr" | "not" | "fold" | "bswap";
 
@@ -83,6 +93,31 @@ export function toggleFrameVisibility(sl: LaneState, frame: FrameKey): boolean {
 /** Focus a lane by its stable lane key (the lane's identity, not its position). */
 export function selectLane(lane: LaneKey): void {
   S.laneKey = lane;
+  S.activeFree = null;
+}
+
+/** Focus a standalone free frame by its stable key ("1".."16", D52). */
+export function selectFreeFrame(key: FreeFrameKey): boolean {
+  if (!S.freeFrames[key]) return false;
+  S.activeFree = key;
+  S.split3d = false;
+  S.activePane = 0;
+  return true;
+}
+
+export function toggleFreeFrameVisibility(ff: FreeFrameState): boolean {
+  ff.visible = !ff.visible;
+  return ff.visible;
+}
+
+export function setFreeFrameMeta(
+  ff: FreeFrameState,
+  meta: { label?: string; sourceNote?: string },
+): void {
+  if (meta.label !== undefined) ff.label = sanitizeFreeFrameText(meta.label, FREE_FRAME_LABEL_MAX);
+  if (meta.sourceNote !== undefined) {
+    ff.sourceNote = sanitizeFreeFrameText(meta.sourceNote, FREE_FRAME_NOTE_MAX);
+  }
 }
 
 /** Flips one bit and returns its nibble index (for the strip's fast patch). */
@@ -207,15 +242,18 @@ export function deleteLane(key: LaneKey): DeleteLaneResult {
   if (remaining.length === 0) return { ok: false, reason: "last" };
 
   const lanes = coreLanes();
+  const freeFrames = coreFreeFrames();
   for (const route of [...routing.routes]) {
-    if (route.from.lane !== key && route.to.lane !== key) continue;
-    if (route.to.lane === key) {
+    const fromLane = !isFreePort(route.from) && route.from.lane === key;
+    const toLane = !isFreePort(route.to) && route.to.lane === key;
+    if (!fromLane && !toLane) continue;
+    if (toLane && !isFreePort(route.to)) {
       /* The destination disappears with the lane: drop the edge and its base. */
       routing.routes = routing.routes.filter((candidate) => candidate.id !== route.id);
       routing.parked.delete(portKey(key, route.to.frame));
     } else {
-      /* The destination survives: unplug restores its parked base. */
-      removeRoute(routing, lanes, route.id);
+      /* The destination survives (lane or free frame): unplug restores its parked base. */
+      removeRoute(routing, lanes, route.id, freeFrames);
     }
   }
   for (const frame of ["a", "b"] as const) routing.parked.delete(portKey(key, frame));
@@ -238,5 +276,64 @@ export function deleteLane(key: LaneKey): DeleteLaneResult {
     S.split3d = false;
     S.activePane = 0;
   }
+  return { ok: true };
+}
+
+/* ── free-frame management (D52) ───────────────────────────────────────── */
+
+/** Add a blank standalone free frame at the lowest free key ("1".."16"). */
+export function addFreeFrame(
+  opts: { hex?: string; label?: string; sourceNote?: string } = {},
+): FreeFrameKey | null {
+  if (liveFreeFrameKeys().length >= APP_FREE_FRAME_CAP) return null;
+  const key = nextFreeFrameKey();
+  if (key === null) return null;
+  const ff = makeFreeFrameState(key, S.N, opts);
+  if (typeof opts.hex === "string" && opts.hex.trim() !== "") {
+    setHexWord(ff.reg, opts.hex);
+    ff.reg.anim = ff.reg.target.slice();
+  }
+  S.freeFrames[key] = ff;
+  return key;
+}
+
+/** Duplicate a live free frame (model state + metadata, not routes/parked bases). */
+export function duplicateFreeFrame(srcKey: FreeFrameKey): FreeFrameKey | null {
+  const src = S.freeFrames[srcKey];
+  if (!src) return null;
+  if (liveFreeFrameKeys().length >= APP_FREE_FRAME_CAP) return null;
+  const key = nextFreeFrameKey();
+  if (key === null) return null;
+  const dst = makeFreeFrameState(key, S.N, { label: src.label, sourceNote: src.sourceNote });
+  dst.reg.bits = src.reg.bits.slice();
+  dst.reg.target = src.reg.target.slice();
+  dst.reg.anim = src.reg.anim.slice();
+  dst.col = src.col;
+  dst.visible = src.visible;
+  dst.expression = src.expression;
+  S.freeFrames[key] = dst;
+  return key;
+}
+
+/** Delete a live free frame, restoring parked bases on any surviving destinations. */
+export function deleteFreeFrame(key: FreeFrameKey): { ok: boolean; reason?: "unknown" } {
+  if (!S.freeFrames[key]) return { ok: false, reason: "unknown" };
+  const lanes = coreLanes();
+  const freeFrames = coreFreeFrames();
+  for (const route of [...routing.routes]) {
+    const fromFree = isFreePort(route.from) && route.from.free === key;
+    const toFree = isFreePort(route.to) && route.to.free === key;
+    if (!fromFree && !toFree) continue;
+    if (toFree) {
+      routing.routes = routing.routes.filter((candidate) => candidate.id !== route.id);
+      routing.parked.delete(freePortKey(key));
+    } else {
+      removeRoute(routing, lanes, route.id, freeFrames);
+    }
+  }
+  routing.parked.delete(freePortKey(key));
+  delete S.freeFrames[key];
+  if (S.lfo.base?.free) delete S.lfo.base.free[key];
+  if (S.activeFree === key) S.activeFree = null;
   return { ok: true };
 }

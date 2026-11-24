@@ -181,7 +181,7 @@ test("canonical share links preserve expression sources and save schema 4", () =
 
   const link = buildShareLink(doc);
   const payload = parseShareHash(link.fragment) as Record<string, unknown>;
-  assert.equal(payload.schema, 4, "a canonical link is always schema 4");
+  assert.equal(payload.schema, COMPACT_SHARE_TAG, "a canonical link is always the current schema");
   const decoded = deserializeProject(payload);
   assert.deepEqual(decoded.extras.expressions, {
     "1": {},
@@ -214,9 +214,9 @@ test("legacy #bw= links decode and upgrade to schema 4", () => {
     assert.deepEqual(Object.keys(loaded.lanes), ["1", "2", "3"]);
 
     const canonical = canonicalShareDocument(legacy as ProjectDoc);
-    assert.equal(canonical.schema, 4);
+    assert.equal(canonical.schema, COMPACT_SHARE_TAG);
     const canonicalDecoded = parseShareHash(buildShareLink(legacy as ProjectDoc).fragment);
-    assert.equal((canonicalDecoded as Record<string, unknown>).schema, 4);
+    assert.equal((canonicalDecoded as Record<string, unknown>).schema, COMPACT_SHARE_TAG);
   }
 });
 
@@ -252,7 +252,7 @@ test("canonical links carry unknown top-level fields through load/save", () => {
 
   const decoded = parseShareHash(buildShareLink(doc).fragment) as Record<string, unknown>;
   assert.deepEqual(decoded.futureField, { keep: true });
-  assert.equal(decoded.schema, 4);
+  assert.equal(decoded.schema, COMPACT_SHARE_TAG);
 });
 
 // ---------------------------------------------------------------------------
@@ -344,13 +344,13 @@ test("legacy JSON payloads still decode, upgrade and canonicalize to compact", (
   assert.equal(Array.isArray(decodeShare(legacyFragment.slice("#bw=".length))), false);
 
   const raw = parseShareHash(legacyFragment) as Record<string, unknown>;
-  assert.equal(raw.schema, 4, "a legacy payload is returned for deserializeProject to upgrade");
+  assert.equal(raw.schema, COMPACT_SHARE_TAG, "a legacy payload is returned for deserializeProject to upgrade");
   assert.equal(raw.savedAt, NOW, "the legacy JSON envelope is returned as written");
 
   const link = buildShareLink(legacy);
   assert.ok(Array.isArray(fragmentValue(link.fragment)), "the canonical link is compact");
   const upgraded = parseShareHash(link.fragment) as unknown as ProjectDoc;
-  assert.equal(upgraded.schema, 4);
+  assert.equal(upgraded.schema, COMPACT_SHARE_TAG);
   assert.equal(Object.keys(upgraded.lanes).length, 3);
   deserializeProject(upgraded);
 });

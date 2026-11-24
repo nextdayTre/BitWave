@@ -1,36 +1,45 @@
 /**
- * Input bindings — the live operand inputs and what drives them.
+ * Input bindings — the live operand inputs and standalone free frames (D52).
  *
- * One fixed row per input (lane 1/2/3 × operand a/b). A row's source is either
- * an imported CSV column (`data`), a frame output (`1:1` / `z⁻¹`), or nothing.
- * This is the routing engine's UI model: choosing a data column clears any
- * incoming route, choosing a frame clears the column, and the core parks and
- * restores the pre-patch base (DESIGN §10.8, D2).
- *
- * Names follow D15/D46: the live operand frames are A–P; source frames add
- * Z1–Z8. The assignment is the label: a data-bound row reads `A · sine`. D43:
- * a row is identified by its lane key, and names derive from that key.
+ * One row per lane operand (A–P) plus one row per live free frame (F1–F16). A
+ * row's source is an imported CSV column (`data`), a frame output (`1:1` /
+ * `z⁻¹`, from any lane frame OR free frame), an expression (`expr`), or nothing
+ * (`none`). Choosing a data column or expression clears any incoming route and
+ * restores the parked pre-patch base; choosing a frame clears the column and
+ * expression and parks the base (DESIGN §10.8, D2).
  */
 
 import {
   addRoute,
   clearRoutes,
   driverOf,
+  freeDriverOf,
   portKey,
   remapParked,
   removeRoute,
 } from "../core/routing.ts";
-import type { DestinationPort, FrameKey, LaneKey, SourcePort } from "../core/types.ts";
+import {
+  isFreePort,
+  type DestinationPort,
+  type FrameKey,
+  type FreeFrameKey,
+  type LaneKey,
+  type SourcePort,
+} from "../core/types.ts";
 import { DEMO } from "./dataset.ts";
 import {
   S,
+  curFreeFrame,
   curLane,
   focusKey,
   frameName,
+  freeFrameName,
+  liveFreeFrameKeys,
   liveLaneKeys,
+  type FreeFrameState,
   type LaneState,
 } from "./instrument.ts";
-import { coreLanes, routing } from "./routing.ts";
+import { coreFreeFrames, coreLanes, routing } from "./routing.ts";
 
 export type Operand = "a" | "b";
 
@@ -41,8 +50,9 @@ export interface DataSource {
 }
 export interface FrameSource {
   kind: "frame";
-  lane: LaneKey;
-  frame: FrameKey;
+  lane?: LaneKey;
+  frame?: FrameKey;
+  free?: FreeFrameKey;
   name: string;
 }
 export interface ExpressionSource {
@@ -61,11 +71,48 @@ export interface InputBinding {
   operand: Operand;
   /** Global frame name of the destination operand (A–P). */
   frame: string;
-  /** What the input reads, named the way the CSV dropdown names it. */
   source: BindingSource;
   /** `data` · `1:1` · `z⁻¹` · `expr` · `—`. */
   state: "data" | "1:1" | "z⁻¹" | "expr" | "—";
   driven: boolean;
+}
+
+export interface FreeInputBinding {
+  /** Stable free-frame key ("1".."16"). */
+  free: FreeFrameKey;
+  /** Global frame name ("F1".."F16"). */
+  frame: string;
+  label: string;
+  sourceNote: string;
+  source: BindingSource;
+  state: "data" | "1:1" | "z⁻¹" | "expr" | "—";
+  driven: boolean;
+}
+
+export interface SourceChoice {
+  lane?: LaneKey;
+  frame?: FrameKey;
+  free?: FreeFrameKey;
+  port: SourcePort;
+  name: string;
+  label?: string;
+  disabled: boolean;
+}
+
+function sourcePortName(port: SourcePort): string {
+  return isFreePort(port) ? freeFrameName(port.free) : frameName(port.lane, port.frame);
+}
+
+function frameSourceOf(port: SourcePort): FrameSource {
+  if (isFreePort(port)) {
+    return { kind: "frame", free: port.free, name: freeFrameName(port.free) };
+  }
+  return {
+    kind: "frame",
+    lane: port.lane,
+    frame: port.frame,
+    name: frameName(port.lane, port.frame),
+  };
 }
 
 export const columnIndexOf = (sl: LaneState, operand: Operand): number =>
@@ -77,19 +124,35 @@ export const expressionOf = (sl: LaneState, operand: Operand): string =>
 export const hasExpression = (sl: LaneState, operand: Operand): boolean =>
   expressionOf(sl, operand).trim() !== "";
 
+export const hasFreeExpression = (ff: FreeFrameState): boolean =>
+  ff.expression.trim() !== "";
+
 export const destinationOf = (sl: LaneState, operand: Operand): DestinationPort => ({
   lane: sl.key,
   frame: operand,
 });
 
+export const freeDestinationOf = (ff: FreeFrameState): DestinationPort => ({
+  free: ff.key,
+});
+
 export const routeFor = (sl: LaneState, operand: Operand) =>
   driverOf(routing, sl.key, operand);
 
-/** The global name of the frame driving this input, or null when local. */
+export const freeRouteFor = (ff: FreeFrameState) => freeDriverOf(routing, ff.key);
+
+/** The global name of the frame driving this lane input, or null when local. */
 export function driverName(sl: LaneState, operand: Operand): string | null {
   const route = routeFor(sl, operand);
-  if (route) return frameName(route.from.lane, route.from.frame);
+  if (route) return sourcePortName(route.from);
   return hasExpression(sl, operand) ? "an expression" : null;
+}
+
+/** The global name of the frame driving this free frame, or null when local. */
+export function freeDriverName(ff: FreeFrameState): string | null {
+  const route = freeRouteFor(ff);
+  if (route) return sourcePortName(route.from);
+  return hasFreeExpression(ff) ? "an expression" : null;
 }
 
 export function describeInput(sl: LaneState, operand: Operand): InputBinding {
@@ -100,12 +163,7 @@ export function describeInput(sl: LaneState, operand: Operand): InputBinding {
   let state: InputBinding["state"] = "—";
 
   if (route) {
-    source = {
-      kind: "frame",
-      lane: route.from.lane,
-      frame: route.from.frame,
-      name: frameName(route.from.lane, route.from.frame),
-    };
+    source = frameSourceOf(route.from);
     state = route.delay ? "z⁻¹" : "1:1";
   } else if (expression !== "") {
     source = { kind: "expr", text: expression };
@@ -126,6 +184,34 @@ export function describeInput(sl: LaneState, operand: Operand): InputBinding {
   };
 }
 
+export function describeFreeInput(ff: FreeFrameState): FreeInputBinding {
+  const route = freeRouteFor(ff);
+  const expression = ff.expression.trim();
+  let source: BindingSource = { kind: "none" };
+  let state: FreeInputBinding["state"] = "—";
+
+  if (route) {
+    source = frameSourceOf(route.from);
+    state = route.delay ? "z⁻¹" : "1:1";
+  } else if (expression !== "") {
+    source = { kind: "expr", text: expression };
+    state = "expr";
+  } else if (ff.col >= 0 && DEMO.cols[ff.col]) {
+    source = { kind: "data", index: ff.col, column: DEMO.cols[ff.col] };
+    state = "data";
+  }
+
+  return {
+    free: ff.key,
+    frame: freeFrameName(ff.key),
+    label: ff.label,
+    sourceNote: ff.sourceNote,
+    source,
+    state,
+    driven: Boolean(route) || expression !== "",
+  };
+}
+
 export function listInputs(): InputBinding[] {
   const out: InputBinding[] = [];
   for (const key of liveLaneKeys()) {
@@ -134,8 +220,14 @@ export function listInputs(): InputBinding[] {
   return out;
 }
 
-/** Is the focused frame an input that a route or expression drives? (editing is locked) */
+export function listFreeInputs(): FreeInputBinding[] {
+  return liveFreeFrameKeys().map((key) => describeFreeInput(S.freeFrames[key]));
+}
+
+/** Is the focused frame (lane frame or free frame) driven by a route or expression? */
 export function isFocusDriven(sl: LaneState = curLane()): boolean {
+  const ff = curFreeFrame();
+  if (ff && sl === curLane()) return isFreeInputDriven(ff);
   const key = focusKey(sl);
   return key !== "z" && (Boolean(routeFor(sl, key)) || hasExpression(sl, key));
 }
@@ -144,7 +236,19 @@ export function isInputDriven(sl: LaneState, operand: Operand): boolean {
   return Boolean(routeFor(sl, operand)) || hasExpression(sl, operand);
 }
 
-export function inputLabel(binding: InputBinding): string {
+export function isFreeInputDriven(ff: FreeFrameState): boolean {
+  return Boolean(freeRouteFor(ff)) || hasFreeExpression(ff);
+}
+
+export function activeDriverName(): string | null {
+  const ff = curFreeFrame();
+  if (ff) return freeDriverName(ff);
+  const sl = curLane();
+  const fk = focusKey(sl);
+  return fk === "z" ? null : driverName(sl, fk);
+}
+
+export function inputLabel(binding: InputBinding | FreeInputBinding): string {
   const suffix =
     binding.source.kind === "data"
       ? ` · ${binding.source.column}`
@@ -156,26 +260,41 @@ export function inputLabel(binding: InputBinding): string {
   return `${binding.frame}${suffix}`;
 }
 
-/** All frame outputs a given input may read, excluding its own frame. */
-export function availableSources(sl: LaneState, operand: Operand): Array<{
-  lane: LaneKey;
-  frame: FrameKey;
-  name: string;
-  disabled: boolean;
-}> {
-  const destLane = sl.key;
-  const out = [];
+/** All frame outputs (lane frames + free frames) a given destination may read. */
+export function availableSourcesForPort(dest: DestinationPort): SourceChoice[] {
+  const out: SourceChoice[] = [];
   for (const lane of liveLaneKeys()) {
     for (const frame of ["a", "b", "z"] as const) {
       out.push({
         lane,
         frame,
+        port: { lane, frame },
         name: frameName(lane, frame),
-        disabled: lane === destLane && frame === operand,
+        disabled: !isFreePort(dest) && dest.lane === lane && dest.frame === frame,
       });
     }
   }
+  for (const free of liveFreeFrameKeys()) {
+    const ff = S.freeFrames[free];
+    out.push({
+      free,
+      port: { free },
+      name: freeFrameName(free),
+      label: ff.label || undefined,
+      disabled: isFreePort(dest) && dest.free === free,
+    });
+  }
   return out;
+}
+
+/** All frame outputs a lane input may read, excluding its own frame. */
+export function availableSources(sl: LaneState, operand: Operand): SourceChoice[] {
+  return availableSourcesForPort({ lane: sl.key, frame: operand });
+}
+
+/** All frame outputs a free frame may read, excluding itself. */
+export function availableSourcesForFree(ff: FreeFrameState): SourceChoice[] {
+  return availableSourcesForPort({ free: ff.key });
 }
 
 function setColumn(sl: LaneState, operand: Operand, column: number): void {
@@ -185,47 +304,81 @@ function setColumn(sl: LaneState, operand: Operand, column: number): void {
 
 function dropRoute(sl: LaneState, operand: Operand): void {
   const route = routeFor(sl, operand);
-  if (route) removeRoute(routing, coreLanes(), route.id);
+  if (route) removeRoute(routing, coreLanes(), route.id, coreFreeFrames());
 }
 
-/** Bind an input to an imported column, restoring any parked base first. */
+function dropFreeRoute(ff: FreeFrameState): void {
+  const route = freeRouteFor(ff);
+  if (route) removeRoute(routing, coreLanes(), route.id, coreFreeFrames());
+}
+
+/** Bind a lane input to an imported column, restoring any parked base first. */
 export function bindData(sl: LaneState, operand: Operand, column: number): void {
   dropRoute(sl, operand);
   sl.expressions[operand] = "";
   setColumn(sl, operand, column >= 0 && DEMO.cols[column] ? column : -1);
 }
 
-/** Bind an input to a frame output; its data column mapping is cleared. */
+/** Bind a lane input to a frame output (lane or free frame); clears column & expr. */
 export function bindFrame(sl: LaneState, operand: Operand, from: SourcePort): void {
   sl.expressions[operand] = "";
   setColumn(sl, operand, -1);
-  addRoute(routing, coreLanes(), from, destinationOf(sl, operand));
+  addRoute(routing, coreLanes(), from, destinationOf(sl, operand), "set", coreFreeFrames());
 }
 
-/** Unbind an input (no source); a parked base is restored. */
+/** Unbind a lane input (no source); a parked base is restored. */
 export function bindNone(sl: LaneState, operand: Operand): void {
   dropRoute(sl, operand);
   sl.expressions[operand] = "";
   setColumn(sl, operand, -1);
 }
 
-/**
- * Bind an input to an expression source. The expression is evaluated on every
- * clocked evaluation (see `state/routing.ts`); an empty string clears it.
- */
+/** Bind a lane input to an expression source. */
 export function bindExpression(sl: LaneState, operand: Operand, text: string): void {
   dropRoute(sl, operand);
   setColumn(sl, operand, -1);
   sl.expressions[operand] = String(text ?? "").trim();
 }
 
-/** Clear every route and column binding (used by a fresh CSV import). */
+/** Bind a free frame to an imported column, restoring any parked base first. */
+export function bindFreeData(ff: FreeFrameState, column: number): void {
+  dropFreeRoute(ff);
+  ff.expression = "";
+  ff.col = column >= 0 && DEMO.cols[column] ? column : -1;
+}
+
+/** Bind a free frame to another frame output (lane or free frame). */
+export function bindFreeFrame(ff: FreeFrameState, from: SourcePort): void {
+  ff.expression = "";
+  ff.col = -1;
+  addRoute(routing, coreLanes(), from, freeDestinationOf(ff), "set", coreFreeFrames());
+}
+
+/** Unbind a free frame (no source); restores any parked base. */
+export function bindFreeNone(ff: FreeFrameState): void {
+  dropFreeRoute(ff);
+  ff.expression = "";
+  ff.col = -1;
+}
+
+/** Bind a free frame to an expression source. */
+export function bindFreeExpression(ff: FreeFrameState, text: string): void {
+  dropFreeRoute(ff);
+  ff.col = -1;
+  ff.expression = String(text ?? "").trim();
+}
+
+/** Clear every route, column and expression binding (used by a fresh CSV import). */
 export function resetBindings(): void {
-  clearRoutes(routing, coreLanes());
+  clearRoutes(routing, coreLanes(), coreFreeFrames());
   for (const key of liveLaneKeys()) {
     S.lanes[key].colA = -1;
     S.lanes[key].colB = -1;
     S.lanes[key].expressions = { a: "", b: "" };
+  }
+  for (const key of liveFreeFrameKeys()) {
+    S.freeFrames[key].col = -1;
+    S.freeFrames[key].expression = "";
   }
 }
 

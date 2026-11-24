@@ -50,7 +50,7 @@ test("manifest is JSON-safe, versioned and strips run functions", () => {
   const manifest = getManifest();
   assert.equal(manifest.id, "bitwave");
   assert.equal(manifest.schemaVersion, SCHEMA_VERSION);
-  assert.equal(manifest.version, "1.5.0");
+  assert.equal(manifest.version, "1.6.1");
   assert.equal(manifest.tools.length, 6);
   assert.deepEqual(manifest.errorCodes, [...ERROR_CODES]);
   assert.ok(!("run" in manifest.tools[0]));
@@ -196,7 +196,7 @@ test("build_deeplink returns a canonical, deterministic, round-tripping link", (
     Buffer.from(String(first.fragment).slice("#bw=".length), "base64url").toString("utf8"),
   );
   assert.ok(Array.isArray(raw));
-  assert.equal(raw[0], 4);
+  assert.equal(raw[0], 5);
   assert.equal(raw[1], 8);
 
   const decoded = parseShareHash(String(first.fragment));
@@ -227,7 +227,7 @@ test("build_deeplink accepts schema 2/3/4 documents and upgrades them to schema 
   for (const schema of [2, 3, 4]) {
     const data = okData(callTool("build_deeplink", { project: { ...current, schema } }));
     const decoded = parseShareHash(String(data.fragment)) as Record<string, unknown>;
-    assert.equal(decoded.schema, 4, `schema ${schema} upgrades to the canonical schema`);
+    assert.equal(decoded.schema, 5, `schema ${schema} upgrades to the canonical schema`);
     assert.ok(!("savedAt" in decoded), "canonical links omit savedAt");
     deserializeProject(decoded); // proves the canonical payload is a valid project
     links.set(schema, String(data.fragment));

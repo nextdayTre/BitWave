@@ -11,9 +11,9 @@
  * `lanedefs.ts` ("1".."13"), so a map is never indexed by array position.
  */
 
-import type { BinOp, Lane, LaneKey, LaneMap } from "./types.ts";
+import type { BinOp, FreeFrame, FreeFrameKey, FreeFrameMap, Lane, LaneKey, LaneMap } from "./types.ts";
 import { LANE_KEYS } from "./types.ts";
-import { compareLaneKeys } from "./lanedefs.ts";
+import { compareFreeFrameKeys, compareLaneKeys } from "./lanedefs.ts";
 import {
   DEFAULT_N,
   bitsToNibbles,
@@ -117,5 +117,42 @@ export function resizeLanes(lanes: LaneMap, oldN: number, newN: number): void {
     lane.Z.target = new Array<number>(nibCount(newN)).fill(0);
     lane.Z.anim = new Array<number>(nibCount(newN)).fill(0);
     syncTarget(lane.Z, newN);
+  }
+}
+
+/** Create a blank standalone free frame of width `N` (D52). */
+export function makeFreeFrame(
+  key: FreeFrameKey,
+  N: number,
+  opts: { label?: string; sourceNote?: string } = {},
+): FreeFrame {
+  const frame: FreeFrame = {
+    key,
+    reg: {
+      bits: new Uint8Array(N),
+      anim: new Array<number>(nibCount(N)).fill(0),
+      target: new Array<number>(nibCount(N)).fill(0),
+    },
+    col: -1,
+  };
+  if (opts.label) frame.label = opts.label;
+  if (opts.sourceNote) frame.sourceNote = opts.sourceNote;
+  return frame;
+}
+
+/** Centre-pinned resize of every standalone free frame (same remap as lanes). */
+export function resizeFreeFrames(freeFrames: FreeFrameMap, oldN: number, newN: number): void {
+  if (oldN === newN) return;
+  const keys = Object.keys(freeFrames).sort(compareFreeFrameKeys);
+  const mapped: Record<FreeFrameKey, number[]> = {};
+  for (const key of keys) {
+    mapped[key] = remapNibbles(bitsToNibbles(freeFrames[key].reg.bits, oldN), oldN, newN);
+  }
+  for (const key of keys) {
+    const reg = freeFrames[key].reg;
+    const values = mapped[key];
+    reg.bits = nibblesToBits(values, newN);
+    reg.target = values.slice();
+    reg.anim = values.slice();
   }
 }

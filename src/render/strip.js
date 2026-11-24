@@ -13,11 +13,12 @@
 
 import {
   S,
+  activeEditable,
+  activeFrameLabel,
+  activeReg,
+  curFreeFrame,
   editReg,
-  focusEditable,
   focusKey,
-  focusReg,
-  frameLabel,
   nibCount,
   nibValue,
   nibWeightPow,
@@ -48,10 +49,11 @@ import { isFocusDriven } from "../state/bindings.ts";
 
   /* The strip always shows the register you are editing. */
   function renderStrip() {
-    const r = focusReg();
+    const r = activeReg();
     const n = nibCount();
     const compact = S.compact;
-    const readonly = !focusEditable() || isFocusDriven();
+    const readonly = !activeEditable() || isFocusDriven();
+    const label = activeFrameLabel();
 
     /* If the strip had focus, remember the nibble before innerHTML wipes it. */
     const hadFocus = nibsEl.contains(document.activeElement);
@@ -99,18 +101,19 @@ import { isFocusDriven } from "../state/bindings.ts";
       if (back) back.focus({ preventScroll: true });
     }
 
-    stripEl.dataset.edit = frameLabel();
+    stripEl.dataset.edit = label;
     stripEl.classList.toggle("is-readonly", readonly);
     stripEl.setAttribute("role", "group");
     stripEl.setAttribute(
       "aria-label",
-      `${frameLabel()} register${readonly ? ", read-only" : ""}`
+      `${label} register${readonly ? ", read-only" : ""}`
     );
     syncHoverClasses();
   }
 
   function patchNibble(j) {
-    const r = editReg();
+    const ff = curFreeFrame();
+    const r = ff ? ff.reg : editReg();
     const el = nibsEl.querySelector(`.nib[data-j="${j}"]`);
     if (!el) return;
     const base = S.N - 1 - 4 * j;

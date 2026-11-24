@@ -19,15 +19,23 @@
  */
 
 import { compileExpression } from "../core/expression.ts";
+import { setFreeFrameMeta } from "../state/actions.ts";
 import {
   availableSources,
+  availableSourcesForFree,
   bindData,
   bindExpression,
   bindFrame,
+  bindFreeData,
+  bindFreeExpression,
+  bindFreeFrame,
+  bindFreeNone,
   bindNone,
+  describeFreeInput,
   describeInput,
   expressionOf,
   inputLabel,
+  listFreeInputs,
   listInputs,
 } from "../state/bindings.ts";
 import { DEMO } from "../state/dataset.ts";
@@ -161,6 +169,13 @@ export function createSourceTable(deps) {
     input.value = value;
     input.setAttribute("aria-label", `Lane ${binding.laneNumber} ${binding.frame} expression`);
     input.title = "One-line register expression — Enter or blur commits, Esc reverts";
+    /* D53: the live pass could not evaluate this expression; the operand is frozen. */
+    const liveError = S.expressionErrors[binding.frame] ?? null;
+    if (liveError) {
+      input.classList.add("invalid");
+      input.setAttribute("aria-invalid", "true");
+      input.title = `did not evaluate: ${liveError} — keeping the last settled bits`;
+    }
 
     input.addEventListener("keydown", (event) => {
       if (event.key === "Enter") {
@@ -236,20 +251,17 @@ export function createSourceTable(deps) {
     const frameGroup = document.createElement("optgroup");
     frameGroup.label = "frame";
     for (const candidate of availableSources(sl, binding.operand)) {
-      frameGroup.appendChild(
-        option(
-          `frame:${candidate.lane}:${candidate.frame}`,
-          `frame · ${candidate.name}`,
-          candidate.disabled
-        )
-      );
+      const optVal = candidate.free
+        ? `free:${candidate.free}`
+        : `frame:${candidate.lane}:${candidate.frame}`;
+      const optLbl = candidate.label
+        ? `frame · ${candidate.name} (${candidate.label})`
+        : `frame · ${candidate.name}`;
+      frameGroup.appendChild(option(optVal, optLbl, candidate.disabled));
     }
     select.appendChild(frameGroup);
     select.appendChild(option("expr", "expr · expression"));
 
-    /* Keep the editor state honest: a bound expression is the truth, and any
-       route/data binding (including one made by a CSV import re-render) clears
-       a stale draft. */
     if (binding.source.kind === "expr") drafts.set(key, binding.source.text);
     else if (binding.source.kind !== "none") drafts.delete(key);
 
@@ -259,7 +271,9 @@ export function createSourceTable(deps) {
       : binding.source.kind === "data"
         ? `data:${binding.source.index}`
         : binding.source.kind === "frame"
-          ? `frame:${binding.source.lane}:${binding.source.frame}`
+          ? (binding.source.free
+            ? `free:${binding.source.free}`
+            : `frame:${binding.source.lane}:${binding.source.frame}`)
           : "";
 
     select.addEventListener("change", () => {
@@ -286,6 +300,8 @@ export function createSourceTable(deps) {
         else if (value.startsWith("data:")) {
           bindData(sl, binding.operand, Number(value.slice(5)));
           fitColumns();
+        } else if (value.startsWith("free:")) {
+          bindFrame(sl, binding.operand, { free: value.slice(5) });
         } else {
           const [, laneKey, frame] = value.split(":");
           bindFrame(sl, binding.operand, { lane: laneKey, frame });
@@ -345,12 +361,274 @@ export function createSourceTable(deps) {
     if (el) el.focus();
   }
 
+  function freeGroupRow(count) {
+    const tr = document.createElement("tr");
+    tr.className = "src-group-head";
+    const th = document.createElement("th");
+    th.scope = "rowgroup";
+    th.colSpan = 3;
+    th.textContent = `Free Frames · ${count}`;
+    tr.appendChild(th);
+    return tr;
+  }
+
+  function commitFreeExpression(binding, index, input) {
+    if (committing) return;
+    const ff = S.freeFrames[binding.free];
+    if (!ff) return;
+    const key = `F:${binding.free}`;
+    const text = input.value.trim();
+    const previous = ff.expression.trim();
+
+    input.classList.remove("invalid");
+    input.removeAttribute("aria-invalid");
+
+    if (text === previous) {
+      drafts.delete(key);
+      if (previous !== "") drafts.set(key, previous);
+      else {
+        rowIndex = index;
+        render();
+        focusRow(index);
+      }
+      return;
+    }
+    if (text !== "") {
+      try {
+        compileExpression(text);
+      } catch (error) {
+        input.classList.add("invalid");
+        input.setAttribute("aria-invalid", "true");
+        input.value = previous;
+        const message = error && error.message ? error.message : "invalid expression";
+        report(`${binding.frame} expression: ${message}`, true);
+        return;
+      }
+    }
+
+    committing = true;
+    try {
+      store.patch(() => {
+        bindFreeExpression(ff, text);
+        evaluate();
+        syncEditUi();
+        renderStrip();
+        updateReadouts();
+      });
+    } finally {
+      committing = false;
+    }
+
+    if (text === "") {
+      drafts.delete(key);
+      report(`${binding.frame} expression cleared.`);
+      rowIndex = index;
+      render();
+      focusRow(index);
+      return;
+    }
+    drafts.set(key, text);
+    report(`${binding.frame} now reads expr · ${text}.`);
+    rowIndex = index;
+    render();
+    focusRow(index, "expr");
+  }
+
+  function buildFreeRow(binding, index) {
+    const ff = S.freeFrames[binding.free];
+    const key = `F:${binding.free}`;
+    const tr = document.createElement("tr");
+    tr.className = "src-binding src-free-binding";
+
+    const dest = document.createElement("td");
+    dest.className = "src-dest";
+    const tag = document.createElement("span");
+    tag.className = "src-lane";
+    tag.textContent = "Free";
+    dest.appendChild(tag);
+    dest.appendChild(document.createTextNode(binding.frame));
+    if (binding.label) {
+      const col = document.createElement("span");
+      col.className = "src-col";
+      col.textContent = ` · ${binding.label}`;
+      dest.appendChild(col);
+    }
+    const metaWrap = document.createElement("div");
+    metaWrap.className = "src-free-meta";
+    const labelIn = document.createElement("input");
+    labelIn.type = "text";
+    labelIn.className = "src-meta-input";
+    labelIn.placeholder = "label (e.g. rfft)";
+    labelIn.value = ff.label;
+    labelIn.setAttribute("aria-label", `${binding.frame} label`);
+    const noteIn = document.createElement("input");
+    noteIn.type = "text";
+    noteIn.className = "src-meta-input";
+    noteIn.placeholder = "source note (e.g. numpy.fft.rfft)";
+    noteIn.value = ff.sourceNote;
+    noteIn.setAttribute("aria-label", `${binding.frame} source note`);
+    const saveMeta = () => {
+      const nextLabel = labelIn.value.trim();
+      const nextNote = noteIn.value.trim();
+      if (nextLabel === ff.label && nextNote === ff.sourceNote) return;
+      store.patch(() => {
+        setFreeFrameMeta(ff, { label: nextLabel, sourceNote: nextNote });
+        syncEditUi();
+        updateReadouts();
+      });
+    };
+    labelIn.addEventListener("blur", saveMeta);
+    noteIn.addEventListener("blur", saveMeta);
+    labelIn.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); saveMeta(); } });
+    noteIn.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); saveMeta(); } });
+    metaWrap.append(labelIn, noteIn);
+    dest.appendChild(metaWrap);
+    tr.appendChild(dest);
+
+    const sourceCell = document.createElement("td");
+    const select = document.createElement("select");
+    select.className = "src-pick";
+    select.setAttribute("aria-label", `${binding.frame} source`);
+    select.appendChild(option("", "—"));
+
+    if (DEMO.cols.length) {
+      const dataGroup = document.createElement("optgroup");
+      dataGroup.label = "data";
+      DEMO.cols.forEach((column, ci) => {
+        dataGroup.appendChild(option(`data:${ci}`, `data · ${column}`));
+      });
+      select.appendChild(dataGroup);
+    }
+
+    const frameGroup = document.createElement("optgroup");
+    frameGroup.label = "frame";
+    for (const candidate of availableSourcesForFree(ff)) {
+      const optVal = candidate.free
+        ? `free:${candidate.free}`
+        : `frame:${candidate.lane}:${candidate.frame}`;
+      const optLbl = candidate.label
+        ? `frame · ${candidate.name} (${candidate.label})`
+        : `frame · ${candidate.name}`;
+      frameGroup.appendChild(option(optVal, optLbl, candidate.disabled));
+    }
+    select.appendChild(frameGroup);
+    select.appendChild(option("expr", "expr · expression"));
+
+    if (binding.source.kind === "expr") drafts.set(key, binding.source.text);
+    else if (binding.source.kind !== "none") drafts.delete(key);
+
+    const editing = binding.source.kind === "expr" || drafts.has(key);
+    select.value = editing
+      ? "expr"
+      : binding.source.kind === "data"
+        ? `data:${binding.source.index}`
+        : binding.source.kind === "frame"
+          ? (binding.source.free
+            ? `free:${binding.source.free}`
+            : `frame:${binding.source.lane}:${binding.source.frame}`)
+          : "";
+
+    select.addEventListener("change", () => {
+      const value = select.value;
+      if (value === "expr") {
+        drafts.set(key, ff.expression);
+        store.patch(() => {
+          bindFreeExpression(ff, "");
+          evaluate();
+          syncEditUi();
+          renderStrip();
+          updateReadouts();
+        });
+        report(`${binding.frame} reads expr — type an expression and press Enter.`);
+        rowIndex = index;
+        render();
+        focusRow(index, "expr");
+        return;
+      }
+      drafts.delete(key);
+      store.patch(() => {
+        if (!value) bindFreeNone(ff);
+        else if (value.startsWith("data:")) {
+          bindFreeData(ff, Number(value.slice(5)));
+          fitColumns();
+        } else if (value.startsWith("free:")) {
+          bindFreeFrame(ff, { free: value.slice(5) });
+        } else {
+          const [, laneKey, frame] = value.split(":");
+          bindFreeFrame(ff, { lane: laneKey, frame });
+        }
+        evaluate();
+        syncEditUi();
+        renderStrip();
+        updateReadouts();
+      });
+      if (value.startsWith("data:")) applyRow();
+      const updated = describeFreeInput(ff);
+      report(`${inputLabel(updated)} now reads ${sourceLabel(updated)} (${updated.state}).`);
+      rowIndex = index;
+      render();
+      focusRow(rowIndex);
+    });
+    sourceCell.appendChild(select);
+
+    if (editing) {
+      const input = document.createElement("input");
+      input.type = "text";
+      input.className = "src-expr";
+      input.spellcheck = false;
+      input.autocomplete = "off";
+      input.placeholder = "F1 << 4";
+      input.value = drafts.has(key) ? drafts.get(key) : ff.expression;
+      input.setAttribute("aria-label", `${binding.frame} expression`);
+      /* D53: frozen-register warning, same rule as lane operands. */
+      const freeLiveError = S.expressionErrors[binding.frame] ?? null;
+      if (freeLiveError) {
+        input.classList.add("invalid");
+        input.setAttribute("aria-invalid", "true");
+        input.title = `did not evaluate: ${freeLiveError} — keeping the last settled bits`;
+      }
+      input.addEventListener("keydown", (event) => {
+        if (event.key === "Enter") {
+          event.preventDefault();
+          commitFreeExpression(binding, index, input);
+        } else if (event.key === "Escape") {
+          event.preventDefault();
+          event.stopPropagation();
+          input.value = ff.expression;
+          input.classList.remove("invalid");
+          input.removeAttribute("aria-invalid");
+        }
+      });
+      input.addEventListener("input", () => {
+        input.classList.remove("invalid");
+        input.removeAttribute("aria-invalid");
+      });
+      input.addEventListener("blur", () => {
+        if (committing || suppressBlur) return;
+        commitFreeExpression(binding, index, input);
+      });
+      sourceCell.appendChild(input);
+    }
+    tr.appendChild(sourceCell);
+
+    const state = document.createElement("td");
+    state.className = `src-state ${stateClass(binding.state)}`;
+    state.textContent = binding.state;
+    if (binding.driven) {
+      state.title = `driven by ${binding.source.kind === "frame" ? binding.source.name : binding.source.kind === "expr" ? "an expression" : "a route"}`;
+    }
+    tr.appendChild(state);
+
+    return tr;
+  }
+
   function render() {
     rowIndex = -1;
     suppressBlur = true;
     try {
       rowsEl.textContent = "";
       const bindings = listInputs();
+      const freeBindings = listFreeInputs();
       let lane = null;
       bindings.forEach((binding, index) => {
         if (binding.lane !== lane) {
@@ -359,10 +637,19 @@ export function createSourceTable(deps) {
         }
         rowsEl.appendChild(buildRow(binding, index));
       });
-      const bound = bindings.filter((binding) => binding.source.kind !== "none").length;
+      if (freeBindings.length > 0) {
+        rowsEl.appendChild(freeGroupRow(freeBindings.length));
+        freeBindings.forEach((fb, offset) => {
+          rowsEl.appendChild(buildFreeRow(fb, bindings.length + offset));
+        });
+      }
+      const total = bindings.length + freeBindings.length;
+      const bound = bindings.filter((b) => b.source.kind !== "none").length
+        + freeBindings.filter((b) => b.source.kind !== "none").length;
       if (statusEl && !statusEl.dataset.userMessage) {
         const lanes = new Set(bindings.map((binding) => binding.lane)).size;
-        statusEl.textContent = `${bound} / ${bindings.length} bound · ${lanes} lane${lanes === 1 ? "" : "s"} · one source each`;
+        const freePart = freeBindings.length > 0 ? ` · ${freeBindings.length} free` : "";
+        statusEl.textContent = `${bound} / ${total} bound · ${lanes} lane${lanes === 1 ? "" : "s"}${freePart} · one source each`;
       }
     } finally {
       suppressBlur = false;

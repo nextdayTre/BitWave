@@ -1,4 +1,4 @@
-# Agent Interface Contract — bitwave v1 (toolset 1.5.0)
+# Agent Interface Contract — bitwave v1 (toolset 1.6.1)
 
 Normative contract for BitWave's agent layer. The human-facing onboarding is
 [`AGENTS.md`](../AGENTS.md); this file is the precise spec the browser bridge, CLI and
@@ -286,6 +286,7 @@ once mounted and contains `JSON.stringify(getState())`. `getState()` returns:
   "width": 64,
   "lane": 1,
   "frame": "A",
+  "activeFree": null,
   "view": { "mode": "2d", "splitPair": [1, 2], "activePane": 0 },
   "lanes": {
     "1": {
@@ -300,20 +301,23 @@ once mounted and contains `JSON.stringify(getState())`. `getState()` returns:
       },
       "driven": { "A": false, "B": true },
       "expressions": { "A": null, "B": "round(1.2599210498948732 * C)" },
+      "expressionErrors": { "A": null, "B": null },
       "derived": { "Z1": { "hex": "7521012585210125", "popcount": 20, "truthCounts": [23, 11, 9, 21] } }
     }
   },
+  "freeFrames": {},
   "lfo": { "on": false, "mode": "rotcw", "rate": 4 },
   "dataset": { "columns": ["Hex 1"], "rows": 8, "index": 0, "row": ["00000001"] },
   "editing": { "copyArmed": false, "enabled": true },
   "recording": { "on": false, "rows": 0 },
   "deeplink": "file:///…/bitwave-v2.html#bw=…",
-  "bridge": { "schemaVersion": 1, "version": "1.5.0" }
+  "bridge": { "schemaVersion": 1, "version": "1.6.1" }
 }
 ```
 
-- Keys `schemaVersion, ready, width, lane, frame, view, lanes, lfo, dataset, editing,
-  recording, deeplink, bridge` are always present; `dataset` is `null` when empty.
+- Keys `schemaVersion, ready, width, lane, frame, activeFree, view, lanes, freeFrames,
+  lfo, dataset, editing, recording, deeplink, bridge` are always present; `dataset` is
+  `null` when empty and `freeFrames` is `{}` when there are no free frames.
 - Frame names are global and derived from the lane key: lane 1 `A/B/Z1`, lane 2
   `C/D/Z2`, lane 3 `E/F/Z3`, lane 4 `G/H/Z4`, … lane 8 `O/P/Z8`. The closed agent
   vocabulary is `A`–`P` plus `Z1`–`Z8`.
@@ -330,7 +334,21 @@ once mounted and contains `JSON.stringify(getState())`. `getState()` returns:
 - `sources.kind` is `"data"`, `"frame"`, `"expr"` or `"none"`; `driven` is true when a
   route targets that operand. `expressions` carries the expression text per operand
   (`null` when not an expression source); an expression source is read-only locally and
-  sets `editing.enabled` false when focused.
+  sets `editing.enabled` false when focused. `driven` reports **routing only**: an
+  expression-sourced frame or operand has `driven:false` plus a non-null `expressions`
+  entry, so check both.
+- `freeFrames` is keyed by global name (`"F1"`–`"F16"`, always `{}` when empty) and each
+  entry mirrors a lane operand: `key`, `frame`, `hex`, `popcount`, `visible`, `label`
+  (`null` when unset), `sourceNote` (`null` when unset), `source`, `driven`, `expression`
+  and `expressionError`.
+- **A failed expression is reported, never silent (D53).** The clocked pass keeps a frame's
+  last settled bits when its expression cannot evaluate (most often a referenced free frame
+  was deleted), so `hex` alone cannot distinguish a live register from a frozen one.
+  `freeFrames.*.expressionError` and `lanes.*.expressionErrors[<frame>]` carry the
+  evaluator's message in that case and `null` otherwise. Both are transient session state —
+  not stored in `.bitwave`, the share link or the Record log — and a pure document consumer
+  (`state --project`) reports `null` because it never evaluates expressions. An agent that
+  drives a multi-stage pipeline should treat a non-null error as "this value is stale".
 - `recording` is transient: the armed flag and the current row count (the rows themselves
   are available only via `getLog()`); the log is not persisted in `.bitwave`/links.
 - The shape is stable; add keys, never repurpose them without a schema bump.

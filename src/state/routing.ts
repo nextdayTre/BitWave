@@ -2,22 +2,36 @@
  * Bridge between the app's state tree and the core routing engine.
  *
  * `evaluate()` is the clocked pass DESIGN §10 describes: apply routes in
- * dependency order, apply expression operands (which see the previous record row
- * as `log.<frame>`), then derive every lane's Z. Call it on transaction
- * boundaries only (never per animation frame).
- *
- * D43: the core lane map is keyed by stable lane key ("1".."13"); the app tree
- * is keyed the same way, so no A/B/C slot lookup is needed anywhere.
+ * dependency order across lanes and free frames (D52), apply expression sources
+ * (which see the previous record row as `log.<frame>`), then derive every lane's
+ * Z. Call it on transaction boundaries only (never per animation frame).
  */
 
-import { evaluateAll, createRouting, isDriven } from "../core/routing.ts";
+import { evaluateAll, createRouting, isDriven, isFreeDriven } from "../core/routing.ts";
 import { bigToReg, regToBig } from "../core/registers.ts";
 import { evaluateExpression } from "../core/expression.ts";
-import type { Lane, LaneKey, LaneMap, OperandKey } from "../core/types.ts";
-import { FRAME_NAMES, S, liveLaneKeys, syncTarget, type LaneState } from "./instrument.ts";
+import type {
+  FreeFrame,
+  FreeFrameKey,
+  FreeFrameMap,
+  Lane,
+  LaneKey,
+  LaneMap,
+  OperandKey,
+} from "../core/types.ts";
+import {
+  FRAME_NAMES,
+  S,
+  freeFrameName,
+  liveFreeFrameKeys,
+  liveLaneKeys,
+  syncTarget,
+  type FreeFrameState,
+  type LaneState,
+} from "./instrument.ts";
 import { lastLog } from "./record.ts";
 
-/** Routes and parked bases for the instrument. Empty until the matrix lands. */
+/** Routes and parked bases for the instrument. */
 export const routing = createRouting();
 
 function laneView(sl: LaneState, key: LaneKey): Lane {
@@ -36,6 +50,16 @@ function laneView(sl: LaneState, key: LaneKey): Lane {
   };
 }
 
+function freeFrameView(ff: FreeFrameState, key: FreeFrameKey): FreeFrame {
+  return {
+    key,
+    reg: ff.reg,
+    col: ff.col,
+    label: ff.label || undefined,
+    sourceNote: ff.sourceNote || undefined,
+  };
+}
+
 /** Core lane map view over the app tree: stable lane keys, shared registers. */
 export function coreLanes(): LaneMap {
   const lanes = {} as LaneMap;
@@ -43,8 +67,19 @@ export function coreLanes(): LaneMap {
   return lanes;
 }
 
-/** Every current frame as a name -> BigInt map (for expression environments). */
-export function frameWords(lanes: LaneMap, N: number): Record<string, bigint> {
+/** Core free-frame map view over the app tree: stable free keys, shared registers. */
+export function coreFreeFrames(): FreeFrameMap {
+  const frames: FreeFrameMap = {};
+  for (const key of liveFreeFrameKeys()) frames[key] = freeFrameView(S.freeFrames[key], key);
+  return frames;
+}
+
+/** Every current frame (lanes + free frames) as a name -> BigInt map. */
+export function frameWords(
+  lanes: LaneMap,
+  N: number,
+  freeFrames: FreeFrameMap = coreFreeFrames(),
+): Record<string, bigint> {
   const out: Record<string, bigint> = {};
   for (const laneKey of Object.keys(lanes).sort((a, b) => Number(a) - Number(b))) {
     const lane = lanes[laneKey];
@@ -54,15 +89,28 @@ export function frameWords(lanes: LaneMap, N: number): Record<string, bigint> {
     out[names.b] = regToBig(lane.B.bits, N);
     out[names.z] = regToBig(lane.Z.bits, N);
   }
+  for (const freeKey of Object.keys(freeFrames).sort((a, b) => Number(a) - Number(b))) {
+    out[freeFrameName(freeKey)] = regToBig(freeFrames[freeKey].reg.bits, N);
+  }
   return out;
 }
 
-/** Apply one expression source, if present. Invalid text leaves the base bits. */
+/**
+ * D53: keep the frame's last settled bits on a failed expression, but record why,
+ * so the UI badge and `getState().expressionError` cannot report a frozen register
+ * as a live one. Cleared by every clocked pass.
+ */
+function recordExpressionError(name: string, error: unknown): void {
+  S.expressionErrors[name] = error instanceof Error ? error.message : "invalid expression";
+}
+
+/** Apply one lane operand expression source, if present. */
 function applyExpression(laneKey: LaneKey, frame: OperandKey, lanes: LaneMap, N: number): void {
   const sl = S.lanes[laneKey];
   const text = sl.expressions[frame];
   if (text.trim() === "") return;
   const reg = frame === "a" ? sl.A : sl.B;
+  const name = FRAME_NAMES[laneKey]?.[frame] ?? frame.toUpperCase();
   try {
     const value = evaluateExpression(text, {
       width: N,
@@ -70,20 +118,48 @@ function applyExpression(laneKey: LaneKey, frame: OperandKey, lanes: LaneMap, N:
       log: lastLog() ?? undefined,
     });
     bigToReg(value, reg.bits, N);
-  } catch {
-    /* Invalid expression: keep the base bits; the source table reports it. */
+  } catch (error) {
+    recordExpressionError(name, error);
+  }
+}
+
+/** Apply one free-frame expression source, if present. */
+function applyFreeExpression(
+  freeKey: FreeFrameKey,
+  lanes: LaneMap,
+  freeFrames: FreeFrameMap,
+  N: number,
+): void {
+  const ff = S.freeFrames[freeKey];
+  if (!ff) return;
+  const text = ff.expression;
+  if (text.trim() === "") return;
+  try {
+    const value = evaluateExpression(text, {
+      width: N,
+      frames: frameWords(lanes, N, freeFrames),
+      log: lastLog() ?? undefined,
+    });
+    bigToReg(value, ff.reg.bits, N);
+  } catch (error) {
+    recordExpressionError(freeFrameName(freeKey), error);
   }
 }
 
 /** The single evaluation entry point for the app. Writes state only. */
 export function evaluate(instant = false): void {
-  evaluateAll(routing, coreLanes(), S.N, { applyExpression });
+  S.expressionErrors = {};
+  const lanes = coreLanes();
+  const freeFrames = coreFreeFrames();
+  evaluateAll(routing, lanes, S.N, { applyExpression, applyFreeExpression }, freeFrames);
   for (const key of liveLaneKeys()) {
     const sl = S.lanes[key];
-    /* A driven/expression operand's display target follows the computed truth,
-       not the base bits the local writers last saw. */
     if (isDriven(routing, key, "a") || sl.expressions.a.trim() !== "") syncTarget(sl.A, instant);
     if (isDriven(routing, key, "b") || sl.expressions.b.trim() !== "") syncTarget(sl.B, instant);
     syncTarget(sl.Z, instant);
+  }
+  for (const key of liveFreeFrameKeys()) {
+    const ff = S.freeFrames[key];
+    if (isFreeDriven(routing, key) || ff.expression.trim() !== "") syncTarget(ff.reg, instant);
   }
 }

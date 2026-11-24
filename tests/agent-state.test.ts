@@ -43,8 +43,10 @@ test("state has the contract keys and the focused defaults", () => {
     "width",
     "lane",
     "frame",
+    "activeFree",
     "view",
     "lanes",
+    "freeFrames",
     "lfo",
     "dataset",
     "editing",
@@ -63,7 +65,7 @@ test("state has the contract keys and the focused defaults", () => {
   assert.equal(s.editing.enabled, true);
   assert.deepEqual(s.recording, { on: false, rows: 0 });
   assert.equal(s.deeplink, "file:///bitwave-v2.html#bw=abc");
-  assert.deepEqual(s.bridge, { schemaVersion: 1, version: "1.5.0" });
+  assert.deepEqual(s.bridge, { schemaVersion: 1, version: "1.6.1" });
   assert.deepEqual(Object.keys(s.lanes), ["1", "2", "3"]);
 });
 
@@ -184,4 +186,26 @@ test("the eight-lane fixture reports eight stable lane keys and names A-P/Z1-Z8"
   assert.equal(s.frame, "O");
   assert.equal(s.lanes["1"].frames.Z1, "7521012585210125");
   assert.equal(s.lanes["8"].frames.O, "DEADBEEFCAFEBABE");
+});
+
+test("a failed expression is reported per frame and defaults to null (D53)", () => {
+  const doc = exampleProjectDoc();
+  doc.lanes["1"].expressions = { a: "MISSING + 1", b: null };
+  doc.frames = { "1": { hex: "0F", expression: "F9 << 4" } };
+  doc.view.activeFree = "1";
+
+  const s = buildUiState(doc, {
+    expressionErrors: { A: "unknown frame name: MISSING", F1: "unknown frame name: F9" },
+  });
+  assert.deepEqual(s.lanes["1"].expressionErrors, {
+    A: "unknown frame name: MISSING",
+    B: null,
+  });
+  assert.equal(s.freeFrames["F1"].expressionError, "unknown frame name: F9");
+
+  /* A pure document consumer (CLI `state --project`) never evaluates, so it
+     reports no error rather than inventing one. */
+  const quiet = buildUiState(doc, {});
+  assert.deepEqual(quiet.lanes["1"].expressionErrors, { A: null, B: null });
+  assert.equal(quiet.freeFrames["F1"].expressionError, null);
 });

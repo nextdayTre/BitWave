@@ -8,18 +8,18 @@
  */
 
 import { applyPreset, applyUnary, setBinop, setHexWord } from "../state/actions.ts";
-import { driverName, isFocusDriven, isInputDriven } from "../state/bindings.ts";
+import { activeDriverName, isFocusDriven, isFreeInputDriven, isInputDriven } from "../state/bindings.ts";
 import { DEMO } from "../state/dataset.ts";
 import {
   S,
   SIZES,
-  liveLaneKeys,
+  activeEditable,
+  activeFrameLabel,
+  activeReg,
   curLane,
-  editReg,
-  focusEditable,
-  focusKey,
-  focusReg,
-  frameLabel,
+  isFreeFocused,
+  liveFreeFrameKeys,
+  liveLaneKeys,
   nibCount,
   syncTarget,
 } from "../state/instrument.ts";
@@ -58,10 +58,13 @@ export function createControls(deps) {
     if (S.lfo.on) return;
     if (S.lfo.mode === "csvStep" && (!DEMO.rows || !DEMO.rows.length)) return;
     store.patch(() => {
-      const base = {};
+      const base = { free: {} };
       for (const k of liveLaneKeys()) {
         const sl = S.lanes[k];
         base[k] = { a: sl.A.bits.slice(), b: sl.B.bits.slice() };
+      }
+      for (const fk of liveFreeFrameKeys()) {
+        base.free[fk] = S.freeFrames[fk].reg.bits.slice();
       }
       S.lfo.base = base;
       S.lfo.t = 0;
@@ -87,6 +90,13 @@ export function createControls(deps) {
             }
             if (!isInputDriven(sl, "a")) syncTarget(sl.A);
             if (!isInputDriven(sl, "b")) syncTarget(sl.B);
+          }
+          for (const fk of liveFreeFrameKeys()) {
+            const ff = S.freeFrames[fk];
+            if (snap.free && snap.free[fk] && !isFreeInputDriven(ff)) {
+              ff.reg.bits = snap.free[fk].slice();
+              syncTarget(ff.reg);
+            }
           }
           evaluate();
         }
@@ -153,6 +163,13 @@ export function createControls(deps) {
         if (!isInputDriven(sl, "a")) syncTarget(sl.A);
         if (!isInputDriven(sl, "b")) syncTarget(sl.B);
       }
+      for (const fk of liveFreeFrameKeys()) {
+        const ff = S.freeFrames[fk];
+        const fb = base.free && base.free[fk];
+        if (!fb || isFreeInputDriven(ff)) continue;
+        sweepInto(ff.reg, fb, shift, rotate);
+        syncTarget(ff.reg);
+      }
 
       evaluate();
       renderStrip();
@@ -183,7 +200,7 @@ export function createControls(deps) {
     });
   });
 
-  function applyTable(name, reg = editReg()) {
+  function applyTable(name, reg = activeReg()) {
     if (isFocusDriven()) return;
     applyPreset(reg, name);
     commit();
@@ -194,7 +211,7 @@ export function createControls(deps) {
       if (isFocusDriven()) return;     // a driven input has no local edit
       lfoStop();                       // a manual op takes the wheel back
       const k = Number(document.getElementById("amount").value) || 4;
-      applyUnary(editReg(), btn.dataset.op, k);
+      applyUnary(activeReg(), btn.dataset.op, k);
       commit();
     });
   });
@@ -217,47 +234,55 @@ export function createControls(deps) {
   const binopBtns = [...document.querySelectorAll("[data-binop]")];
 
   function syncEditUi() {
+    const freeOn = isFreeFocused();
     const driven = isFocusDriven();
-    const editable = focusEditable();
+    const editable = activeEditable();
+    const label = activeFrameLabel();
+    const deriveEnabled = !freeOn && S.showB;
 
-    /* Derive is a live radiogroup that never disappears; without operand B the
-       radios stay in place, dimmed and `aria-disabled` (DESIGN §9). */
-    logicGroup.setAttribute("aria-disabled", String(!S.showB));
-    binopSet.setAttribute("aria-disabled", String(!S.showB));
+    /* Derive is a live radiogroup that never disappears; without operand B or
+       on a free frame, radios stay in place, dimmed and `aria-disabled`. */
+    logicGroup.setAttribute("aria-disabled", String(!deriveEnabled));
+    binopSet.setAttribute("aria-disabled", String(!deriveEnabled));
     binopBtns.forEach((b) => {
-      const on = b.dataset.binop === S.binop;
+      const on = !freeOn && b.dataset.binop === S.binop;
       b.classList.toggle("on", on);
       b.setAttribute("aria-checked", String(on));
-      b.setAttribute("aria-disabled", String(!S.showB));
-      b.setAttribute("tabindex", S.showB && on ? "0" : "-1");
+      b.setAttribute("aria-disabled", String(!deriveEnabled));
+      b.setAttribute("tabindex", deriveEnabled && on ? "0" : "-1");
     });
     if (bState) {
-      bState.textContent = S.showB ? "B on" : "B off";
-      bState.title = S.showB
-        ? "Operand B is live in this lane"
-        : "Operand B is enabled by focusing a B/D/F frame or entering 3-D";
+      if (freeOn) {
+        bState.textContent = "free";
+        bState.title = "Free frame — route into a lane for binary ops";
+      } else {
+        bState.textContent = S.showB ? "B on" : "B off";
+        bState.title = S.showB
+          ? "Operand B is live in this lane"
+          : "Operand B is enabled by focusing a B/D/F frame or entering 3-D";
+      }
     }
 
     /* Register edit: the target label and the whole-word hex entry. */
-    if (driven) editTarget.textContent = `${frameLabel()} · driven`;
-    else if (editable) editTarget.textContent = `edit · ${frameLabel()}`;
-    else editTarget.textContent = `${frameLabel()} · read-only`;
+    if (driven) editTarget.textContent = `${label} · driven`;
+    else if (editable) editTarget.textContent = `edit · ${label}`;
+    else editTarget.textContent = `${label} · read-only`;
     hexEntry.disabled = !editable || driven;
-    hexEntry.setAttribute("aria-label", `hex value for ${frameLabel()}`);
+    hexEntry.setAttribute("aria-label", `hex value for ${label}`);
     if (document.activeElement !== hexEntry) {
-      hexEntry.value = toHexOf(editable ? editReg() : focusReg());
+      hexEntry.value = toHexOf(activeReg());
     }
 
-    stripEl.dataset.edit = frameLabel();
+    stripEl.dataset.edit = label;
     if (hintEl) {
-      hintEl.textContent = !focusEditable()
-        ? `${frameLabel()} is derived — read-only`
+      hintEl.textContent = !editable
+        ? `${label} is derived — read-only`
         : driven
-          ? `${frameLabel()} is driven by ${driverName(curLane(), focusKey())} — unplug in sources`
+          ? `${label} is driven by ${activeDriverName()} — unplug in sources`
           : "drag a nibble · click a bit · Tab to edit";
     }
     lfoBSel.value = curLane().lfoB;
-    lfoBSel.hidden = S.lfo.mode === "csvStep" || (!S.view3d && !S.showB);
+    lfoBSel.hidden = freeOn || S.lfo.mode === "csvStep" || (!S.view3d && !S.showB);
   }
 
   /* The old "B" toggle's only unique capability was unpairing the second
@@ -286,7 +311,7 @@ export function createControls(deps) {
   let hexInvalidTimer = 0;
 
   function currentEditHex() {
-    return toHexOf(focusEditable() ? editReg() : focusReg());
+    return toHexOf(activeReg());
   }
 
   function flashInvalidHex() {
@@ -300,7 +325,7 @@ export function createControls(deps) {
   }
 
   function commitHex() {
-    if (!focusEditable() || isFocusDriven()) return;
+    if (!activeEditable() || isFocusDriven()) return;
     const raw = hexEntry.value.trim().replace(/^0x/i, "");
     if (!/^[0-9a-f]+$/i.test(raw) || raw.length > nibCount()) {
       flashInvalidHex();
@@ -309,14 +334,14 @@ export function createControls(deps) {
     hexEntry.classList.remove("invalid");
     hexEntry.removeAttribute("aria-invalid");
     store.patch(() => {
-      setHexWord(editReg(), raw);
+      setHexWord(activeReg(), raw);
       evaluate();
       renderStrip();
       updateReadouts();
       syncEditUi();
     });
     /* Normalise the field to the committed, zero-padded word (CSV rule). */
-    hexEntry.value = toHexOf(editReg());
+    hexEntry.value = toHexOf(activeReg());
   }
 
   hexEntry.addEventListener("keydown", (event) => {

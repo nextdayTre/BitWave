@@ -13,13 +13,22 @@ disagree: one implementation, one envelope, deterministic output.
 
 Onboarding path: this file → the normative contract
 [`docs/AGENT-INTERFACE.md`](docs/AGENT-INTERFACE.md). User docs:
-[`README.md`](README.md). Version: toolset `1.5.0`, state schema `1`, `.bitwave` schema
-`4` (schema 1/2/3 still load and upgrade). Toolset 1.4.0 was the dynamic-lanes slice:
+[`README.md`](README.md). Version: toolset `1.6.1`, state schema `1`, `.bitwave` schema
+`5` (schemas 1–4 still load and upgrade). Toolset 1.4.0 was the dynamic-lanes slice:
 lanes are a live 1–8 set, frames are `A`–`P`/`Z1`–`Z8`, and the bridge focuses only lanes
 the tree carries. Toolset 1.5.0 (D48) adds the opt-in dataset readback:
 `window.bitwave.getDataset()` returns the loaded matrix `{columns, rows, index, kinds,
-widths}` (or `null`), read-only and never part of `getState()`/change payloads; the state
-and `.bitwave` schemas, the tools and the UI are unchanged.
+widths}` (or `null`), read-only and never part of `getState()`/change payloads. Toolset
+1.6.0 (D52, [`docs/FREE-FRAMES.md`](docs/FREE-FRAMES.md)) adds standalone **Free Frames**
+(`F1`–`F16`) decoupled from `A/B/Z` lane housing, with full unified routing, expressions,
+CSV/LFO/Record integration, optional `label`/`sourceNote` metadata for external-library
+signal flows, single-register 2-D/3-D stage view, and `addFreeFrame`/`removeFreeFrame`/
+`setFreeFrameMeta` on `window.bitwave`. Toolset 1.6.1 (D53) makes a frozen register
+legible: when an expression source cannot evaluate (most often because a referenced free
+frame was deleted) the clocked pass keeps the last settled bits but reports why through
+`freeFrames.*.expressionError` / `lanes.*.expressionErrors`, with the same warning on the
+cards, the stage badge and the source editor. Additive and transient — no schema, share,
+Record or tool change.
 
 ## Quick start
 
@@ -113,7 +122,7 @@ bitwave-v2.html#bw=<unpadded base64url(UTF-8 compact JSON array)>
 
 ```js
 window.bitwave.schemaVersion            // 1
-window.bitwave.version                  // "1.5.0"
+window.bitwave.version                  // "1.6.1"
 window.bitwave.getState()               // full UI state (§6 of the contract)
 window.bitwave.getDataset()             // loaded matrix or null (opt-in readback)
 window.bitwave.getManifest()            // manifest data
@@ -273,6 +282,7 @@ node agent/verify-browser.mjs
 | `docs/DATASET-LIFECYCLE.md` | design note (exploration, revised): dataset readback/export + formal tools, step timeline/playback, provenance/citation and reproducibility, agent sorting-process workflow; function-frame/global-identity model deferred |
 | `docs/EXTERNAL-ROUTING.md` | shipped slice: Record/log and expression operands (schema 3, toolset 1.1.0) |
 | `docs/CONSTRAINTS.md` | constraint tiers: invariants vs product commitments vs provisional facts, with re-derivation triggers; the model → document → view rule (D50) |
+| `docs/PIPELINE-HANDOFF.md` | bridge an external pipeline (machine.py, NumPy): stage CSV + pipeline spec → schema-5 document, with a pre-flight capability report; `tools/pipeline-doc.mjs` |
 | `agent/manifest.json` | generated capability manifest (tools, selectors, errors) |
 | `agent/examples/` | generated example envelopes, one per tool |
 | `agent/README.md` | transports guide: CLI commands, MCP server, selftest, generator |

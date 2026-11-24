@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Independent browser verification for the BitWave agent layer (toolset 1.5.0).
+ * Independent browser verification for the BitWave agent layer (toolset 1.6.1).
  *
  * Drives the built single-file artifact (`bitwave-v2.html`) over `file://` in a
  * fresh-profile headless Chrome/Edge over the DevTools Protocol, then asserts the
@@ -77,6 +77,9 @@ const BRIDGE_KEYS = [
   "setState",
   "setLane",
   "setFrame",
+  "addFreeFrame",
+  "removeFreeFrame",
+  "setFreeFrameMeta",
   "setView",
   "setWidth",
   "setRegister",
@@ -1200,6 +1203,79 @@ async function main() {
       assertEqual(doc.schema, 4, "the fixture is a schema-4 dynamic-lane document");
     });
 
+    await run("free frames (D52): 7-stage chain, NumPy metadata, lane routing and #bw= reload", async () => {
+      await browser.navigate(artifactUrl);
+      await browser.evaluate("window.bitwave.reset()");
+      const created = await browser.evaluate(`(() => {
+        const out = [];
+        for (let i = 1; i <= 7; i++) {
+          out.push(window.bitwave.addFreeFrame({
+            hex: i === 1 ? "0000000000000001" : "0000000000000000",
+            label: "stage_" + i,
+            sourceNote: "numpy.stage(" + i + ")",
+          }));
+        }
+        for (let i = 2; i <= 7; i++) {
+          window.bitwave.setExpression("F" + i, "F" + (i - 1) + " << 4");
+        }
+        window.bitwave.setRoute("B", "F7");
+        window.bitwave.setFrame("F7");
+        return {
+          frames: out.map((r) => r.frame),
+          state: window.bitwave.getState(),
+          link: window.bitwave.getDeeplink(),
+        };
+      })()`);
+      assertEqual(created.frames, ["F1", "F2", "F3", "F4", "F5", "F6", "F7"]);
+      assertEqual(created.state.activeFree, "F7");
+      assertEqual(created.state.frame, "F7");
+      assertEqual(created.state.freeFrames.F7.hex, "0000000001000000");
+      assertEqual(created.state.freeFrames.F7.label, "stage_7");
+      assertEqual(created.state.freeFrames.F7.sourceNote, "numpy.stage(7)");
+      assertEqual(created.state.lanes["1"].frames.B, "0000000001000000");
+
+      await browser.navigate(created.link);
+      const reloaded = await liveState();
+      assertEqual(reloaded.activeFree, "F7");
+      assertEqual(reloaded.freeFrames.F7.hex, "0000000001000000");
+      assertEqual(reloaded.freeFrames.F7.sourceNote, "numpy.stage(7)");
+      assertEqual(reloaded.lanes["1"].frames.B, "0000000001000000");
+    });
+
+    await run("free frames (D53): a deleted dependency is reported, not silently stale", async () => {
+      await browser.navigate(artifactUrl);
+      await browser.evaluate("window.bitwave.reset()");
+      const out = await browser.evaluate(`(() => {
+        window.bitwave.addFreeFrame({ hex: "0000000000000003" }); // F1
+        window.bitwave.addFreeFrame({ hex: "0000000000000000" }); // F2
+        window.bitwave.setExpression("F2", "F1 << 4");
+        window.bitwave.setExpression("A", "F9 + 1"); // no F9 exists
+        const settled = window.bitwave.getState();
+        const del = window.bitwave.removeFreeFrame("F1");
+        const state = window.bitwave.getState();
+        return {
+          settledF2: settled.freeFrames.F2.hex,
+          settledF2Error: settled.freeFrames.F2.expressionError,
+          settledAError: settled.lanes["1"].expressionErrors.A,
+          delOk: del.ok,
+          afterF2: state.freeFrames.F2,
+          afterA: state.lanes["1"].expressionErrors.A,
+          afterHexA: state.lanes["1"].frames.A,
+        };
+      })()`);
+      assertEqual(out.settledF2, "0000000000000030");
+      assertEqual(out.settledF2Error, null, "a live chain reports no error");
+      assert(out.settledAError && out.settledAError.includes("F9"), "an unresolved lane expression is reported");
+      assertEqual(out.delOk, true);
+      assertEqual(out.afterF2.expression, "F1 << 4", "the dangling expression is kept, not silently cleared");
+      assertEqual(out.afterF2.hex, "0000000000000030", "the last settled bits are kept");
+      assert(
+        typeof out.afterF2.expressionError === "string" && out.afterF2.expressionError.includes("F1"),
+        `the frozen free frame reports its error (got ${JSON.stringify(out.afterF2.expressionError)})`,
+      );
+      assert(out.afterA && out.afterA.includes("F9"), "the frozen lane operand keeps its error");
+    });
+
     await run("the help panel agent tab opens and reports an active bridge", async () => {
       await browser.navigate(artifactUrl);
       await browser.evaluate(`(() => {
@@ -1289,7 +1365,7 @@ async function main() {
     await browser.close();
   }
 
-  console.log("BitWave agent browser verification (toolset 1.5.0 / schema 4)");
+  console.log("BitWave agent browser verification (toolset 1.6.1 / schema 5)");
   console.log(`  artifact: ${artifactPath} (${existsSync(artifactPath) ? readFileSync(artifactPath).length : 0} bytes)`);
   console.log(`  browser:  ${chromePath}`);
   console.log(

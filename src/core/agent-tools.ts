@@ -19,6 +19,8 @@ import {
   WIDTHS,
   exampleProjectDoc,
   frameRefFromName,
+  freeFrameKeyFromName,
+  freeFrameName,
   laneKeyFromNumber,
   type ViewMode,
 } from "./agent-defaults.ts";
@@ -586,9 +588,14 @@ export function normalizeAgentPatch(value: unknown): PatchResult {
     }
 
     if (input.frame !== undefined) {
-      const frame = frameRefFromName(input.frame);
-      if (!frame) bad("E_BAD_ENUM", "frame must be A–P or Z1–Z8");
-      patch.frame = frame.name;
+      const freeKey = freeFrameKeyFromName(input.frame);
+      if (freeKey !== null) {
+        patch.frame = freeFrameName(freeKey);
+      } else {
+        const frame = frameRefFromName(input.frame);
+        if (!frame) bad("E_BAD_ENUM", "frame must be A–P, Z1–Z8 or F1–F16");
+        patch.frame = frame.name;
+      }
     }
 
     if (input.view !== undefined) {
@@ -605,10 +612,15 @@ export function normalizeAgentPatch(value: unknown): PatchResult {
     if (input.register !== undefined) {
       const register = objectValue(input.register, "register");
       onlyKeys(register, ["frame", "hex"], "register");
-      const frame = frameRefFromName(register.frame);
-      if (!frame) bad("E_BAD_ENUM", "register.frame must be an operand frame (A–P)");
-      if (frame.frame === "z") bad("E_BAD_ENUM", "Z is derived and cannot be written; choose an operand frame");
-      patch.register = { frame: frame.name, hex: hexText(register.hex, "register.hex") };
+      const freeKey = freeFrameKeyFromName(register.frame);
+      if (freeKey !== null) {
+        patch.register = { frame: freeFrameName(freeKey), hex: hexText(register.hex, "register.hex") };
+      } else {
+        const frame = frameRefFromName(register.frame);
+        if (!frame) bad("E_BAD_ENUM", "register.frame must be an operand frame (A–P) or free frame (F1–F16)");
+        if (frame.frame === "z") bad("E_BAD_ENUM", "Z is derived and cannot be written; choose an operand or free frame");
+        patch.register = { frame: frame.name, hex: hexText(register.hex, "register.hex") };
+      }
     }
 
     if (input.binop !== undefined) {
@@ -661,9 +673,16 @@ export function normalizeAgentPatch(value: unknown): PatchResult {
     if (input.expression !== undefined) {
       const expression = objectValue(input.expression, "expression");
       onlyKeys(expression, ["frame", "text"], "expression");
-      const frame = frameRefFromName(expression.frame);
-      if (!frame) bad("E_BAD_ENUM", "expression.frame must be an operand frame (A–P)");
-      if (frame.frame === "z") bad("E_BAD_ENUM", "Z is derived and cannot carry an expression");
+      const freeKey = freeFrameKeyFromName(expression.frame);
+      let targetName: string;
+      if (freeKey !== null) {
+        targetName = freeFrameName(freeKey);
+      } else {
+        const frame = frameRefFromName(expression.frame);
+        if (!frame) bad("E_BAD_ENUM", "expression.frame must be an operand frame (A–P) or free frame (F1–F16)");
+        if (frame.frame === "z") bad("E_BAD_ENUM", "Z is derived and cannot carry an expression");
+        targetName = frame.name;
+      }
       if (typeof expression.text !== "string") bad("E_BAD_ARGS", "expression.text must be a string");
       const text = expression.text.trim();
       if (text.length > EXPRESSION_LIMITS.source) {
@@ -679,7 +698,7 @@ export function normalizeAgentPatch(value: unknown): PatchResult {
           throw error;
         }
       }
-      patch.expression = { frame: frame.name, text };
+      patch.expression = { frame: targetName, text };
     }
 
     if (input.record !== undefined) {
@@ -690,23 +709,40 @@ export function normalizeAgentPatch(value: unknown): PatchResult {
     if (input.source !== undefined) {
       const source = objectValue(input.source, "source");
       onlyKeys(source, ["frame", "kind", "column", "from"], "source");
-      const frame = frameRefFromName(source.frame);
-      if (!frame) bad("E_BAD_ENUM", "source.frame must be an operand frame (A–P)");
-      if (frame.frame === "z") bad("E_BAD_ENUM", "Z is derived and cannot carry a source");
+      const destFreeKey = freeFrameKeyFromName(source.frame);
+      const destLaneRef = destFreeKey === null ? frameRefFromName(source.frame) : null;
+      if (destFreeKey === null && !destLaneRef) {
+        bad("E_BAD_ENUM", "source.frame must be an operand frame (A–P) or free frame (F1–F16)");
+      }
+      if (destLaneRef && destLaneRef.frame === "z") {
+        bad("E_BAD_ENUM", "Z is derived and cannot carry a source");
+      }
+      const destName = destFreeKey !== null ? freeFrameName(destFreeKey) : destLaneRef!.name;
       if (source.kind === "none") {
-        patch.source = { frame: frame.name, kind: "none" };
+        patch.source = { frame: destName, kind: "none" };
       } else if (source.kind === "data") {
         const column = integerValue(source.column, "source.column");
         if (column < 0) bad("E_OUT_OF_RANGE", "source.column must be non-negative");
-        patch.source = { frame: frame.name, kind: "data", column };
+        patch.source = { frame: destName, kind: "data", column };
       } else if (source.kind === "frame") {
         if (typeof source.from !== "string") bad("E_BAD_ARGS", "source.from must be a port string");
-        const match = /^([1-8])\.([abz])$/.exec(source.from);
-        if (!match) bad("E_BAD_ENUM", "source.from must be a port such as 3.z or 2.a (lanes 1–8)");
-        if (match[1] === frame.lane && match[2] === frame.frame) {
-          bad("E_BAD_ARGS", `${frame.name} cannot be driven by itself`);
+        const fromFree = freeFrameKeyFromName(source.from);
+        if (fromFree !== null) {
+          const canonFrom = freeFrameName(fromFree);
+          if (destFreeKey !== null && destFreeKey === fromFree) {
+            bad("E_BAD_ARGS", `${destName} cannot be driven by itself`);
+          }
+          patch.source = { frame: destName, kind: "frame", from: canonFrom };
+        } else {
+          const match = /^([1-8])\.([abz])$/.exec(source.from);
+          if (!match) {
+            bad("E_BAD_ENUM", "source.from must be a lane port (1.a–8.z) or free frame (F1–F16)");
+          }
+          if (destLaneRef && match[1] === destLaneRef.lane && match[2] === destLaneRef.frame) {
+            bad("E_BAD_ARGS", `${destName} cannot be driven by itself`);
+          }
+          patch.source = { frame: destName, kind: "frame", from: source.from };
         }
-        patch.source = { frame: frame.name, kind: "frame", from: source.from };
       } else {
         bad("E_BAD_ENUM", "source.kind must be none, data or frame");
       }

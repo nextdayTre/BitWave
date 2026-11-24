@@ -34,12 +34,14 @@ import {
   PROJECT_SCHEMA,
   ProjectError,
   type ProjectDoc,
+  type ProjectFreeFrame,
   type ProjectLane,
   type ProjectRoute,
   type ProjectViewState,
 } from "./project.ts";
+import { APP_FREE_FRAME_CAP, freeFrameKeyFromName } from "./lanedefs.ts";
 import { fromHex, toHex } from "./registers.ts";
-import type { BinOp, FrameKey, LaneKey, MixOp } from "./types.ts";
+import type { BinOp, FrameKey, FreeFrameKey, LaneKey, MixOp } from "./types.ts";
 
 export const SHARE_PREFIX = "bw=";
 
@@ -57,7 +59,7 @@ export const SHARE_MAX_CHARS = 2000;
  * through a canonical document and a compact link (D44) under the `x` slot.
  */
 export const SHARE_DOC_KEYS: ReadonlySet<string> = new Set([
-  "schema", "app", "savedAt", "N", "view", "lanes", "routes", "parked", "dataset",
+  "schema", "app", "savedAt", "N", "view", "lanes", "frames", "routes", "parked", "dataset",
 ]);
 
 /**
@@ -284,18 +286,26 @@ function expandRegister(text: unknown, N: number, where: string): string {
   return hex.toUpperCase();
 }
 
-/** One-based lane number ("1".."13") of a document port string. */
-function laneNumberOf(port: string, where: string): number {
-  const lane = Number(port.slice(0, port.indexOf(".")));
+/** Encode a port string ("1.a" or "F2") as [laneOrNegFree, frameIdx]. */
+function encodeCompactPort(port: string, where: string): [number, number] {
+  const freeKey = freeFrameKeyFromName(port);
+  if (freeKey !== null) return [-Number(freeKey), 0];
+  const dot = port.indexOf(".");
+  if (dot < 0) malformed(`${where} has an invalid port`);
+  const lane = Number(port.slice(0, dot));
   if (!Number.isInteger(lane) || lane < 1 || lane > 13) malformed(`${where} has an invalid lane`);
-  return lane;
+  const frame = FRAME_ORDER.indexOf(port.slice(dot + 1) as FrameKey);
+  if (frame < 0) malformed(`${where} has an invalid frame`);
+  return [lane, frame];
 }
 
-/** Frame index (a=0, b=1, z=2) of a document port string. */
-function frameIndexOf(port: string, where: string): number {
-  const frame = FRAME_ORDER.indexOf(port.slice(port.indexOf(".") + 1) as FrameKey);
-  if (frame < 0) malformed(`${where} has an invalid frame`);
-  return frame;
+function compareEncodedPorts(a: readonly [number, number], b: readonly [number, number]): number {
+  const aIsFree = a[0] < 0 ? 1 : 0;
+  const bIsFree = b[0] < 0 ? 1 : 0;
+  if (aIsFree !== bIsFree) return aIsFree - bIsFree;
+  const aKey = aIsFree ? -a[0] : a[0];
+  const bKey = bIsFree ? -b[0] : b[0];
+  return aKey - bKey || a[1] - b[1];
 }
 
 function encodeEnum<T extends string>(order: readonly T[], value: T, where: string): number {
@@ -314,10 +324,36 @@ function encodeCompactView(view: ProjectViewState): unknown[] {
   ];
   const mode = view.lfoMode ?? DEFAULT_LFO_MODE;
   const rate = view.lfoRate ?? DEFAULT_LFO_RATE;
-  // Both defaults ride at their positions; a non-default rate needs the mode.
-  if (mode !== DEFAULT_LFO_MODE || rate !== DEFAULT_LFO_RATE) {
+  const activeFree = typeof view.activeFree === "string" && view.activeFree !== "" ? Number(view.activeFree) : null;
+  if (mode !== DEFAULT_LFO_MODE || rate !== DEFAULT_LFO_RATE || activeFree !== null) {
     tuple.push(mode);
-    if (rate !== DEFAULT_LFO_RATE) tuple.push(rate);
+    if (rate !== DEFAULT_LFO_RATE || activeFree !== null) {
+      tuple.push(rate);
+      if (activeFree !== null) tuple.push(activeFree);
+    }
+  }
+  return tuple;
+}
+
+function encodeCompactFreeFrame(key: FreeFrameKey, ff: ProjectFreeFrame, N: number): unknown[] {
+  const tuple: unknown[] = [Number(key), compactRegister(ff.hex, N)];
+  const col = typeof ff.col === "number" && Number.isInteger(ff.col) ? ff.col : -1;
+  const vis = ff.visible === false ? 0 : 1;
+  const expr = typeof ff.expression === "string" ? ff.expression : "";
+  const label = typeof ff.label === "string" ? ff.label : "";
+  const note = typeof ff.sourceNote === "string" ? ff.sourceNote : "";
+  if (col !== -1 || vis !== 1 || expr !== "" || label !== "" || note !== "") {
+    tuple.push(col);
+    if (vis !== 1 || expr !== "" || label !== "" || note !== "") {
+      tuple.push(vis);
+      if (expr !== "" || label !== "" || note !== "") {
+        tuple.push(expr);
+        if (label !== "" || note !== "") {
+          tuple.push(label);
+          if (note !== "") tuple.push(note);
+        }
+      }
+    }
   }
   return tuple;
 }
@@ -358,11 +394,11 @@ function encodeCompactLane(key: LaneKey, lane: ProjectLane, N: number): unknown[
 
 /** Destination-first ordering: destinations are unique, so this is total. */
 function compareRoutePorts(a: ProjectRoute, b: ProjectRoute): number {
-  const fromA = [laneNumberOf(a.from, "route.from"), frameIndexOf(a.from, "route.from")];
-  const fromB = [laneNumberOf(b.from, "route.from"), frameIndexOf(b.from, "route.from")];
-  const toA = [laneNumberOf(a.to, "route.to"), frameIndexOf(a.to, "route.to")];
-  const toB = [laneNumberOf(b.to, "route.to"), frameIndexOf(b.to, "route.to")];
-  return toA[0] - toB[0] || toA[1] - toB[1] || fromA[0] - fromB[0] || fromA[1] - fromB[1];
+  const fromA = encodeCompactPort(a.from, "route.from");
+  const fromB = encodeCompactPort(b.from, "route.from");
+  const toA = encodeCompactPort(a.to, "route.to");
+  const toB = encodeCompactPort(b.to, "route.to");
+  return compareEncodedPorts(toA, toB) || compareEncodedPorts(fromA, fromB);
 }
 
 /**
@@ -385,18 +421,19 @@ export function encodeCompactShare(doc: ProjectDoc): string {
   const routes = doc.routes
     .slice()
     .sort(compareRoutePorts)
-    .map((route) => [
-      laneNumberOf(route.from, "route.from"),
-      frameIndexOf(route.from, "route.from"),
-      laneNumberOf(route.to, "route.to"),
-      frameIndexOf(route.to, "route.to"),
-      encodeEnum(MIX_ORDER, route.mix, "route.mix"),
-    ]);
+    .map((route) => {
+      const [fromKey, fromFrame] = encodeCompactPort(route.from, "route.from");
+      const [toKey, toFrame] = encodeCompactPort(route.to, "route.to");
+      return [fromKey, fromFrame, toKey, toFrame, encodeEnum(MIX_ORDER, route.mix, "route.mix")];
+    });
 
   const parked = Object.keys(doc.parked)
-    .map((port) => [laneNumberOf(port, "parked port"), frameIndexOf(port, "parked port"), port] as const)
-    .sort((a, b) => a[0] - b[0] || a[1] - b[1])
-    .map(([lane, frame, port]) => [lane, frame, compactRegister(doc.parked[port], N)]);
+    .map((port) => {
+      const encoded = encodeCompactPort(port, "parked port");
+      return [encoded[0], encoded[1], port] as const;
+    })
+    .sort((a, b) => compareEncodedPorts([a[0], a[1]], [b[0], b[1]]))
+    .map(([key, frame, port]) => [key, frame, compactRegister(doc.parked[port], N)]);
 
   const payload: unknown[] = [
     COMPACT_SHARE_TAG,
@@ -411,15 +448,25 @@ export function encodeCompactShare(doc: ProjectDoc): string {
   for (const [key, value] of Object.entries(doc)) {
     if (!SHARE_DOC_KEYS.has(key)) extras[key] = value;
   }
+  const hasExtras = Object.keys(extras).length > 0;
+  const freeKeys = doc.frames ? Object.keys(doc.frames).sort((a, b) => Number(a) - Number(b)) : [];
+  const hasFrames = freeKeys.length > 0;
+
   if (doc.dataset) {
     const dataset: unknown[] = [doc.dataset.cols, doc.dataset.rows];
-    // `index` is written only when the document carried it (schema-2 leniency).
     if (Object.prototype.hasOwnProperty.call(doc.dataset, "index")) dataset.push(doc.dataset.index);
     payload.push(dataset);
-  } else if (Object.keys(extras).length > 0) {
-    payload.push(null); // dataset slot, so `x` keeps its fixed position
+  } else if (hasExtras || hasFrames) {
+    payload.push(null); // dataset slot
   }
-  if (Object.keys(extras).length > 0) payload.push(extras);
+  if (hasExtras) {
+    payload.push(extras);
+  } else if (hasFrames) {
+    payload.push(null); // extras slot
+  }
+  if (hasFrames && doc.frames) {
+    payload.push(freeKeys.map((key) => encodeCompactFreeFrame(key, doc.frames![key], N)));
+  }
 
   return toBase64Url(toUtf8(JSON.stringify(payload)));
 }
@@ -449,7 +496,19 @@ function decodeFrameIndex(value: unknown, where: string): FrameKey {
   return FRAME_ORDER[value];
 }
 
-function decodeCompactView(value: unknown): ProjectViewState {
+function decodeCompactPort(rawKey: unknown, rawFrame: unknown, tag: number, where: string): string {
+  if (typeof rawKey === "number" && Number.isInteger(rawKey) && rawKey < 0) {
+    if (tag < 5) malformed(`${where} free-frame port requires compact share tag 5`);
+    const freeNum = -rawKey;
+    if (freeNum < 1 || freeNum > APP_FREE_FRAME_CAP || rawFrame !== 0) {
+      malformed(`${where} has an invalid free-frame port`);
+    }
+    return `F${freeNum}`;
+  }
+  return `${decodeLaneNumber(rawKey, where)}.${decodeFrameIndex(rawFrame, where)}`;
+}
+
+function decodeCompactView(value: unknown, tag: number): ProjectViewState {
   if (!Array.isArray(value) || value.length < 5) malformed("compact view must be a 5-field tuple");
   if (!Number.isInteger(value[1]) || value[1] < 0 || value[1] > 3) malformed("compact view flags must be in [0, 3]");
   const view: ProjectViewState = {
@@ -477,8 +536,49 @@ function decodeCompactView(value: unknown): ProjectViewState {
   } else {
     view.lfoRate = DEFAULT_LFO_RATE;
   }
-  if (value.length > 7) malformed("compact view has unexpected trailing fields");
+  if (value.length > 7) {
+    if (tag < 5 || value.length > 8) malformed("compact view has unexpected trailing fields");
+    const af = value[7];
+    if (!Number.isInteger(af) || (af as number) < 1 || (af as number) > APP_FREE_FRAME_CAP) {
+      malformed("compact view activeFree must be a free-frame number");
+    }
+    view.activeFree = String(af);
+  }
   return view;
+}
+
+function decodeCompactFreeFrame(value: unknown, N: number): [FreeFrameKey, ProjectFreeFrame] {
+  if (!Array.isArray(value) || value.length < 2 || value.length > 7) {
+    malformed("compact free frame must be a 2..7-field tuple");
+  }
+  const keyNum = value[0];
+  if (!Number.isInteger(keyNum) || (keyNum as number) < 1 || (keyNum as number) > APP_FREE_FRAME_CAP) {
+    malformed(`compact free frame key must be in [1, ${APP_FREE_FRAME_CAP}]`);
+  }
+  const key = String(keyNum);
+  const ff: ProjectFreeFrame = { hex: expandRegister(value[1], N, `compact frame F${key}.hex`) };
+  if (value.length > 2) {
+    if (!Number.isInteger(value[2]) || (value[2] as number) < -1) {
+      malformed(`compact frame F${key}.col must be an integer >= -1`);
+    }
+    if ((value[2] as number) >= 0) ff.col = value[2] as number;
+  }
+  if (value.length > 3) {
+    if (!decodeFlag(value[3], `compact frame F${key}.visible`)) ff.visible = false;
+  }
+  if (value.length > 4) {
+    if (typeof value[4] !== "string") malformed(`compact frame F${key}.expression must be a string`);
+    if (value[4] !== "") ff.expression = value[4];
+  }
+  if (value.length > 5) {
+    if (typeof value[5] !== "string") malformed(`compact frame F${key}.label must be a string`);
+    if (value[5] !== "") ff.label = value[5];
+  }
+  if (value.length > 6) {
+    if (typeof value[6] !== "string") malformed(`compact frame F${key}.sourceNote must be a string`);
+    if (value[6] !== "") ff.sourceNote = value[6];
+  }
+  return [key, ff];
 }
 
 function decodeCompactLane(value: unknown, N: number): [LaneKey, ProjectLane] {
@@ -545,14 +645,14 @@ export function decodeCompactShare(value: unknown): ProjectDoc {
       `share codec ${String(tag)} is newer than supported ${COMPACT_SHARE_TAG}; open it read-only`,
     );
   }
-  if (tag !== COMPACT_SHARE_TAG) malformed(`unknown compact share tag: ${String(tag)}`);
+  if (tag !== 4 && tag !== COMPACT_SHARE_TAG) malformed(`unknown compact share tag: ${String(tag)}`);
   if (value.length < 6) malformed("compact share payload is truncated");
 
   const N = value[1];
   if (!Number.isInteger(N) || (N as number) < 8 || (N as number) > 256 || (N as number) % 8 !== 0) {
     malformed(`compact share width must be 8..256 in multiples of 8; got ${String(N)}`);
   }
-  const view = decodeCompactView(value[2]);
+  const view = decodeCompactView(value[2], tag as number);
 
   if (!Array.isArray(value[3]) || value[3].length === 0) malformed("compact share needs at least one lane");
   const lanes: Record<LaneKey, ProjectLane> = {};
@@ -570,8 +670,8 @@ export function decodeCompactShare(value: unknown): ProjectDoc {
       malformed("compact route mix must be an index in [0, 2]");
     }
     return {
-      from: `${decodeLaneNumber(rawRoute[0], "compact route.from")}.${decodeFrameIndex(rawRoute[1], "compact route.from")}`,
-      to: `${decodeLaneNumber(rawRoute[2], "compact route.to")}.${decodeFrameIndex(rawRoute[3], "compact route.to")}`,
+      from: decodeCompactPort(rawRoute[0], rawRoute[1], tag as number, "compact route.from"),
+      to: decodeCompactPort(rawRoute[2], rawRoute[3], tag as number, "compact route.to"),
       mix,
     };
   });
@@ -580,7 +680,7 @@ export function decodeCompactShare(value: unknown): ProjectDoc {
   const parked: Record<string, string> = {};
   for (const rawBase of value[5]) {
     if (!Array.isArray(rawBase) || rawBase.length !== 3) malformed("compact parked base must be a 3-field tuple");
-    const port = `${decodeLaneNumber(rawBase[0], "compact parked lane")}.${decodeFrameIndex(rawBase[1], "compact parked frame")}`;
+    const port = decodeCompactPort(rawBase[0], rawBase[1], tag as number, "compact parked");
     parked[port] = expandRegister(rawBase[2], N as number, `compact parked.${port}`);
   }
 
@@ -611,14 +711,28 @@ export function decodeCompactShare(value: unknown): ProjectDoc {
     }
     doc.dataset = dataset;
   }
-  if (value.length > 7) {
+  if (value.length > 7 && value[7] !== null) {
     const extras = value[7];
     if (!isObjectValue(extras)) malformed("compact share extras must be an object");
     for (const [key, extra] of Object.entries(extras)) {
       if (!SHARE_DOC_KEYS.has(key)) doc[key] = extra;
     }
   }
-  if (value.length > 8) malformed("compact share payload has unexpected trailing fields");
+  if (value.length > 8) {
+    if ((tag as number) < 5 || value.length > 9) {
+      malformed("compact share payload has unexpected trailing fields");
+    }
+    if (!Array.isArray(value[8])) malformed("compact share frames must be an array");
+    const frames: Record<FreeFrameKey, ProjectFreeFrame> = {};
+    for (const rawFrame of value[8]) {
+      const [key, ff] = decodeCompactFreeFrame(rawFrame, N as number);
+      if (Object.prototype.hasOwnProperty.call(frames, key)) {
+        malformed(`compact share repeats free frame F${key}`);
+      }
+      frames[key] = ff;
+    }
+    if (Object.keys(frames).length > 0) doc.frames = frames;
+  }
   return doc as unknown as ProjectDoc;
 }
 

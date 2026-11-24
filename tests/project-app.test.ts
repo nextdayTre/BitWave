@@ -118,7 +118,7 @@ test("captureProject round-trips the mapped state", () => {
     dataset: { cols: DEMO.cols.slice(), rows: DEMO.rows.map((r) => r.slice()), i: DEMO.i },
   };
   const captured = captureProject("2026-11-06T01:00:00.000Z");
-  assert.equal(captured.schema, 4);
+  assert.equal(captured.schema, 5);
   assert.equal(captured.N, 16);
   assert.equal(captured.view.lane, "2");
   assert.equal(captured.lanes["1"].focus, "b");
@@ -317,7 +317,7 @@ test("an eight-lane schema-4 document widens the live tree and round-trips", () 
 
   /* Capture writes every live lane, in ascending key order, and round-trips. */
   const captured = captureProject("2026-11-06T01:00:00.000Z");
-  assert.equal(captured.schema, 4);
+  assert.equal(captured.schema, 5);
   assert.deepEqual(Object.keys(captured.lanes), ["1", "2", "3", "4", "5", "6", "7", "8"]);
   assert.equal(captured.view.lane, "8");
   assert.equal(captured.routes.length, 1);
@@ -399,7 +399,7 @@ test("legacy schema-1/2/3 documents still load and capture as schema 4", () => {
     assert.equal(S.laneKey, "2");
     assert.deepEqual(liveLaneKeys(), ["1", "2", "3"], "the closed three-lane object is still the live set");
   }
-  assert.equal(captureProject().schema, 4);
+  assert.equal(captureProject().schema, 5);
 });
 
 function frameNameForTest(lane: string, frame: "a" | "b" | "z"): string {

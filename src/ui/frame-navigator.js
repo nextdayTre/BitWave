@@ -20,10 +20,19 @@
  */
 
 import { buildSpline, evalSpline } from "../core/spline.ts";
-import { APP_LANE_CAP } from "../core/lanedefs.ts";
-import { setFocus, toggleFrameVisibility } from "../state/actions.ts";
-import { describeInput } from "../state/bindings.ts";
-import { OPSYM, liveLaneKeys, S, curLane, focusKey, frameName } from "../state/instrument.ts";
+import { APP_FREE_FRAME_CAP, APP_LANE_CAP, freeFrameName } from "../core/lanedefs.ts";
+import { isFreePort } from "../core/types.ts";
+import { setFocus, toggleFrameVisibility, toggleFreeFrameVisibility } from "../state/actions.ts";
+import { describeFreeInput, describeInput } from "../state/bindings.ts";
+import {
+  OPSYM,
+  S,
+  curLane,
+  focusKey,
+  frameName,
+  liveFreeFrameKeys,
+  liveLaneKeys,
+} from "../state/instrument.ts";
 import { routing } from "../state/routing.ts";
 import { toHexOf } from "../render/readouts.js";
 
@@ -31,6 +40,7 @@ export function createFrameNavigator(deps) {
   const {
     store,
     selectLane,
+    selectFreeFrame,
     enableBOnLane,
     syncEditUi,
     syncViewUi,
@@ -40,6 +50,9 @@ export function createFrameNavigator(deps) {
     addLaneFromUi,
     duplicateLaneFromUi,
     deleteLaneFromUi,
+    addFreeFrameFromUi,
+    duplicateFreeFrameFromUi,
+    deleteFreeFrameFromUi,
     renderSources,
     lfoStop,
   } = deps;
@@ -63,74 +76,242 @@ export function createFrameNavigator(deps) {
   const FRAME_ORDER = ["a", "b", "z"];
   const FILTER_TITLES = {
     all: "All Frames",
+    free: "Free Frames",
     operands: "Operand Frames",
     derived: "Derived Frames",
     visible: "Visible in 2D",
   };
   /** Lane key whose delete button is showing its inline confirmation. */
   let pendingDelete = null;
+  /** Free-frame key whose delete button is showing its inline confirmation. */
+  let pendingFreeDelete = null;
   /** Transient visual filter in the frames browser (resets to "all" on open). */
   let filterMode = "all";
+  /** Rolling visual tail history per lane:frame while LFO is running. */
+  const tailHistory = new Map();
 
   const prefersReducedMotion = () =>
     window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
   const compactHex = (hex) => (hex.length > 10 ? `${hex.slice(0, 4)}\u2026${hex.slice(-4)}` : hex);
 
-  /* ── previews ─────────────────────────────────────────────────────────── */
+  /* ── isometric 3D wavetable previews (D52: GitWave-style visual tail) ─── */
 
-  function previewPoints(reg) {
+  const ISO_W = 184;
+  const ISO_H = 104;
+  const ISO_SAMPLES = 40;
+  const ISO_SLICES = 16;
+
+  function sampleNormalizedWave(reg) {
     const vals = reg.target;
-    if (!vals || vals.length === 0) return "";
-    const w = 160;
-    const h = 44;
-    const pad = 4;
-    const xs = vals.map((_, j) => (vals.length === 1 ? w / 2 : (j / (vals.length - 1)) * w));
-    const ys = vals.map((v) => h - pad - (v / 15) * (h - pad * 2));
+    const out = new Float32Array(ISO_SAMPLES);
+    if (!vals || vals.length === 0) return out;
+    const xs = vals.map((_, j) => (vals.length === 1 ? 0.5 : j / (vals.length - 1)));
+    const ys = vals.map((v) => v / 15);
     const sp = buildSpline(xs, ys);
-    const pts = [];
-    for (let i = 0; i <= 56; i++) {
-      const x = (i / 56) * w;
-      pts.push(`${x.toFixed(1)},${evalSpline(sp, x).toFixed(1)}`);
+    for (let i = 0; i < ISO_SAMPLES; i++) {
+      const u = i / (ISO_SAMPLES - 1);
+      const v = evalSpline(sp, u);
+      out[i] = v < 0 ? 0 : v > 1 ? 1 : v;
     }
-    return pts.join(" ");
+    return out;
   }
 
-  function makePreview(reg, frame) {
-    const svg = document.createElementNS(SVG_NS, "svg");
-    svg.setAttribute("class", `frame-preview ${frame}`);
-    svg.setAttribute("viewBox", "0 0 160 44");
-    svg.setAttribute("preserveAspectRatio", "none");
-    svg.setAttribute("aria-hidden", "true");
+  function buildTailSlices(laneKey, frame, reg) {
+    const current = sampleNormalizedWave(reg);
+    const key = `${laneKey}:${frame}`;
 
-    const mid = document.createElementNS(SVG_NS, "line");
-    mid.setAttribute("class", "frame-mid");
-    mid.setAttribute("x1", "0");
-    mid.setAttribute("y1", "22");
-    mid.setAttribute("x2", "160");
-    mid.setAttribute("y2", "22");
-    svg.appendChild(mid);
+    if (S.lfo.on) {
+      let ring = tailHistory.get(key);
+      if (!ring) {
+        ring = [];
+        for (let s = 0; s < ISO_SLICES; s++) ring.push(current);
+        tailHistory.set(key, ring);
+      } else {
+        ring.push(current);
+        if (ring.length > ISO_SLICES) ring.shift();
+      }
+      return ring;
+    }
 
-    const points = previewPoints(reg);
-    if (points) {
-      const area = document.createElementNS(SVG_NS, "polygon");
-      area.setAttribute("class", "frame-area");
-      area.setAttribute("points", `0,44 ${points} 160,44`);
-      svg.appendChild(area);
+    /* LFO off: clean static visual tail extruded from the live frame state. */
+    if (tailHistory.size > 0) tailHistory.clear();
+    const slices = new Array(ISO_SLICES);
+    for (let s = 0; s < ISO_SLICES; s++) {
+      const d = s / (ISO_SLICES - 1);
+      const scale = 0.84 + 0.16 * d;
+      const arr = new Float32Array(ISO_SAMPLES);
+      for (let i = 0; i < ISO_SAMPLES; i++) arr[i] = current[i] * scale;
+      slices[s] = arr;
+    }
+    return slices;
+  }
 
-      if (frame === "z") {
-        const glow = document.createElementNS(SVG_NS, "polyline");
-        glow.setAttribute("class", "frame-glow");
-        glow.setAttribute("points", points);
-        svg.appendChild(glow);
+  const ISO_PALETTES = {
+    a: { low: [10, 26, 22], mid: [26, 134, 98], hi: [110, 240, 190], edge: "#6ee7b7", glow: "rgba(52,211,153,0.22)" },
+    b: { low: [10, 22, 26], mid: [22, 104, 108], hi: [92, 210, 204], edge: "#5eead4", glow: "rgba(45,212,191,0.18)" },
+    z: { low: [12, 32, 28], mid: [36, 168, 130], hi: [168, 252, 226], edge: "#a7f3d0", glow: "rgba(94,234,212,0.36)" },
+  };
+
+  function mixRgb(pal, t) {
+    const c = t < 0 ? 0 : t > 1 ? 1 : t;
+    let a, b, f;
+    if (c < 0.55) {
+      a = pal.low; b = pal.mid; f = c / 0.55;
+    } else {
+      a = pal.mid; b = pal.hi; f = (c - 0.55) / 0.45;
+    }
+    const r = Math.round(a[0] + (b[0] - a[0]) * f);
+    const g = Math.round(a[1] + (b[1] - a[1]) * f);
+    const bl = Math.round(a[2] + (b[2] - a[2]) * f);
+    return [r, g, bl];
+  }
+
+  function paintIsometricWavetable(canvas, slices, frame) {
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    canvas.width = ISO_W * dpr;
+    canvas.height = ISO_H * dpr;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, ISO_W, ISO_H);
+
+    const ox = 60, oy = 48;
+    const vx = 104, vy = 22;
+    const dx = -44, dy = 26;
+    const amp = 35;
+
+    const px = (u, d) => ox + u * vx + d * dx;
+    const py = (u, d, h) => oy + u * vy + d * dy - h * amp;
+
+    const pal = ISO_PALETTES[frame] || ISO_PALETTES.a;
+
+    /* 1. Recessed isometric floor slab (gives flat/zero frames a sleek plinth). */
+    ctx.beginPath();
+    ctx.moveTo(px(0, 0), py(0, 0, 0));
+    ctx.lineTo(px(1, 0), py(1, 0, 0));
+    ctx.lineTo(px(1, 1), py(1, 1, 0));
+    ctx.lineTo(px(0, 1), py(0, 1, 0));
+    ctx.closePath();
+    ctx.fillStyle = "rgba(13, 22, 21, 0.88)";
+    ctx.fill();
+    ctx.strokeStyle = "rgba(52, 211, 153, 0.14)";
+    ctx.lineWidth = 0.8;
+    ctx.stroke();
+
+    /* 2. Shaded volumetric surface quads back-to-front (Painter's algorithm). */
+    const S = slices.length;
+    const M = ISO_SAMPLES;
+    for (let s = 0; s < S - 1; s++) {
+      const d0 = s / (S - 1);
+      const d1 = (s + 1) / (S - 1);
+      const depth = (d0 + d1) * 0.5;
+      const row0 = slices[s];
+      const row1 = slices[s + 1];
+      const alpha = 0.48 + 0.50 * depth;
+
+      for (let i = 0; i < M - 1; i++) {
+        const u0 = i / (M - 1);
+        const u1 = (i + 1) / (M - 1);
+        const h00 = row0[i], h10 = row0[i + 1];
+        const h01 = row1[i], h11 = row1[i + 1];
+
+        const hAvg = (h00 + h10 + h01 + h11) * 0.25;
+        const slopeU = (h10 + h11 - h00 - h01) * 0.5;
+        const slopeD = (h01 + h11 - h00 - h10) * 0.5;
+        const shade = Math.max(
+          0.05,
+          Math.min(1, 0.12 + 0.56 * hAvg + 0.34 * depth - slopeU * 2.1 - slopeD * 0.8),
+        );
+        const [r, g, b] = mixRgb(pal, shade);
+
+        ctx.beginPath();
+        ctx.moveTo(px(u0, d0), py(u0, d0, h00));
+        ctx.lineTo(px(u1, d0), py(u1, d0, h10));
+        ctx.lineTo(px(u1, d1), py(u1, d1, h11));
+        ctx.lineTo(px(u0, d1), py(u0, d1, h01));
+        ctx.closePath();
+        ctx.fillStyle = `rgba(${r},${g},${b},${alpha.toFixed(3)})`;
+        ctx.fill();
       }
 
-      const line = document.createElementNS(SVG_NS, "polyline");
-      line.setAttribute("class", "frame-line");
-      line.setAttribute("points", points);
-      svg.appendChild(line);
+      /* Subtle wavetable slice rib every 3rd depth layer for tactile texture. */
+      if (s % 3 === 0) {
+        ctx.beginPath();
+        for (let i = 0; i < M; i++) {
+          const u = i / (M - 1);
+          const x = px(u, d0);
+          const y = py(u, d0, row0[i]);
+          if (i === 0) ctx.moveTo(x, y);
+          else ctx.lineTo(x, y);
+        }
+        ctx.strokeStyle = `rgba(94, 234, 212, ${(0.05 + 0.11 * d0).toFixed(3)})`;
+        ctx.lineWidth = 0.7;
+        ctx.stroke();
+      }
     }
-    return svg;
+
+    /* 3. Front skirt wall under the front live waveform slice. */
+    const front = slices[S - 1];
+    ctx.beginPath();
+    for (let i = 0; i < M; i++) {
+      const u = i / (M - 1);
+      const x = px(u, 1);
+      const y = py(u, 1, front[i]);
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    }
+    ctx.lineTo(px(1, 1), py(1, 1, 0));
+    ctx.lineTo(px(0, 1), py(0, 1, 0));
+    ctx.closePath();
+    const wallGrad = ctx.createLinearGradient(0, oy - amp, 0, oy + vy + dy);
+    wallGrad.addColorStop(0, "rgba(24, 72, 58, 0.72)");
+    wallGrad.addColorStop(1, "rgba(8, 10, 13, 0.94)");
+    ctx.fillStyle = wallGrad;
+    ctx.fill();
+
+    /* Subtle front base lip (anchors zero/flat slabs cleanly). */
+    ctx.beginPath();
+    ctx.moveTo(px(0, 1), py(0, 1, 0));
+    ctx.lineTo(px(1, 1), py(1, 1, 0));
+    ctx.strokeStyle = "rgba(94, 234, 212, 0.24)";
+    ctx.lineWidth = 0.9;
+    ctx.stroke();
+
+    /* 4. Luminous front waveform crest (A solid, B dashed, Z double-glow). */
+    const traceFront = () => {
+      ctx.beginPath();
+      for (let i = 0; i < M; i++) {
+        const u = i / (M - 1);
+        const x = px(u, 1);
+        const y = py(u, 1, front[i]);
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      }
+    };
+
+    ctx.lineJoin = "round";
+    ctx.lineCap = "round";
+    ctx.setLineDash([]);
+    traceFront();
+    ctx.strokeStyle = pal.glow;
+    ctx.lineWidth = frame === "z" ? 5.5 : 3.2;
+    ctx.stroke();
+
+    if (frame === "b") ctx.setLineDash([4, 3]);
+    traceFront();
+    ctx.strokeStyle = pal.edge;
+    ctx.lineWidth = frame === "z" ? 1.85 : 1.4;
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  function makePreview(laneKey, reg, frame) {
+    const canvas = document.createElement("canvas");
+    canvas.className = `frame-preview ${frame}`;
+    canvas.setAttribute("aria-hidden", "true");
+    paintIsometricWavetable(canvas, buildTailSlices(laneKey, frame, reg), frame);
+    return canvas;
   }
 
   const frameReg = (sl, frame) => (frame === "a" ? sl.A : frame === "b" ? sl.B : sl.Z);
@@ -146,10 +327,26 @@ export function createFrameNavigator(deps) {
   }
 
   function matchesFilter(sl, frame) {
+    if (filterMode === "free") return false;
     if (filterMode === "operands") return frame !== "z";
     if (filterMode === "derived") return frame === "z";
     if (filterMode === "visible") return sl.frameVis[frame];
     return true;
+  }
+
+  function matchesFreeFilter(ff) {
+    if (filterMode === "derived") return false;
+    if (filterMode === "visible") return ff.visible;
+    return true;
+  }
+
+  function freeRoleBadge(ff) {
+    const info = describeFreeInput(ff);
+    if (info.source.kind === "data") return { text: `data · ${info.source.column}`, accent: false };
+    if (info.source.kind === "frame") return { text: `${info.state} · ${info.source.name}`, accent: true };
+    if (info.source.kind === "expr") return { text: "expr", accent: true };
+    if (ff.sourceNote) return { text: ff.sourceNote, accent: true };
+    return { text: "free", accent: false };
   }
 
   /* ── visibility eyes ──────────────────────────────────────────────────── */
@@ -207,10 +404,12 @@ export function createFrameNavigator(deps) {
     const sl = S.lanes[laneKey];
     const reg = frameReg(sl, frame);
     const name = frameName(laneKey, frame);
-    const active = laneKey === S.laneKey && focusKey(sl) === frame;
+    const active = !S.activeFree && laneKey === S.laneKey && focusKey(sl) === frame;
     const visible = sl.frameVis[frame];
     const hex = toHexOf(reg);
     const role = frameRoleBadge(sl, frame);
+    /* D53: a failed expression leaves the last settled bits; say so on the card. */
+    const exprError = S.expressionErrors[name] ?? null;
     const dimmed = !matchesFilter(sl, frame);
 
     const wrap = document.createElement("div");
@@ -231,7 +430,7 @@ export function createFrameNavigator(deps) {
 
     const box = document.createElement("span");
     box.className = "frame-box";
-    box.appendChild(makePreview(reg, frame));
+    box.appendChild(makePreview(laneKey, reg, frame));
 
     const glyph = document.createElement("span");
     glyph.className = "frame-glyph";
@@ -243,13 +442,13 @@ export function createFrameNavigator(deps) {
     const extra = document.createElement("div");
     extra.className = "frame-card-extra";
     extra.setAttribute("aria-hidden", "true");
-    const roleEl = document.createElement("span");
-    roleEl.className = "frame-role" + (role.accent ? " is-accent" : "");
-    roleEl.textContent = role.text;
-    const hexEl = document.createElement("span");
-    hexEl.className = "frame-hex";
-    hexEl.textContent = compactHex(hex);
-    extra.append(roleEl, hexEl);
+    const sub = document.createElement("span");
+    sub.className = "frame-sub" + (role.accent ? " is-accent" : "") + (exprError ? " is-error" : "");
+    sub.textContent = `${role.text}${exprError ? " \u26A0" : ""} \u00B7 ${compactHex(hex)}`;
+    if (exprError) {
+      sub.title = `expression did not evaluate: ${exprError} \u2014 showing the last settled value`;
+    }
+    extra.appendChild(sub);
 
     const eye = makeEyeButton(laneKey, frame);
     wrap.append(btn, extra, eye);
@@ -264,7 +463,9 @@ export function createFrameNavigator(deps) {
   function laneReferences(laneKey) {
     let routes = 0;
     for (const route of routing.routes) {
-      if (route.from.lane === laneKey || route.to.lane === laneKey) routes += 1;
+      const fromLane = !isFreePort(route.from) && route.from.lane === laneKey;
+      const toLane = !isFreePort(route.to) && route.to.lane === laneKey;
+      if (fromLane || toLane) routes += 1;
     }
     const names = FRAME_ORDER.map((frame) => escapeRe(frameName(laneKey, frame)));
     const matcher = new RegExp(`(^|[^A-Za-z0-9_])(${names.join("|")})([^A-Za-z0-9_]|$)`);
@@ -276,6 +477,37 @@ export function createFrameNavigator(deps) {
         const text = lane.expressions[operand];
         if (text && text.trim() !== "" && matcher.test(text)) expressions += 1;
       }
+    }
+    for (const fk of liveFreeFrameKeys()) {
+      const text = S.freeFrames[fk]?.expression;
+      if (text && text.trim() !== "" && matcher.test(text)) expressions += 1;
+    }
+    return { routes, expressions, total: routes + expressions };
+  }
+
+  /** How many live routes/expressions reference this free frame. */
+  function freeReferences(freeKey) {
+    let routes = 0;
+    for (const route of routing.routes) {
+      const fromFree = isFreePort(route.from) && route.from.free === freeKey;
+      const toFree = isFreePort(route.to) && route.to.free === freeKey;
+      if (fromFree || toFree) routes += 1;
+    }
+    const name = escapeRe(freeFrameName(freeKey));
+    const matcher = new RegExp(`(^|[^A-Za-z0-9_])(${name})([^A-Za-z0-9_]|$)`);
+    let expressions = 0;
+    for (const key of liveLaneKeys()) {
+      const lane = S.lanes[key];
+      if (!lane) continue;
+      for (const operand of ["a", "b"]) {
+        const text = lane.expressions[operand];
+        if (text && text.trim() !== "" && matcher.test(text)) expressions += 1;
+      }
+    }
+    for (const fk of liveFreeFrameKeys()) {
+      if (fk === freeKey) continue;
+      const text = S.freeFrames[fk]?.expression;
+      if (text && text.trim() !== "" && matcher.test(text)) expressions += 1;
     }
     return { routes, expressions, total: routes + expressions };
   }
@@ -368,7 +600,7 @@ export function createFrameNavigator(deps) {
     btn.type = "button";
     btn.className = "lane-btn";
     btn.dataset.lane = laneKey;
-    const active = laneKey === S.laneKey;
+    const active = !S.activeFree && laneKey === S.laneKey;
     btn.setAttribute("aria-pressed", String(active));
     btn.textContent = `LANE ${laneKey}`;
     btn.title = `Focus lane ${laneKey}`;
@@ -463,18 +695,214 @@ export function createFrameNavigator(deps) {
 
   function buildLaneColumn(laneKey) {
     const col = document.createElement("div");
-    col.className = "lane-col" + (laneKey === S.laneKey ? " is-active" : "");
+    col.className = "lane-col" + (!S.activeFree && laneKey === S.laneKey ? " is-active" : "");
     col.dataset.lane = laneKey;
     col.setAttribute("role", "group");
     col.setAttribute("aria-label", `Lane ${laneKey}`);
     col.appendChild(buildLaneHead(laneKey));
-    for (const frame of FRAME_ORDER) col.appendChild(buildCard(laneKey, frame));
+    const cards = document.createElement("div");
+    cards.className = "lane-cards";
+    for (const frame of FRAME_ORDER) cards.appendChild(buildCard(laneKey, frame));
+    col.appendChild(cards);
     return col;
   }
 
-  /* The `+` tile is the live add-lane control (D46): it creates a blank lane at
-     the lowest free stable key and focuses it. It is `aria-disabled` only at
-     the eight-lane cap, where its name and title explain why. */
+  /* ── free frame cards & section (D52) ─────────────────────────────────── */
+
+  function makeFreeEyeButton(freeKey) {
+    const ff = S.freeFrames[freeKey];
+    const name = freeFrameName(freeKey);
+    const label = `${ff.visible ? "Hide" : "Show"} free frame ${name} in the 2D view`;
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "eye-btn" + (ff.visible ? "" : " is-hidden");
+    btn.setAttribute("aria-pressed", String(ff.visible));
+    btn.setAttribute("aria-label", label);
+    btn.title = label;
+    if (S.view3d) {
+      btn.disabled = true;
+      btn.setAttribute("aria-label", "2D visibility only");
+      btn.title = "2D visibility only";
+    }
+    const svg = document.createElementNS(SVG_NS, "svg");
+    svg.setAttribute("viewBox", "0 0 16 16");
+    svg.setAttribute("aria-hidden", "true");
+    const eye = document.createElementNS(SVG_NS, "path");
+    eye.setAttribute("d", "M1.5 8C4.3 3.8 11.7 3.8 14.5 8C11.7 12.2 4.3 12.2 1.5 8Z");
+    const pupil = document.createElementNS(SVG_NS, "circle");
+    pupil.setAttribute("cx", "8");
+    pupil.setAttribute("cy", "8");
+    pupil.setAttribute("r", "2.6");
+    const slash = document.createElementNS(SVG_NS, "path");
+    slash.setAttribute("class", "eye-slash");
+    slash.setAttribute("d", "M2.5 13.5L13.5 2.5");
+    svg.append(eye, pupil, slash);
+    btn.appendChild(svg);
+
+    btn.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      store.patch(() => toggleFreeFrameVisibility(S.freeFrames[freeKey]));
+      renderGrid();
+    });
+    return btn;
+  }
+
+  function buildFreeCard(freeKey) {
+    const ff = S.freeFrames[freeKey];
+    const name = freeFrameName(freeKey);
+    const active = S.activeFree === freeKey;
+    const hex = toHexOf(ff.reg);
+    const role = freeRoleBadge(ff);
+    /* D53: same frozen-register warning as lane cards. */
+    const exprError = S.expressionErrors[name] ?? null;
+    const dimmed = !matchesFreeFilter(ff);
+
+    const wrap = document.createElement("div");
+    wrap.className =
+      "frame-card-wrap is-free"
+      + (active ? " is-active" : "")
+      + (ff.visible ? "" : " is-hidden")
+      + (dimmed ? " is-dimmed" : "");
+    wrap.dataset.free = freeKey;
+
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "frame-card";
+    btn.setAttribute("aria-pressed", String(active));
+    const displayName = ff.label ? `${name} · ${ff.label}` : name;
+    btn.setAttribute("aria-label", `${displayName} · free frame · ${hex}`);
+    btn.title = `${displayName}${ff.sourceNote ? ` (${ff.sourceNote})` : ""} · ${hex}`;
+
+    const box = document.createElement("span");
+    box.className = "frame-box";
+    box.appendChild(makePreview(name, ff.reg, "a"));
+
+    const glyph = document.createElement("span");
+    glyph.className = "frame-glyph";
+    glyph.textContent = displayName;
+
+    btn.append(box, glyph);
+    btn.addEventListener("click", () => chooseFreeCard(freeKey));
+
+    const extra = document.createElement("div");
+    extra.className = "frame-card-extra";
+    extra.setAttribute("aria-hidden", "true");
+    const sub = document.createElement("span");
+    sub.className = "frame-sub" + (role.accent ? " is-accent" : "") + (exprError ? " is-error" : "");
+    const roleText = role.text.length > 20 ? `${role.text.slice(0, 19)}\u2026` : role.text;
+    sub.textContent = `${roleText}${exprError ? " \u26A0" : ""} \u00B7 ${compactHex(hex)}`;
+    if (exprError) {
+      sub.title = `expression did not evaluate: ${exprError} \u2014 showing the last settled value`;
+    }
+    extra.appendChild(sub);
+
+    const eye = makeFreeEyeButton(freeKey);
+
+    const actions = document.createElement("div");
+    actions.className = "free-card-actions";
+    if (pendingFreeDelete === freeKey) {
+      const refs = freeReferences(freeKey);
+      const confirm = document.createElement("button");
+      confirm.type = "button";
+      confirm.className = "lane-act is-danger";
+      confirm.dataset.act = "free-confirm";
+      confirm.textContent = "delete";
+      confirm.title = refs.total > 0
+        ? `Confirm delete ${name} (${describeReferences(refs)} reference it)`
+        : `Confirm delete ${name}`;
+      confirm.setAttribute("aria-label", `delete ${name}`);
+      confirm.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        pendingFreeDelete = null;
+        deleteFreeFrameFromUi(freeKey);
+        renderGrid();
+        reportNote(`deleted free frame ${name} — routes cleared and parked bases restored`);
+      });
+
+      const cancel = document.createElement("button");
+      cancel.type = "button";
+      cancel.className = "lane-act";
+      cancel.dataset.act = "free-cancel";
+      cancel.textContent = "cancel";
+      cancel.setAttribute("aria-label", `cancel deleting ${name}`);
+      cancel.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        pendingFreeDelete = null;
+        renderGrid();
+        reportNote(`delete ${name} cancelled`);
+      });
+      actions.append(confirm, cancel);
+    } else {
+      const atCap = liveFreeFrameKeys().length >= APP_FREE_FRAME_CAP;
+      const dup = document.createElement("button");
+      dup.type = "button";
+      dup.className = "lane-act";
+      dup.dataset.act = "free-dup";
+      dup.textContent = "dup";
+      dup.setAttribute("aria-disabled", String(atCap));
+      dup.setAttribute("aria-label", `dup ${name}`);
+      dup.title = atCap ? `${APP_FREE_FRAME_CAP} free frames max` : `Duplicate ${name}`;
+      dup.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        pendingFreeDelete = null;
+        if (atCap) {
+          reportNote(`${APP_FREE_FRAME_CAP} free frames is this build's maximum`);
+          return;
+        }
+        const created = duplicateFreeFrameFromUi(freeKey);
+        renderGrid();
+        if (created) reportNote(`duplicated ${name} as ${freeFrameName(created)}`);
+      });
+
+      const del = document.createElement("button");
+      del.type = "button";
+      del.className = "lane-act";
+      del.dataset.act = "free-del";
+      del.textContent = "del";
+      del.setAttribute("aria-label", `del ${name}`);
+      del.title = `Delete ${name} (asks for confirmation)`;
+      del.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        pendingDelete = null;
+        pendingFreeDelete = freeKey;
+        renderGrid();
+        const refs = freeReferences(freeKey);
+        const refMsg = refs.total > 0 ? ` — ${describeReferences(refs)} reference it` : "";
+        reportNote(`delete ${name}?${refMsg} press delete again to confirm`);
+      });
+      actions.append(dup, del);
+    }
+
+    wrap.append(btn, extra, eye, actions);
+    return wrap;
+  }
+
+  function buildFreeSection(freeKeys) {
+    const col = document.createElement("div");
+    col.className = "lane-col free-section" + (S.activeFree ? " is-active" : "");
+    col.setAttribute("role", "group");
+    col.setAttribute("aria-label", "Free Frames");
+
+    const head = document.createElement("div");
+    head.className = "lane-head";
+    const title = document.createElement("span");
+    title.className = "lane-btn free-section-title";
+    title.textContent = "FREE FRAMES";
+    const badge = document.createElement("span");
+    badge.className = "lane-op-badge";
+    badge.textContent = `${freeKeys.length} / ${APP_FREE_FRAME_CAP} · standalone`;
+    head.append(title, badge);
+    col.appendChild(head);
+
+    const cards = document.createElement("div");
+    cards.className = "lane-cards free-cards";
+    for (const fk of freeKeys) cards.appendChild(buildFreeCard(fk));
+    col.appendChild(cards);
+    return col;
+  }
+
+  /* The add tile offers both `+ add lane` (D46) and `+ add frame` (D52), so
+     decoupling standalone registers from A/B/Z lanes is one click away. */
   function buildAddColumn() {
     const col = document.createElement("div");
     col.className = "lane-col is-add";
@@ -484,25 +912,32 @@ export function createFrameNavigator(deps) {
     head.setAttribute("aria-hidden", "true");
     col.appendChild(head);
 
-    const atCap = liveLaneKeys().length >= APP_LANE_CAP;
-    const capNote = `${APP_LANE_CAP} lanes is this build's maximum — delete a lane to add another`;
-    const label = atCap
-      ? `Add lane — ${APP_LANE_CAP} lanes is this build's maximum`
-      : "Add lane — create a blank lane and focus it";
+    const row = document.createElement("div");
+    row.className = "add-pair";
 
+    const atLaneCap = liveLaneKeys().length >= APP_LANE_CAP;
+    const laneCapNote = `${APP_LANE_CAP} lanes is this build's maximum — delete a lane to add another`;
+    const laneWrap = document.createElement("div");
+    laneWrap.className = "add-slot";
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className = "frame-add";
-    btn.setAttribute("aria-disabled", String(atCap));
+    btn.setAttribute("aria-disabled", String(atLaneCap));
     btn.textContent = "+";
-    btn.setAttribute("aria-label", label);
-    btn.title = atCap ? capNote : "Add a blank lane (zero registers, XOR, no routes or expressions)";
+    btn.setAttribute(
+      "aria-label",
+      atLaneCap
+        ? `Add lane — ${APP_LANE_CAP} lanes is this build's maximum`
+        : "Add lane — create a blank lane and focus it",
+    );
+    btn.title = atLaneCap ? laneCapNote : "Add a blank lane (A/B/Z pair)";
     btn.addEventListener("click", () => {
-      if (atCap) {
-        reportNote(capNote);
+      if (atLaneCap) {
+        reportNote(laneCapNote);
         return;
       }
       pendingDelete = null;
+      pendingFreeDelete = null;
       const key = addLaneFromUi();
       renderGrid();
       if (!key) {
@@ -515,7 +950,48 @@ export function createFrameNavigator(deps) {
     const hint = document.createElement("span");
     hint.className = "frame-add-hint";
     hint.textContent = "add lane";
-    col.append(btn, hint);
+    laneWrap.append(btn, hint);
+
+    const atFreeCap = liveFreeFrameKeys().length >= APP_FREE_FRAME_CAP;
+    const freeCapNote = `${APP_FREE_FRAME_CAP} free frames is this build's maximum — delete one to add another`;
+    const freeWrap = document.createElement("div");
+    freeWrap.className = "add-slot";
+    const freeBtn = document.createElement("button");
+    freeBtn.type = "button";
+    freeBtn.className = "frame-add is-free-add";
+    freeBtn.setAttribute("aria-disabled", String(atFreeCap));
+    freeBtn.textContent = "+";
+    freeBtn.setAttribute(
+      "aria-label",
+      atFreeCap
+        ? `Add free frame — ${APP_FREE_FRAME_CAP} free frames is this build's maximum`
+        : "Add free frame — create a standalone register (F1..F16)",
+    );
+    freeBtn.title = atFreeCap
+      ? freeCapNote
+      : "Add a standalone free frame (decoupled from A/B/Z lanes for chains & external outputs)";
+    freeBtn.addEventListener("click", () => {
+      if (atFreeCap) {
+        reportNote(freeCapNote);
+        return;
+      }
+      pendingDelete = null;
+      pendingFreeDelete = null;
+      const key = addFreeFrameFromUi();
+      renderGrid();
+      if (!key) {
+        reportNote(`${APP_FREE_FRAME_CAP} free frames is this build's maximum`);
+        return;
+      }
+      reportNote(`added free frame ${freeFrameName(key)} — standalone register`);
+    });
+    const freeHint = document.createElement("span");
+    freeHint.className = "frame-add-hint";
+    freeHint.textContent = "add frame";
+    freeWrap.append(freeBtn, freeHint);
+
+    row.append(laneWrap, freeWrap);
+    col.appendChild(row);
     return col;
   }
 
@@ -539,7 +1015,7 @@ export function createFrameNavigator(deps) {
     }
   }
 
-  function renderSidebar(laneKeys) {
+  function renderSidebar(laneKeys, freeKeys = []) {
     if (framesLaneCount) {
       framesLaneCount.textContent = `${laneKeys.length} / ${APP_LANE_CAP}`;
     }
@@ -547,9 +1023,10 @@ export function createFrameNavigator(deps) {
       framesTitle.textContent = FILTER_TITLES[filterMode] || "All Frames";
     }
     if (framesSub) {
-      const total = laneKeys.length * 3;
+      const total = laneKeys.length * 3 + freeKeys.length;
       const laneWord = laneKeys.length === 1 ? "lane" : "lanes";
-      framesSub.textContent = `${total} frames · ${laneKeys.length} ${laneWord} · click a card to focus · eye toggles 2D`;
+      const freePart = freeKeys.length > 0 ? ` · ${freeKeys.length} free` : "";
+      framesSub.textContent = `${total} frames · ${laneKeys.length} ${laneWord}${freePart} · click a card to focus · eye toggles 2D`;
     }
     syncFilterUi();
     if (!framesTree) return;
@@ -566,7 +1043,7 @@ export function createFrameNavigator(deps) {
     allLabel.textContent = "All Frames";
     const allCount = document.createElement("span");
     allCount.className = "fs-badge";
-    allCount.textContent = String(laneKeys.length * 3);
+    allCount.textContent = String(laneKeys.length * 3 + freeKeys.length);
     allBtn.append(allLabel, allCount);
     allBtn.addEventListener("click", () => {
       filterMode = "all";
@@ -590,7 +1067,7 @@ export function createFrameNavigator(deps) {
 
     for (const laneKey of laneKeys) {
       const sl = S.lanes[laneKey];
-      const active = laneKey === S.laneKey;
+      const active = !S.activeFree && laneKey === S.laneKey;
       const sym = OPSYM[sl.binop] || "\u2295";
       const row = document.createElement("button");
       row.type = "button";
@@ -615,7 +1092,7 @@ export function createFrameNavigator(deps) {
       row.addEventListener("click", () => {
         S.copyArmed = false;
         store.patch(() => {
-          if (S.laneKey !== laneKey) selectLane(laneKey);
+          if (S.laneKey !== laneKey || S.activeFree) selectLane(laneKey);
           syncViewUi();
           syncEditUi();
           renderStrip();
@@ -628,9 +1105,72 @@ export function createFrameNavigator(deps) {
     }
     framesTree.appendChild(lanesSec);
 
+    /* Free Frames section (D52) */
+    const freeSec = document.createElement("div");
+    freeSec.className = "fs-section";
+    const freeHeading = document.createElement("div");
+    freeHeading.className = "fs-sec-head";
+    const freeTitle = document.createElement("span");
+    freeTitle.textContent = "Free Frames";
+    const freeHeadRight = document.createElement("span");
+    freeHeadRight.className = "fs-sec-actions";
+    const freeNum = document.createElement("span");
+    freeNum.className = "fs-sec-count";
+    freeNum.textContent = String(freeKeys.length);
+    const addMini = document.createElement("button");
+    addMini.type = "button";
+    addMini.className = "fs-add-btn";
+    addMini.textContent = "+";
+    const atFreeCap = freeKeys.length >= APP_FREE_FRAME_CAP;
+    addMini.setAttribute("aria-disabled", String(atFreeCap));
+    addMini.setAttribute("aria-label", "Add free frame");
+    addMini.title = atFreeCap ? `${APP_FREE_FRAME_CAP} free frames max` : "Add a standalone free frame";
+    addMini.addEventListener("click", () => {
+      if (atFreeCap) {
+        reportNote(`${APP_FREE_FRAME_CAP} free frames is this build's maximum`);
+        return;
+      }
+      const key = addFreeFrameFromUi();
+      renderGrid();
+      if (key) reportNote(`added free frame ${freeFrameName(key)}`);
+    });
+    freeHeadRight.append(freeNum, addMini);
+    freeHeading.append(freeTitle, freeHeadRight);
+    freeSec.appendChild(freeHeading);
+
+    for (const fk of freeKeys) {
+      const ff = S.freeFrames[fk];
+      const name = freeFrameName(fk);
+      const active = S.activeFree === fk;
+      const hex = toHexOf(ff.reg);
+      const row = document.createElement("button");
+      row.type = "button";
+      row.className = "fs-item fs-frame-item" + (active ? " is-active" : "");
+      row.dataset.treeFree = fk;
+      row.setAttribute("aria-pressed", String(active));
+      row.title = `Open ${name}${ff.label ? ` · ${ff.label}` : ""} · ${hex}`;
+
+      const swatch = document.createElement("span");
+      swatch.className = "fs-swatch is-a";
+      swatch.setAttribute("aria-hidden", "true");
+
+      const label = document.createElement("span");
+      label.className = "fs-label";
+      label.textContent = ff.label ? `${name} · ${ff.label}` : name;
+
+      const badge = document.createElement("span");
+      badge.className = "fs-badge";
+      badge.textContent = compactHex(hex);
+
+      row.append(swatch, label, badge);
+      row.addEventListener("click", () => chooseFreeCard(fk));
+      freeSec.appendChild(row);
+    }
+    framesTree.appendChild(freeSec);
+
     /* Focused lane quick frames section */
     const focusedLane = curLane();
-    if (focusedLane) {
+    if (focusedLane && !S.activeFree) {
       const fk = focusedLane.key;
       const curSec = document.createElement("div");
       curSec.className = "fs-section";
@@ -679,15 +1219,19 @@ export function createFrameNavigator(deps) {
 
   function renderGrid() {
     if (!S.framesView) return;
-    /* A lane deleted elsewhere (bridge/document load) cannot keep its confirm. */
     if (pendingDelete !== null && !S.lanes[pendingDelete]) pendingDelete = null;
+    if (pendingFreeDelete !== null && !S.freeFrames[pendingFreeDelete]) pendingFreeDelete = null;
 
     const active = document.activeElement;
     const card = active && active.closest ? active.closest("[data-lane][data-frame]") : null;
+    const freeCard = active && active.closest ? active.closest("[data-free]") : null;
     const headControl = active && active.closest ? active.closest(".lane-act, .lane-btn") : null;
     const treeControl = active && active.closest ? active.closest(".fs-item") : null;
     const keepCard = card
       ? { lane: card.dataset.lane, frame: card.dataset.frame, eye: active.classList.contains("eye-btn") }
+      : null;
+    const keepFree = freeCard
+      ? { free: freeCard.dataset.free, eye: active.classList.contains("eye-btn") }
       : null;
     const keepHead = headControl
       ? {
@@ -696,14 +1240,20 @@ export function createFrameNavigator(deps) {
         }
       : null;
     const keepTree = treeControl
-      ? { lane: treeControl.dataset.treeLane || null, frame: treeControl.dataset.treeFrame || null }
+      ? {
+          lane: treeControl.dataset.treeLane || null,
+          frame: treeControl.dataset.treeFrame || null,
+          free: treeControl.dataset.treeFree || null,
+        }
       : null;
 
     const laneKeys = liveLaneKeys();
-    renderSidebar(laneKeys);
+    const freeKeys = liveFreeFrameKeys();
+    renderSidebar(laneKeys, freeKeys);
 
     framesGrid.textContent = "";
     for (const laneKey of laneKeys) framesGrid.appendChild(buildLaneColumn(laneKey));
+    if (freeKeys.length > 0) framesGrid.appendChild(buildFreeSection(freeKeys));
     framesGrid.appendChild(buildAddColumn());
 
     const fa = frameName(curLane().key, "a");
@@ -719,6 +1269,12 @@ export function createFrameNavigator(deps) {
         ? framesGrid.querySelector(`${selector} .eye-btn`)
         : framesGrid.querySelector(`${selector} .frame-card`);
       if (target) target.focus({ preventScroll: true });
+    } else if (keepFree) {
+      const selector = `[data-free="${keepFree.free}"]`;
+      const target = keepFree.eye
+        ? framesGrid.querySelector(`${selector} .eye-btn`)
+        : framesGrid.querySelector(`${selector} .frame-card`);
+      if (target) target.focus({ preventScroll: true });
     } else if (keepHead && keepHead.lane) {
       const selector = keepHead.act === "lane-btn"
         ? ".lane-btn"
@@ -728,9 +1284,11 @@ export function createFrameNavigator(deps) {
     } else if (keepTree && framesTree) {
       const target = keepTree.lane
         ? framesTree.querySelector(`[data-tree-lane="${keepTree.lane}"]`)
-        : keepTree.frame
-          ? framesTree.querySelector(`[data-tree-frame="${keepTree.frame}"]`)
-          : framesTree.querySelector(".fs-all");
+        : keepTree.free
+          ? framesTree.querySelector(`[data-tree-free="${keepTree.free}"]`)
+          : keepTree.frame
+            ? framesTree.querySelector(`[data-tree-frame="${keepTree.frame}"]`)
+            : framesTree.querySelector(".fs-all");
       if (target) target.focus({ preventScroll: true });
     }
   }
@@ -762,6 +1320,13 @@ export function createFrameNavigator(deps) {
   }
 
   function focusActiveCard() {
+    if (S.activeFree) {
+      const freeTarget = framesGrid.querySelector(`[data-free="${S.activeFree}"] .frame-card`);
+      if (freeTarget) {
+        freeTarget.focus({ preventScroll: true });
+        return;
+      }
+    }
     const selector = `[data-lane="${S.laneKey}"] .frame-card`;
     const active = framesGrid.querySelector(
       `[data-lane="${S.laneKey}"][data-frame="${focusKey(curLane())}"] .frame-card`
@@ -812,7 +1377,7 @@ export function createFrameNavigator(deps) {
     S.copyArmed = false;
     store.patch(() => {
       if (!S.lanes[laneKey].frameVis[frame]) toggleFrameVisibility(S.lanes[laneKey], frame);
-      if (S.laneKey !== laneKey) selectLane(laneKey);
+      if (S.laneKey !== laneKey || S.activeFree) selectLane(laneKey);
       const sl = curLane();
       if (frame !== "a" && !sl.showB) enableBOnLane(sl);
       setFocus(sl, frame);
@@ -833,10 +1398,28 @@ export function createFrameNavigator(deps) {
     store.patch(() => {
       S.framesView = false;
       if (!S.lanes[laneKey].frameVis[frame]) toggleFrameVisibility(S.lanes[laneKey], frame);
-      if (S.laneKey !== laneKey) selectLane(laneKey);
+      if (S.laneKey !== laneKey || S.activeFree) selectLane(laneKey);
       const sl = curLane();
       if (frame !== "a" && !sl.showB) enableBOnLane(sl);
       setFocus(sl, frame);
+      S.hoverReg = null;
+      S.hoverJ = -1;
+      syncEditUi();
+      syncViewUi();
+      renderStrip();
+      updateReadouts();
+    });
+    applyViewDom(false);
+    framesBtn.focus();
+  }
+
+  function chooseFreeCard(freeKey) {
+    if (!S.freeFrames[freeKey]) return;
+    S.copyArmed = false;
+    store.patch(() => {
+      S.framesView = false;
+      if (!S.freeFrames[freeKey].visible) toggleFreeFrameVisibility(S.freeFrames[freeKey]);
+      selectFreeFrame(freeKey);
       S.hoverReg = null;
       S.hoverJ = -1;
       syncEditUi();
@@ -893,7 +1476,17 @@ export function createFrameNavigator(deps) {
   document.addEventListener(
     "keydown",
     (e) => {
-      if (e.key !== "Escape" || pendingDelete === null || !S.framesView) return;
+      if (e.key !== "Escape" || !S.framesView) return;
+      if (pendingFreeDelete !== null) {
+        const fk = pendingFreeDelete;
+        pendingFreeDelete = null;
+        e.preventDefault();
+        e.stopPropagation();
+        renderGrid();
+        reportNote(`delete ${freeFrameName(fk)} cancelled`);
+        return;
+      }
+      if (pendingDelete === null) return;
       const laneKey = pendingDelete;
       pendingDelete = null;
       e.preventDefault();
@@ -914,6 +1507,12 @@ export function createFrameNavigator(deps) {
     store.patch(() => toggleFrameVisibility(sl, frame));
   }
 
+  function setFreeFrameVis(freeKey, visible) {
+    const ff = S.freeFrames[freeKey];
+    if (!ff || ff.visible === visible) return;
+    store.patch(() => toggleFreeFrameVisibility(ff));
+  }
+
   return {
     framesBtn,
     isOpen,
@@ -921,7 +1520,9 @@ export function createFrameNavigator(deps) {
     render: () => renderGrid(),
     selectFrame,
     chooseCard,
+    chooseFreeCard,
     setFrameVis,
+    setFreeFrameVis,
     focusButton: () => (S.framesView ? document.getElementById("lanesBtn")?.focus() : framesBtn.focus()),
   };
 }

@@ -15,6 +15,7 @@
  */
 
 import { CANONICAL_SAVED_AT } from "./agent-defaults.ts";
+import { freeFrameKeyFromName } from "./lanedefs.ts";
 import { deserializeProject, serializeProject, type ProjectDoc, type ProjectRoute } from "./project.ts";
 import { SHARE_DOC_KEYS, SHARE_MAX_CHARS, SHARE_PREFIX, encodeCompactShare } from "./share.ts";
 
@@ -31,8 +32,15 @@ export interface ShareLink {
 
 const FRAME_ORDER = ["a", "b", "z"];
 
-/** Destination-first total order (destinations are unique in a document). */
+/** Destination-first total order (lane ports first, then free frames). */
 function comparePorts(a: string, b: string): number {
+  const aFree = freeFrameKeyFromName(a);
+  const bFree = freeFrameKeyFromName(b);
+  if (aFree !== null || bFree !== null) {
+    if (aFree === null) return -1;
+    if (bFree === null) return 1;
+    return Number(aFree) - Number(bFree);
+  }
   const [aLane, aFrame] = [Number(a.slice(0, a.indexOf("."))), FRAME_ORDER.indexOf(a.slice(a.indexOf(".") + 1))];
   const [bLane, bFrame] = [Number(b.slice(0, b.indexOf("."))), FRAME_ORDER.indexOf(b.slice(b.indexOf(".") + 1))];
   return aLane - bLane || aFrame - bFrame;
@@ -43,10 +51,9 @@ function compareRoutes(a: ProjectRoute, b: ProjectRoute): number {
 }
 
 /**
- * Validate a document and re-serialize it canonically: schema 4, no `savedAt`,
- * extras preserved, unknown top-level fields carried along, engine recomputed,
- * routes and parked bases in deterministic order. Throws ProjectError on an
- * invalid document.
+ * Validate a document and re-serialize it canonically: schema 5, no `savedAt`,
+ * extras & free frames preserved, unknown top-level fields carried along, engine
+ * recomputed, routes and parked bases in deterministic order.
  */
 export function canonicalShareDocument(doc: ProjectDoc): ProjectDoc {
   const loaded = deserializeProject(doc);
@@ -63,22 +70,28 @@ export function canonicalShareDocument(doc: ProjectDoc): ProjectDoc {
       lfoMode: loaded.extras.lfoMode,
       lfoRate: loaded.extras.lfoRate,
       expressions: loaded.extras.expressions,
+      freeFrames: loaded.freeFrames,
+      freeVis: loaded.extras.freeVis,
+      freeExpressions: loaded.extras.freeExpressions,
     },
   );
   delete (out as { savedAt?: string }).savedAt;
   for (const [key, value] of Object.entries(doc)) {
     if (!SHARE_DOC_KEYS.has(key)) (out as unknown as Record<string, unknown>)[key] = value;
   }
-  // Deterministic document order makes the compact link a function of state.
   out.routes = out.routes.slice().sort(compareRoutes);
   out.parked = Object.fromEntries(Object.entries(out.parked).sort(([a], [b]) => comparePorts(a, b)));
   return out;
 }
 
 function hasExpressions(doc: ProjectDoc): boolean {
-  return Object.values(doc.lanes).some(
+  const inLanes = Object.values(doc.lanes).some(
     (lane) => lane.expressions !== undefined && Object.keys(lane.expressions).length > 0,
   );
+  const inFrames = doc.frames
+    ? Object.values(doc.frames).some((ff) => typeof ff.expression === "string" && ff.expression !== "")
+    : false;
+  return inLanes || inFrames;
 }
 
 function withoutDataset(doc: ProjectDoc): ProjectDoc {
@@ -92,7 +105,13 @@ function withoutExpressions(doc: ProjectDoc): ProjectDoc {
     const { expressions: _dropped, ...rest } = lane;
     lanes[key] = rest;
   }
-  return { ...doc, lanes };
+  if (!doc.frames) return { ...doc, lanes };
+  const frames: NonNullable<ProjectDoc["frames"]> = {};
+  for (const [key, ff] of Object.entries(doc.frames)) {
+    const { expression: _dropped, ...rest } = ff;
+    frames[key] = rest;
+  }
+  return { ...doc, lanes, frames };
 }
 
 /**

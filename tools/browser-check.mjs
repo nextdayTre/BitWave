@@ -2325,6 +2325,68 @@ try {
     return 'menu focus-in/Esc · open applies a v2 document · reset returns to boot · newer schema refused';
   });
 
+  await runCheck('d54 · presets menu: focus-in, Esc, loads analytical/LFO & Record patches cleanly', async () => {
+    await loadApp();
+    await click('#presetsBtn');
+    let menu = JSON.parse(await evaluate(`JSON.stringify({
+      open: !document.querySelector('.presets-menu').hidden,
+      count: document.querySelectorAll('.presets-menu [role="menuitem"]').length,
+      expanded: document.getElementById('presetsBtn').getAttribute('aria-expanded'),
+      focused: document.activeElement.getAttribute('role')
+    })`));
+    assert(menu.open && menu.expanded === 'true', 'presets menu did not open');
+    assert(menu.count === 10, `expected 10 presets, found ${menu.count}`);
+    assert(menu.focused === 'menuitem', `focus not in presets menu: ${menu.focused}`);
+
+    await keydown('Escape');
+    menu = JSON.parse(await evaluate(`JSON.stringify({
+      open: !document.querySelector('.presets-menu').hidden,
+      focused: document.activeElement.id
+    })`));
+    assert(menu.open === false && menu.focused === 'presetsBtn', `Esc did not close presets menu cleanly: ${JSON.stringify(menu)}`);
+
+    /* Load Full-Adder Carry Chain: 256-bit 3D split, Z2 === Z1, LFO running, zero expr errors. */
+    await click('#presetsBtn');
+    await click('.presets-menu [data-patch-preset="carry-chain"]');
+    await sleep(300);
+    const carry = JSON.parse(await evaluate(`JSON.stringify({
+      state: window.bitwave.getState(),
+      amount: document.getElementById('amount').value,
+      status: document.getElementById('csvStatus').textContent.trim(),
+      lfoPressed: document.getElementById('lfoBtn').getAttribute('aria-pressed')
+    })`));
+    assert(carry.state.width === 256 && carry.state.view.mode === 'split', `carry view: ${carry.state.width}/${carry.state.view.mode}`);
+    assert(carry.state.lanes['2'].frames.Z2 === carry.state.lanes['1'].frames.Z1, 'carry chain Z2 !== Z1');
+    assert(carry.state.lfo.on === true && carry.lfoPressed === 'true', 'carry chain LFO did not start');
+    assert(carry.amount === '8', `carry chain amount: ${carry.amount}`);
+    assert(
+      Object.values(carry.state.lanes['2'].expressionErrors || {}).every((v) => v === null),
+      `carry chain expression error: ${JSON.stringify(carry.state.lanes['2'].expressionErrors)}`
+    );
+
+    /* Load Takagi Fractal: focuses Free Frame F4 in 2D overlay with zero expr errors. */
+    await click('#presetsBtn');
+    await click('.presets-menu [data-patch-preset="takagi-fractal"]');
+    await sleep(300);
+    const takagi = JSON.parse(await evaluate(`JSON.stringify(window.bitwave.getState())`));
+    assert(takagi.activeFree === 'F4' && takagi.view.mode === '2d', `takagi state: ${takagi.activeFree}/${takagi.view.mode}`);
+    assert(takagi.freeFrames.F4.expressionError === null, `takagi F4 error: ${takagi.freeFrames.F4.expressionError}`);
+
+    /* Load Rule 90 CA: arms Record + starts LFO, evolves cleanly without expression error. */
+    await click('#presetsBtn');
+    await click('.presets-menu [data-patch-preset="rule-90-sierpinski"]');
+    await sleep(600);
+    const ca = JSON.parse(await evaluate(`JSON.stringify(window.bitwave.getState())`));
+    assert(ca.width === 64 && ca.recording.on === true && ca.recording.rows >= 2, `rule-90 recording: ${JSON.stringify(ca.recording)}`);
+    assert(ca.lfo.on === true, 'rule-90 LFO did not start');
+    assert(
+      Object.values(ca.lanes['1'].expressionErrors || {}).every((v) => v === null),
+      `rule-90 expr errors: ${JSON.stringify(ca.lanes['1'].expressionErrors)}`
+    );
+
+    return '10 presets · focus-in/Esc · Carry Chain / Takagi F4 / Rule 90 Record+LFO verified';
+  });
+
   await runCheck('f5 · demo dataset loads eight rows and binds the board', async () => {
     await loadApp();
     await click('#demoBtn');
@@ -2384,7 +2446,7 @@ try {
     })`));
     assert(saved.raw, 'autosave key was not written');
     const parsed = JSON.parse(saved.raw);
-    assert(parsed.schema === 4 && parsed.lanes['1'].a === saved.hex, `autosave schema/state: ${parsed.schema}`);
+    assert(parsed.schema === 5 && parsed.lanes['1'].a === saved.hex, `autosave schema/state: ${parsed.schema}`);
 
     await loadApp({ query: 'keep' });
     const restored = JSON.parse(await evaluate(`JSON.stringify({
@@ -2470,6 +2532,14 @@ try {
           await importCsv();
           await click('#sourcesBtn');
           await waitFor(`!document.getElementById('sourcesPanel').hidden`, 'source table');
+        },
+      },
+      {
+        name: 'presets menu',
+        prepare: async () => {
+          await loadApp();
+          await click('#presetsBtn');
+          await waitFor(`!document.querySelector('.presets-menu').hidden`, 'presets menu');
         },
       },
       {

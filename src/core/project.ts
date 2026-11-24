@@ -7,19 +7,22 @@
  * are preserved by callers that hold the raw document; a newer schema is
  * rejected with a distinct code so the UI can offer a read-only path.
  *
- * Schema history (D33 / D40 / D44):
+ * Schema history (D33 / D40 / D44 / D52):
  *   1  closed three-lane object: operands, operator, routes, parked bases
  *   2  additive: per-lane focus/frameVis, LFO mode/rate, dataset cursor
  *   3  additive: per-operand expression sources (`lanes.<key>.expressions`)
- *   4  **dynamic lanes**: `lanes` is keyed by the stable lane key string
- *      (`"1"`..`"13"`, D43), gaps allowed, 1..APP_LANE_CAP (8) lanes. A schema
- *      1/2/3 document is the closed three-lane object and upgrades on read; a
- *      schema-4 document is saved in ascending lane-key order.
+ *   4  dynamic lanes: `lanes` is keyed by the stable lane key string
+ *      (`"1"`..`"13"`, D43), gaps allowed, 1..APP_LANE_CAP (8) lanes.
+ *   5  **free frames** (D52): optional top-level `frames` map (`"1"`..`"16"`,
+ *      canonical names `F1`..`F16`) for standalone single registers decoupled
+ *      from A/B/Z lane housing, optional `view.activeFree`, and free-frame port
+ *      endpoints (`"F1"`..`"F16"`) in `routes` and `parked`. Schema 1–4
+ *      documents upgrade cleanly on read with no free frames.
  *
  * Fields added after schema 1 are validated leniently: an invalid or missing
  * value falls back to its default instead of rejecting the document. A document
- * saved without extras keeps the minimal shape (no focus/frameVis/expressions
- * present), which is what makes a schema-1 document round-trip unchanged.
+ * saved without extras keeps the minimal shape (no focus/frameVis/expressions/
+ * frames present), which is what makes a schema-1 document round-trip unchanged.
  *
  * This module is pure: serialization/deserialization never touches the DOM.
  */
@@ -28,6 +31,8 @@ import type {
   BinOp,
   DestinationPort,
   FrameKey,
+  FreeFrameKey,
+  FreeFrameMap,
   MixOp,
   OperandKey,
   Route,
@@ -35,15 +40,27 @@ import type {
   LaneMap,
   SourcePort,
 } from "./types.ts";
-import { LANE_KEYS } from "./types.ts";
-import { APP_LANE_CAP, compareLaneKeys, laneIndex } from "./lanedefs.ts";
+import { LANE_KEYS, isFreePort } from "./types.ts";
+import {
+  APP_FREE_FRAME_CAP,
+  APP_LANE_CAP,
+  FREE_FRAME_LABEL_MAX,
+  FREE_FRAME_NOTE_MAX,
+  compareFreeFrameKeys,
+  compareLaneKeys,
+  freeFrameIndex,
+  freeFrameKeyFromName,
+  freeFrameName,
+  laneIndex,
+  sanitizeFreeFrameText,
+} from "./lanedefs.ts";
 import { fromHex, toHex } from "./registers.ts";
-import { makeLane } from "./lanes.ts";
-import { evaluateAll, createRouting, type RoutingState } from "./routing.ts";
+import { makeFreeFrame, makeLane } from "./lanes.ts";
+import { evaluateAll, createRouting, portKeyOf, routeKey, type RoutingState } from "./routing.ts";
 import { EXPRESSION_LIMITS } from "./expression.ts";
 import type { Dataset } from "./csv.ts";
 
-export const PROJECT_SCHEMA = 4;
+export const PROJECT_SCHEMA = 5;
 export const PROJECT_APP = "bitwave";
 
 export class ProjectError extends Error {
@@ -56,9 +73,9 @@ export class ProjectError extends Error {
 }
 
 export interface ProjectRoute {
-  /** "C.z" */
+  /** "3.z" or "F1" */
   from: string;
-  /** "A.a" */
+  /** "1.a" or "F2" */
   to: string;
   mix: MixOp;
 }
@@ -90,6 +107,21 @@ export interface ProjectLane {
   expressions?: LaneExpressions;
 }
 
+/** Standalone free frame persisted in schema 5 (D52). */
+export interface ProjectFreeFrame {
+  hex: string;
+  /** Dataset column index (-1 when omitted). */
+  col?: number;
+  /** 2-D overlay visibility (true when omitted). */
+  visible?: boolean;
+  /** Expression source (empty when omitted). */
+  expression?: string;
+  /** Optional short stage label (e.g. "hanning"). */
+  label?: string;
+  /** Optional external library/function provenance note (e.g. "numpy.hanning(16)"). */
+  sourceNote?: string;
+}
+
 export interface ProjectViewState {
   lane: LaneKey;
   view3d: boolean;
@@ -100,13 +132,14 @@ export interface ProjectViewState {
   lfoMode?: string;
   /** Schema 2: LFO rate in steps per second. */
   lfoRate?: number;
+  /** Schema 5: focused free-frame key ("1".."16") when focus is on a free frame. */
+  activeFree?: FreeFrameKey;
 }
 
 /**
- * The schema-2/3 additive fields the serializer cannot read from the engine
- * state (focus, visibility and LFO live in the app's view state, not in
- * `LaneMap`/routing). Everything is optional; a caller that omits `extras`
- * writes the minimal per-lane shape.
+ * The schema-2/3/5 additive fields the serializer cannot read from the lane map
+ * alone. Everything is optional; a caller that omits `extras` writes the minimal
+ * shape.
  */
 export interface ProjectExtras {
   focus?: Partial<Record<LaneKey, FrameKey>>;
@@ -115,12 +148,17 @@ export interface ProjectExtras {
   lfoRate?: number;
   /** Schema 3: expression sources per lane/operand. */
   expressions?: Partial<Record<LaneKey, LaneExpressions>>;
+  /** Schema 5: standalone free frames, keyed by stable numeric key ("1".."16"). */
+  freeFrames?: FreeFrameMap;
+  /** Schema 5: 2-D visibility toggles per free frame. */
+  freeVis?: Partial<Record<FreeFrameKey, boolean>>;
+  /** Schema 5: expression source per free frame. */
+  freeExpressions?: Partial<Record<FreeFrameKey, string>>;
 }
 
 /**
- * The `.bitwave` document. `lanes` is keyed by the stable lane key string:
- * schema 1-3 carries exactly the shipped three (`"1"`,`"2"`,`"3"`); schema 4
- * may carry any subset of `"1"`..`"13"` (gaps allowed) up to `APP_LANE_CAP`.
+ * The `.bitwave` document. `lanes` is keyed by the stable lane key string;
+ * schema 5 optionally adds `frames` keyed by the stable free-frame key string.
  */
 export interface ProjectDoc {
   schema: number;
@@ -129,8 +167,10 @@ export interface ProjectDoc {
   N: number;
   view: ProjectViewState;
   lanes: Record<LaneKey, ProjectLane>;
+  /** Schema 5: standalone free frames (omitted when empty). */
+  frames?: Record<FreeFrameKey, ProjectFreeFrame>;
   routes: ProjectRoute[];
-  /** Destination port key ("1:a") -> pre-patch bits as hex. */
+  /** Destination port string ("1.a" or "F1") -> pre-patch bits as hex. */
   parked: Record<string, string>;
   dataset?: Dataset;
 }
@@ -150,18 +190,12 @@ const LFO_DEFAULT_RATE = 4;
 /** The modes the instrument's motion control offers; anything else is ignored. */
 const LFO_MODES: readonly string[] = ["rotcw", "rotccw", "slide", "csvStep"];
 
-/*
- * Schema-2 fields are validated leniently: an invalid or missing value falls
- * back to its default instead of rejecting the document. Same spirit as `edit`
- * and `lfoB` above — a new field must never make a loadable project unloadable.
- */
 function lenientFocus(value: unknown): FrameKey {
   return value === "a" || value === "b" || value === "z" ? value : DEFAULT_FOCUS;
 }
 
 function lenientFrameVis(value: unknown): FrameVisibility {
   const raw = typeof value === "object" && value !== null ? (value as Partial<FrameVisibility>) : {};
-  // Only an explicit `false` hides a frame; a missing or odd value keeps it visible.
   return { a: raw.a !== false, b: raw.b !== false, z: raw.z !== false };
 }
 
@@ -173,27 +207,25 @@ function lenientLfoRate(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : LFO_DEFAULT_RATE;
 }
 
+function lenientExpressionText(value: unknown): string {
+  if (typeof value !== "string") return "";
+  const trimmed = value.trim();
+  if (trimmed === "" || trimmed.length > EXPRESSION_LIMITS.source) return "";
+  return trimmed;
+}
+
 /** Schema-3 expression sources: strings only, trimmed, bounded; invalid values drop. */
 function lenientExpressions(value: unknown): LaneExpressions {
   if (typeof value !== "object" || value === null) return {};
   const raw = value as Partial<LaneExpressions>;
   const out: LaneExpressions = {};
   for (const frame of ["a", "b"] as const) {
-    const text = raw[frame];
-    if (typeof text !== "string") continue;
-    const trimmed = text.trim();
-    if (trimmed === "" || trimmed.length > EXPRESSION_LIMITS.source) continue;
-    out[frame] = trimmed;
+    const trimmed = lenientExpressionText(raw[frame]);
+    if (trimmed !== "") out[frame] = trimmed;
   }
   return out;
 }
 
-/**
- * The `dataset` field. Schema 2 adds `index` (the CSV cursor). A valid
- * non-negative integer is kept; a missing/malformed one is OMITTED rather than
- * zeroed, so a schema-1 document round-trips unchanged and callers can keep
- * treating "no index" as cursor 0.
- */
 function lenientDataset(value: unknown): Dataset | null {
   if (typeof value !== "object" || value === null) return null;
   const raw = value as Partial<Dataset>;
@@ -207,11 +239,9 @@ function lenientDataset(value: unknown): Dataset | null {
 
 export const portString = (lane: LaneKey, frame: FrameKey): string => `${lane}.${frame}`;
 
-/**
- * The stable lane keys a document may carry, in canonical (ascending numeric)
- * order. A lane map may have gaps but never duplicates (object keys) and never
- * more than `APP_LANE_CAP` lanes; keys outside `"1"`..`"13"` are malformed.
- */
+export const portStringOf = (port: SourcePort | DestinationPort): string =>
+  isFreePort(port) ? freeFrameName(port.free) : portString(port.lane, port.frame);
+
 function requireLaneKeys(value: unknown): LaneKey[] {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     throw new ProjectError("malformed", "missing lanes");
@@ -232,7 +262,32 @@ function requireLaneKeys(value: unknown): LaneKey[] {
   return keys;
 }
 
-export function parsePort(text: string, allowZ: boolean): { lane: LaneKey; frame: FrameKey } {
+function validateFreeFrameKeys(value: unknown): FreeFrameKey[] {
+  if (value === undefined) return [];
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new ProjectError("malformed", "frames must be an object");
+  }
+  const keys = Object.keys(value).sort(compareFreeFrameKeys);
+  for (const key of keys) {
+    if (freeFrameIndex(key) < 0) {
+      throw new ProjectError(
+        "malformed",
+        `invalid free frame key ${JSON.stringify(key)} (expected "1".."${APP_FREE_FRAME_CAP}")`,
+      );
+    }
+  }
+  if (keys.length > APP_FREE_FRAME_CAP) {
+    throw new ProjectError(
+      "malformed",
+      `a document may hold at most ${APP_FREE_FRAME_CAP} free frames; got ${keys.length}`,
+    );
+  }
+  return keys;
+}
+
+export function parsePort(text: string, allowZ: boolean): SourcePort {
+  const freeKey = freeFrameKeyFromName(text);
+  if (freeKey !== null) return { free: freeKey };
   const m = /^(?:[1-9]|1[0-3])\.([abz])$/.exec(text);
   if (!m) throw new ProjectError("malformed", `bad port reference: ${JSON.stringify(text)}`);
   const lane = text.slice(0, text.indexOf(".")) as LaneKey;
@@ -278,8 +333,6 @@ export function serializeProject(
       colA: lane.colA,
       colB: lane.colB,
     };
-    // Schema 2/3 fields are written only when the caller supplied them, so a
-    // save without extras keeps the minimal shape.
     const focus = extras.focus?.[key];
     if (focus !== undefined) laneDoc.focus = focus;
     const frameVis = extras.frameVis?.[key];
@@ -294,10 +347,48 @@ export function serializeProject(
     laneDocs[key] = laneDoc;
   }
 
+  let frameDocs: Record<FreeFrameKey, ProjectFreeFrame> | undefined;
+  const freeFrames = extras.freeFrames;
+  if (freeFrames) {
+    const freeKeys = Object.keys(freeFrames).sort(compareFreeFrameKeys);
+    if (freeKeys.length > APP_FREE_FRAME_CAP) {
+      throw new ProjectError(
+        "malformed",
+        `a document may hold at most ${APP_FREE_FRAME_CAP} free frames; got ${freeKeys.length}`,
+      );
+    }
+    if (freeKeys.length > 0) {
+      frameDocs = {};
+      for (const key of freeKeys) {
+        if (freeFrameIndex(key) < 0) {
+          throw new ProjectError(
+            "malformed",
+            `invalid free frame key ${JSON.stringify(key)} (expected "1".."${APP_FREE_FRAME_CAP}")`,
+          );
+        }
+        const ff = freeFrames[key];
+        const entry: ProjectFreeFrame = { hex: toHex(ff.reg.bits, N) };
+        if (ff.col >= 0) entry.col = ff.col;
+        if (extras.freeVis?.[key] === false) entry.visible = false;
+        const expr = lenientExpressionText(extras.freeExpressions?.[key]);
+        if (expr !== "") entry.expression = expr;
+        const label = sanitizeFreeFrameText(ff.label, FREE_FRAME_LABEL_MAX);
+        if (label !== "") entry.label = label;
+        const sourceNote = sanitizeFreeFrameText(ff.sourceNote, FREE_FRAME_NOTE_MAX);
+        if (sourceNote !== "") entry.sourceNote = sourceNote;
+        frameDocs[key] = entry;
+      }
+    }
+  }
+
   const parked: Record<string, string> = {};
   for (const [key, bits] of routing.parked) {
-    const [lane, frame] = key.split(":");
-    parked[portString(lane as LaneKey, frame as FrameKey)] = toHex(bits, N);
+    if (key.includes(":")) {
+      const [lane, frame] = key.split(":");
+      parked[portString(lane as LaneKey, frame as FrameKey)] = toHex(bits, N);
+    } else {
+      parked[key] = toHex(bits, N);
+    }
   }
 
   const viewDoc: ProjectViewState = {
@@ -307,12 +398,13 @@ export function serializeProject(
     splitPair: view.splitPair,
     activePane: view.activePane,
   };
-  // LFO settings ride on the view in schema 2. Extras win over a view that
-  // already carries them (e.g. a loaded document echoed back).
   const lfoMode = extras.lfoMode ?? view.lfoMode;
   const lfoRate = extras.lfoRate ?? view.lfoRate;
   if (lfoMode !== undefined) viewDoc.lfoMode = lfoMode;
   if (lfoRate !== undefined) viewDoc.lfoRate = lfoRate;
+  if (view.activeFree && frameDocs && frameDocs[view.activeFree]) {
+    viewDoc.activeFree = view.activeFree;
+  }
 
   const doc: ProjectDoc = {
     schema: PROJECT_SCHEMA,
@@ -322,13 +414,14 @@ export function serializeProject(
     view: viewDoc,
     lanes: laneDocs,
     routes: routing.routes.map((r) => ({
-      from: portString(r.from.lane, r.from.frame),
-      to: portString(r.to.lane, r.to.frame),
+      from: portStringOf(r.from),
+      to: portStringOf(r.to),
       mix: r.mix,
     })),
     parked,
   };
-  if (dataset) doc.dataset = dataset; // exactly as given: a valid `index` rides along
+  if (frameDocs) doc.frames = frameDocs;
+  if (dataset) doc.dataset = dataset;
   return doc;
 }
 
@@ -355,18 +448,11 @@ function requireIndex(value: unknown, where: string): number {
 
 /**
  * Validate and materialize a document. Recomputes Z and delay flags for every
- * lane the document carries, so the returned engine state is immediately
- * consistent. Throws ProjectError.
- *
- * A schema 1/2/3 document is the closed three-lane object and upgrades on read;
- * schema 4 is a lane map keyed by the stable lane key (`"1"`..`"13"`, gaps
- * allowed, at most `APP_LANE_CAP` lanes). `extras` is always fully populated for
- * the lanes present: older documents (or corrupt additive fields) load with the
- * additive defaults, and the schema-1 fields keep their existing strict
- * validation.
+ * lane and free frame the document carries. Throws ProjectError on invalid docs.
  */
 export function deserializeProject(doc: unknown): {
   lanes: LaneMap;
+  freeFrames: FreeFrameMap;
   routing: RoutingState;
   N: number;
   view: ProjectViewState;
@@ -377,6 +463,8 @@ export function deserializeProject(doc: unknown): {
     lfoMode: string;
     lfoRate: number;
     expressions: Record<LaneKey, LaneExpressions>;
+    freeVis: Record<FreeFrameKey, boolean>;
+    freeExpressions: Record<FreeFrameKey, string>;
   };
 } {
   if (typeof doc !== "object" || doc === null) {
@@ -396,7 +484,6 @@ export function deserializeProject(doc: unknown): {
   if (!(N >= 8 && N <= 256 && N % 8 === 0)) throw new ProjectError("malformed", `unsupported width: ${N}`);
 
   const laneKeys = requireLaneKeys(d.lanes);
-  /* Schema 1-3 is the closed three-lane object; schema 4 may hold any subset. */
   if (d.schema < 4) {
     const closed = laneKeys.length === LANE_KEYS.length && LANE_KEYS.every((key, i) => laneKeys[i] === key);
     if (!closed) {
@@ -427,6 +514,31 @@ export function deserializeProject(doc: unknown): {
     expressions[key] = lenientExpressions(s.expressions);
   }
 
+  const freeFrames: FreeFrameMap = {};
+  const freeVis: Record<FreeFrameKey, boolean> = {};
+  const freeExpressions: Record<FreeFrameKey, string> = {};
+  const freeKeys = d.schema >= 5 ? validateFreeFrameKeys(d.frames) : [];
+  for (const key of freeKeys) {
+    const raw = (d.frames as Record<string, Partial<ProjectFreeFrame>>)[key];
+    if (typeof raw !== "object" || raw === null) {
+      throw new ProjectError("malformed", `frames.${key} must be an object`);
+    }
+    const label = sanitizeFreeFrameText(raw.label, FREE_FRAME_LABEL_MAX);
+    const sourceNote = sanitizeFreeFrameText(raw.sourceNote, FREE_FRAME_NOTE_MAX);
+    const ff = makeFreeFrame(key, N, {
+      label: label || undefined,
+      sourceNote: sourceNote || undefined,
+    });
+    ff.reg.bits = requireHex(raw.hex, N, `frames.${key}.hex`);
+    ff.col =
+      typeof raw.col === "number" && Number.isInteger(raw.col) && raw.col >= -1
+        ? raw.col
+        : -1;
+    freeFrames[key] = ff;
+    freeVis[key] = raw.visible !== false;
+    freeExpressions[key] = lenientExpressionText(raw.expression);
+  }
+
   const routing = createRouting();
   const rawRoutes = Array.isArray(d.routes) ? d.routes : [];
   for (const raw of rawRoutes) {
@@ -435,30 +547,50 @@ export function deserializeProject(doc: unknown): {
       throw new ProjectError("malformed", "route must have from/to port strings");
     }
     const from = parsePort(r.from, true);
-    const to = parsePort(r.to, false);
-    if (!lanes[from.lane]) throw new ProjectError("malformed", `route source lane ${from.lane} is not in the document`);
-    if (!lanes[to.lane]) throw new ProjectError("malformed", `route destination lane ${to.lane} is not in the document`);
+    const to = parsePort(r.to, false) as DestinationPort;
+    if (isFreePort(from)) {
+      if (!freeFrames[from.free]) {
+        throw new ProjectError("malformed", `route source free frame F${from.free} is not in the document`);
+      }
+    } else if (!lanes[from.lane]) {
+      throw new ProjectError("malformed", `route source lane ${from.lane} is not in the document`);
+    }
+    if (isFreePort(to)) {
+      if (!freeFrames[to.free]) {
+        throw new ProjectError("malformed", `route destination free frame F${to.free} is not in the document`);
+      }
+    } else if (!lanes[to.lane]) {
+      throw new ProjectError("malformed", `route destination lane ${to.lane} is not in the document`);
+    }
     const mix: MixOp = MIXES.includes(r.mix as MixOp) ? (r.mix as MixOp) : "set";
     const route: Route = {
-      id: `${from.lane}.${from.frame}>${to.lane}.${to.frame}`,
-      from: { lane: from.lane, frame: from.frame } as SourcePort,
-      to: { lane: to.lane, frame: to.frame } as DestinationPort,
+      id: routeKey(from, to),
+      from,
+      to,
       delay: false,
       mix,
     };
-    if (routing.routes.some((x) => x.to.lane === route.to.lane && x.to.frame === route.to.frame)) {
+    const destKey = portKeyOf(route.to);
+    if (routing.routes.some((x) => portKeyOf(x.to) === destKey)) {
       throw new ProjectError("malformed", `two routes drive ${r.to}`);
     }
     routing.routes.push(route);
   }
 
   for (const [key, value] of Object.entries(d.parked ?? {})) {
-    const port = parsePort(key, false);
-    if (!lanes[port.lane]) throw new ProjectError("malformed", `parked base lane ${port.lane} is not in the document`);
-    if (!routing.routes.some((r) => r.to.lane === port.lane && r.to.frame === port.frame)) {
+    const port = parsePort(key, false) as DestinationPort;
+    if (isFreePort(port)) {
+      if (!freeFrames[port.free]) {
+        throw new ProjectError("malformed", `parked base free frame F${port.free} is not in the document`);
+      }
+    } else if (!lanes[port.lane]) {
+      throw new ProjectError("malformed", `parked base lane ${port.lane} is not in the document`);
+    }
+    const pKey = portKeyOf(port);
+    if (!routing.routes.some((r) => portKeyOf(r.to) === pKey)) {
       throw new ProjectError("malformed", `parked base for an unpatched input: ${key}`);
     }
-    routing.parked.set(`${port.lane}:${port.frame}`, requireHex(value, N, `parked.${key}`));
+    routing.parked.set(pKey, requireHex(value, N, `parked.${key}`));
   }
 
   const firstLane = laneKeys[0];
@@ -478,13 +610,23 @@ export function deserializeProject(doc: unknown): {
     splitPair,
     activePane: d.view?.activePane === 1 ? 1 : 0,
   };
+  if (typeof d.view?.activeFree === "string" && freeFrames[d.view.activeFree]) {
+    view.activeFree = d.view.activeFree;
+  }
 
-  evaluateAll(routing, lanes, N);
+  evaluateAll(routing, lanes, N, undefined, freeFrames);
   const dataset = lenientDataset(d.dataset);
-  /** Schema-2/3 view fields are additive; an older document simply has none. */
   const lfoMode = lenientLfoMode(d.view?.lfoMode);
   const lfoRate = lenientLfoRate(d.view?.lfoRate);
-  return { lanes, routing, N, view, dataset, extras: { focus, frameVis, lfoMode, lfoRate, expressions } };
+  return {
+    lanes,
+    freeFrames,
+    routing,
+    N,
+    view,
+    dataset,
+    extras: { focus, frameVis, lfoMode, lfoRate, expressions, freeVis, freeExpressions },
+  };
 }
 
 /** Convenience: JSON text -> engine state. */

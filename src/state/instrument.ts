@@ -29,16 +29,24 @@ import {
   setNibAt as coreSetNibAt,
   syncTarget as coreSyncTarget,
 } from "../core/registers.ts";
-import type { BinOp, LaneKey } from "../core/types.ts";
+import type { BinOp, FreeFrameKey, LaneKey } from "../core/types.ts";
 import { LANE_KEYS } from "../core/types.ts";
 import {
+  APP_FREE_FRAME_CAP,
   APP_LANE_CAP,
   DEFAULT_LANE_COUNT,
+  FREE_FRAME_LABEL_MAX,
+  FREE_FRAME_NOTE_MAX,
   NAME_CEILING,
+  compareFreeFrameKeys,
   compareLaneKeys,
   frameNamesFor,
+  freeFrameKey,
+  freeFrameKeyFromName,
+  freeFrameName,
   laneDef,
   laneIndex,
+  sanitizeFreeFrameText,
 } from "../core/lanedefs.ts";
 
 export type FrameKey = "a" | "b" | "z";
@@ -50,7 +58,7 @@ export type Fold = "a-far" | "b-far";
 export { LANE_KEYS };
 
 /** The shipped app cap: at most eight live lanes (D43/D46). */
-export { APP_LANE_CAP };
+export { APP_LANE_CAP, APP_FREE_FRAME_CAP, freeFrameName, freeFrameKeyFromName };
 
 /** One register size domain for the whole instrument (DESIGN §10.10). */
 export const SIZES: readonly RegisterSize[] = CORE_SIZES;
@@ -93,6 +101,19 @@ export const nextFreeLaneKey = (): LaneKey | null => {
   return null;
 };
 
+/** Live free-frame keys in canonical ascending numeric order ("1".."16"). */
+export const liveFreeFrameKeys = (): FreeFrameKey[] =>
+  Object.keys(S.freeFrames).sort(compareFreeFrameKeys);
+
+/** Lowest unused free-frame key ("1".."16"), or null at the cap. */
+export const nextFreeFrameKey = (): FreeFrameKey | null => {
+  for (let index = 0; index < APP_FREE_FRAME_CAP; index += 1) {
+    const key = freeFrameKey(index, APP_FREE_FRAME_CAP);
+    if (!S.freeFrames[key]) return key;
+  }
+  return null;
+};
+
 export interface Reg {
   /** bits[0] is the LSB (hardware convention); length === N. */
   bits: Uint8Array;
@@ -126,6 +147,21 @@ export interface LaneState {
   colB: number;
 }
 
+export interface FreeFrameState {
+  key: FreeFrameKey;
+  reg: Reg;
+  /** Dataset column index (-1 = local). */
+  col: number;
+  /** 2-D overlay visibility (eye toggle). */
+  visible: boolean;
+  /** Expression source ("" = none). */
+  expression: string;
+  /** Optional short display label, e.g. "hanning". */
+  label: string;
+  /** Optional external library/function provenance note, e.g. "numpy.hanning(16)". */
+  sourceNote: string;
+}
+
 /** One recorded update: every global frame name -> N-bit word as uppercase hex. */
 export interface RecordRow {
   /** 1-based update number. */
@@ -145,7 +181,7 @@ export interface LfoState {
   mode: string;
   rate: number;
   t: number;
-  base: Record<string, { a: number[]; b: number[] }> | null;
+  base: (Record<string, { a: number[]; b: number[] }> & { free?: Record<string, number[]> }) | null;
 }
 
 export interface Instrument {
@@ -154,6 +190,12 @@ export interface Instrument {
   lanes: Record<LaneKey, LaneState>;
   /** The ordered live lane keys (ascending numeric), derived from `lanes`. */
   readonly laneKeys: LaneKey[];
+  /** Standalone free frames keyed by stable numeric key ("1".."16", D52). */
+  freeFrames: Record<FreeFrameKey, FreeFrameState>;
+  /** The ordered live free-frame keys (ascending numeric). */
+  readonly freeFrameKeys: FreeFrameKey[];
+  /** Focused free-frame key when focus is on a free frame; null when on a lane. */
+  activeFree: FreeFrameKey | null;
   /** The focused lane key; also its displayed lane number. */
   laneKey: LaneKey;
   split3d: boolean;
@@ -172,6 +214,14 @@ export interface Instrument {
   lfo: LfoState;
   lfoAcc: number;
   record: RecordState;
+  /**
+   * D53: evaluation errors per global frame name (`"F3"`, `"A"`, …), rebuilt by
+   * every clocked pass. A frame with an entry keeps its last settled bits, so
+   * this map is the only way to tell a live register from a frozen one. It is
+   * transient session state: never persisted in `.bitwave`, the share link or
+   * the Record log, but reported through `getState()`.
+   */
+  expressionErrors: Record<string, string>;
   drag: number;
   hoverReg: EditKey | null;
   hoverJ: number;
@@ -208,6 +258,20 @@ export const makeLaneState = (key: LaneKey, N: number, binop: BinOp = "xor"): La
   colB: -1,
 });
 
+export const makeFreeFrameState = (
+  key: FreeFrameKey,
+  N: number,
+  opts: { label?: string; sourceNote?: string } = {},
+): FreeFrameState => ({
+  key,
+  reg: makeReg(N),
+  col: -1,
+  visible: true,
+  expression: "",
+  label: sanitizeFreeFrameText(opts.label, FREE_FRAME_LABEL_MAX),
+  sourceNote: sanitizeFreeFrameText(opts.sourceNote, FREE_FRAME_NOTE_MAX),
+});
+
 /* Boot defaults per shipped lane, in lane-key order (lane 3 starts on AND). */
 const BOOT_BINOPS: readonly BinOp[] = ["xor", "xor", "and"];
 const initialLanes = {} as Record<LaneKey, LaneState>;
@@ -219,6 +283,9 @@ export const S: Instrument = {
   N: 64,
   lanes: initialLanes,
   get laneKeys(): LaneKey[] { return Object.keys(this.lanes).sort(compareLaneKeys); },
+  freeFrames: {},
+  get freeFrameKeys(): FreeFrameKey[] { return Object.keys(this.freeFrames).sort(compareFreeFrameKeys); },
+  activeFree: null,
   laneKey: LANE_KEYS[0],
   split3d: false,
   splitPair: [LANE_KEYS[0], LANE_KEYS[1]],
@@ -231,6 +298,7 @@ export const S: Instrument = {
   lfo: { on: false, mode: "rotcw", rate: 4, t: 0, base: null },
   lfoAcc: 0,
   record: { on: false, rows: [], nextStep: 1 },
+  expressionErrors: {},
   drag: -1,
   hoverReg: null,
   hoverJ: -1,
@@ -249,6 +317,28 @@ export const S: Instrument = {
 
 /** The focused lane's state, keyed by `S.laneKey`. */
 export const curLane = (): LaneState => S.lanes[S.laneKey];
+
+/** The focused free frame, or null when focus is on a lane. */
+export const curFreeFrame = (): FreeFrameState | null =>
+  S.activeFree ? (S.freeFrames[S.activeFree] ?? null) : null;
+
+/** True when the active focus target is a standalone free frame. */
+export const isFreeFocused = (): boolean => curFreeFrame() !== null;
+
+/** The register currently shown/edited by the strip, readouts and dock. */
+export const activeReg = (): Reg => {
+  const ff = curFreeFrame();
+  return ff ? ff.reg : focusReg();
+};
+
+/** Whether the active focus target accepts local edits (true for free frames and lane operands). */
+export const activeEditable = (): boolean => (isFreeFocused() ? true : focusEditable());
+
+/** Global frame name of the active focus target ("F1", "A", "Z1", etc.). */
+export const activeFrameLabel = (): string => {
+  const ff = curFreeFrame();
+  return ff ? freeFrameName(ff.key) : frameLabel();
+};
 
 export const nibCount = (): number => S.N >> 2;
 

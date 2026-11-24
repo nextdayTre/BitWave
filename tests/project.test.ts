@@ -75,7 +75,7 @@ test("serialize: format, derived Z never stored, routes and parked bases persist
   const doc = serializeProject(lanes, routing, N, VIEW, null, NOW);
 
   assert.equal(doc.schema, PROJECT_SCHEMA);
-  assert.equal(doc.schema, 4);
+  assert.equal(doc.schema, 5);
   assert.equal(doc.app, "bitwave");
   assert.equal(doc.N, N);
   assert.equal(doc.lanes["1"].a, "0002444281210125");
@@ -175,6 +175,8 @@ test("v2 round-trip preserves focus, frameVis, lfoMode, lfoRate and dataset.inde
     lfoMode: "slide",
     lfoRate: 8,
     expressions: { "1": {}, "2": {}, "3": {} },
+    freeVis: {},
+    freeExpressions: {},
   });
   assert.equal(loaded.dataset?.index, 1);
 
@@ -198,7 +200,7 @@ test("schema 3: expression sources round-trip additively", () => {
     "3": { b: "E + log.E" },
   };
   const doc = serializeProject(lanes, routing, N, VIEW, null, NOW, { expressions });
-  assert.equal(doc.schema, 4);
+  assert.equal(doc.schema, PROJECT_SCHEMA);
   assert.deepEqual(doc.lanes["1"].expressions, { a: "round(1.2599210498948732 * C)" });
   assert.deepEqual(doc.lanes["3"].expressions, { b: "E + log.E" });
   assert.ok(!("expressions" in doc.lanes["2"]), "empty expressions are omitted");
@@ -370,7 +372,7 @@ function lanesForKeys(keys: readonly string[], n = 16): LaneMap {
 
 test("schema 4: the boot three-lane document keeps its values in the new shape", () => {
   const doc = bootProjectDoc();
-  assert.equal(doc.schema, 4);
+  assert.equal(doc.schema, PROJECT_SCHEMA);
   assert.deepEqual(Object.keys(doc.lanes), ["1", "2", "3"]);
   const boot = makeBootLanes(64);
   for (const key of ["1", "2", "3"] as LaneKey[]) {
@@ -394,7 +396,7 @@ test("schema 4: a full-cap document (8 lanes, A–P / Z1–Z8) loads, derives Z 
   evaluateAll(routing, lanes, 16);
 
   const doc = serializeProject(lanes, routing, 16, VIEW, null, NOW);
-  assert.equal(doc.schema, 4);
+  assert.equal(doc.schema, PROJECT_SCHEMA);
   assert.equal(Object.keys(doc.lanes).length, APP_LANE_CAP);
   assert.deepEqual(Object.keys(doc.lanes), keys);
 
@@ -489,9 +491,9 @@ test("schema 4: 9 lanes and invalid lane keys are refused with a clear error", (
       `lane key ${JSON.stringify(bad)} must be refused`,
     );
   }
-  /* A schema-5 document takes the existing newer-schema path. */
+  /* A schema-6 document takes the existing newer-schema path. */
   assert.throws(
-    () => deserializeProject({ ...three, schema: 5 }),
+    () => deserializeProject({ ...three, schema: PROJECT_SCHEMA + 1 }),
     (err: unknown) => err instanceof ProjectError && err.code === "newer-schema",
   );
 });
@@ -526,7 +528,7 @@ test("migration: a schema-1 document upgrades to schema 4 with the additive defa
   assert.equal(toHex(loaded.lanes["3"].Z.bits, 16), toHex(computeZ(loaded.lanes["3"].A.bits, loaded.lanes["3"].B.bits, 16, "add"), 16));
 
   const saved = serializeProject(loaded.lanes, loaded.routing, loaded.N, loaded.view, loaded.dataset, NOW, loaded.extras);
-  assert.equal(saved.schema, 4);
+  assert.equal(saved.schema, PROJECT_SCHEMA);
   assert.deepEqual(Object.keys(saved.lanes), ["1", "2", "3"]);
 });
 
@@ -548,7 +550,7 @@ test("migration: schema-2 and schema-3 documents upgrade additively and keep the
   assert.equal(loaded2.extras.lfoMode, "slide");
   assert.equal(loaded2.extras.lfoRate, 8);
   assert.equal(loaded2.dataset?.index, 1);
-  assert.equal(serializeProject(loaded2.lanes, loaded2.routing, loaded2.N, loaded2.view, loaded2.dataset, NOW, loaded2.extras).schema, 4);
+  assert.equal(serializeProject(loaded2.lanes, loaded2.routing, loaded2.N, loaded2.view, loaded2.dataset, NOW, loaded2.extras).schema, PROJECT_SCHEMA);
 
   const v3 = {
     ...v2,
@@ -566,7 +568,7 @@ test("migration: schema-2 and schema-3 documents upgrade additively and keep the
     "3": { b: "E + log.E" },
   });
   const saved3 = serializeProject(loaded3.lanes, loaded3.routing, loaded3.N, loaded3.view, loaded3.dataset, NOW, loaded3.extras);
-  assert.equal(saved3.schema, 4);
+  assert.equal(saved3.schema, PROJECT_SCHEMA);
   assert.deepEqual(saved3.lanes["1"].expressions, { a: "round(2 * C)" });
   /* The upgraded document loads again byte-identically. */
   const reloaded = deserializeProject(JSON.parse(stringifyProject(saved3)));

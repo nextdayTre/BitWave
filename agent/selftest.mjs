@@ -154,7 +154,7 @@ const MCP_INPUT = [
     params: {
       protocolVersion: "2025-06-18",
       capabilities: {},
-      clientInfo: { name: "bitwave-selftest", version: "1.5.0" },
+      clientInfo: { name: "bitwave-selftest", version: "1.6.1" },
     },
   }),
   JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }),
@@ -235,7 +235,7 @@ function runChecks() {
       "relatedTools",
     ]);
     assert.equal(envelope.data.id, "bitwave");
-    assert.equal(envelope.data.version, "1.5.0");
+    assert.equal(envelope.data.version, "1.6.1");
     assert.equal(envelope.data.schemaVersion, 1);
     assert.deepEqual(
       envelope.data.tools.map((tool) => tool.name),
@@ -422,7 +422,7 @@ function runChecks() {
     assert.ok(data.payloadChars < 2000, `payload ${data.payloadChars} exceeds the budget`);
     const decoded = parseShareHash(String(data.fragment));
     assert.ok(decoded && typeof decoded === "object");
-    assert.equal(decoded.schema, 4);
+    assert.equal(decoded.schema, 5);
     assert.deepEqual(Object.keys(decoded.lanes), ["1", "2", "3", "4", "5", "6", "7", "8"]);
     const loaded = deserializeProject(decoded);
     assert.equal(loaded.N, 64);
@@ -442,8 +442,10 @@ function runChecks() {
       "width",
       "lane",
       "frame",
+      "activeFree",
       "view",
       "lanes",
+      "freeFrames",
       "lfo",
       "dataset",
       "editing",
@@ -454,10 +456,12 @@ function runChecks() {
     assert.equal(state.width, 64);
     assert.equal(state.lane, 1);
     assert.equal(state.frame, "A");
+    assert.equal(state.activeFree, null);
+    assert.deepEqual(state.freeFrames, {});
     assert.equal(state.dataset, null);
     assert.ok(String(state.deeplink).startsWith("bitwave-v2.html#bw="));
     assert.deepEqual(Object.keys(state.lanes), ["1", "2", "3"]);
-    assert.deepEqual(state.bridge, { schemaVersion: 1, version: "1.5.0" });
+    assert.deepEqual(state.bridge, { schemaVersion: 1, version: "1.6.1" });
   });
 
   check("state --project reports the eight-lane document by stable key", () => {
@@ -474,7 +478,7 @@ function runChecks() {
     assert.equal(state.lanes["8"].frames.O, "DEADBEEFCAFEBABE");
     assert.equal(state.lanes["8"].frames.P, "0123456789ABCDEF");
     assert.deepEqual(state.view.splitPair, [7, 8]);
-    assert.deepEqual(state.bridge, { schemaVersion: 1, version: "1.5.0" });
+    assert.deepEqual(state.bridge, { schemaVersion: 1, version: "1.6.1" });
   });
 
   check("state --project reports the dataset cursor", () => {
@@ -529,7 +533,7 @@ function runChecks() {
     assert.equal(initialize.jsonrpc, "2.0");
     assert.equal(initialize.result.protocolVersion, "2025-06-18");
     assert.deepEqual(initialize.result.capabilities, { tools: {} });
-    assert.deepEqual(initialize.result.serverInfo, { name: "bitwave", version: "1.5.0" });
+    assert.deepEqual(initialize.result.serverInfo, { name: "bitwave", version: "1.6.1" });
     const ping = responses.find((response) => response.id === 2);
     assert.deepEqual(ping.result, {});
     const list = responses.find((response) => response.id === 3);

@@ -12,9 +12,12 @@ import { DEMO } from "../state/dataset.ts";
 import {
   OPSYM,
   S,
+  curFreeFrame,
   curLane,
   focusKey,
   frameName,
+  freeFrameName,
+  liveFreeFrameKeys,
   nibCount,
   nibWeightPow,
   regOf,
@@ -289,6 +292,97 @@ import { nibsEl, renderStrip, stripEl } from "./strip.js";
     });
   }
 
+  /** Single-register 3-D depth plate for a focused free frame (D52). */
+  function drawFreeField3d(n, ff, rect = G) {
+    const AX = rect.x0, BX = rect.x1, AY = rect.y0, BY = rect.y1;
+    const paneW = Math.max(20, BX - AX);
+    const ph = Math.max(20, BY - AY);
+    const pw = Math.min(paneW, ph * 2.45);
+    const cx = (AX + BX) / 2;
+    const cy = (AY + BY) / 2;
+    const w = pw * 0.64;
+    const h = ph * 0.56;
+    const left = cx - w / 2;
+    const top = cy - h / 2;
+    const bottom = cy + h / 2;
+
+    ctx.strokeStyle = rgbaToken(C_ACCENT, 0.16);
+    ctx.lineWidth = 1;
+    ctx.strokeRect(left, top, w, h);
+
+    const xs = new Array(n);
+    const ys = new Array(n);
+    for (let j = 0; j < n; j++) {
+      xs[j] = left + ((j + 0.5) / n) * w;
+      ys[j] = bottom - (ff.reg.anim[j] / 15) * h;
+    }
+    const sp = buildSpline(xs, ys);
+    ctx.lineJoin = "round";
+    ctx.lineCap = "round";
+    ctx.strokeStyle = rgbaToken(C_ACCENT, 0.16);
+    ctx.lineWidth = 7;
+    strokeCurve(sp, left, left + w);
+    ctx.strokeStyle = rgbaToken(C_ACCENT_HI, 0.92);
+    ctx.lineWidth = 2.0;
+    strokeCurve(sp, left, left + w);
+
+    const name = freeFrameName(ff.key);
+    const parts = [name];
+    if (ff.label) parts.push(ff.label);
+    else if (DEMO.rows.length > 0 && ff.col >= 0 && DEMO.cols[ff.col]) parts.push(shortCol(DEMO.cols[ff.col]));
+    if (ff.sourceNote) parts.push(ff.sourceNote);
+    ctx.font = `10px ${MONO}`;
+    ctx.textAlign = "left";
+    ctx.textBaseline = "top";
+    ctx.fillStyle = rgbaToken(C_DIMMER, 0.92);
+    ctx.fillText(parts.join(" \u00B7 "), left + 8, top + 6, Math.max(20, w - 16));
+  }
+
+  function drawFreeLegend(x1, ly, activeFreeKey) {
+    const keys = liveFreeFrameKeys();
+    if (keys.length <= 1) return;
+    const items = keys.map((k) => {
+      const ff = S.freeFrames[k];
+      return {
+        freeKey: k,
+        t: ff.label ? `${freeFrameName(k)}·${shortCol(ff.label, 10)}` : freeFrameName(k),
+        active: k === activeFreeKey,
+        vis: ff.visible,
+      };
+    });
+    ctx.font = `10px ${MONO}`;
+    ctx.textBaseline = "middle";
+    ctx.textAlign = "left";
+    const eyeW = 14;
+    const lineW = 12;
+    const textGap = 4;
+    const itemGap = 12;
+    let total = 0;
+    for (const it of items) {
+      total += eyeW + lineW + textGap + ctx.measureText(it.t).width + itemGap;
+    }
+    let lx = Math.max(G.x0, x1 - total);
+    const hits = [];
+    for (const it of items) {
+      drawEyeGlyph(lx + 7, ly, it.vis);
+      ctx.save();
+      ctx.setLineDash(it.active ? [] : [4, 4]);
+      ctx.lineWidth = it.active ? 2.2 : 1.4;
+      ctx.strokeStyle = `rgba(52,211,153,${it.vis ? (it.active ? 0.95 : 0.45) : 0.16})`;
+      ctx.beginPath();
+      ctx.moveTo(lx + eyeW, ly);
+      ctx.lineTo(lx + eyeW + lineW, ly);
+      ctx.stroke();
+      ctx.restore();
+      ctx.fillStyle = it.vis ? (it.active ? C_HANDLE_HI : C_DIMMER) : "rgba(63,72,89,0.55)";
+      ctx.fillText(it.t, lx + eyeW + lineW + textGap, ly);
+      const itemW = eyeW + lineW + textGap + ctx.measureText(it.t).width + itemGap;
+      hits.push({ x: lx - 4, y: ly - 10, w: itemW + 4, h: 20, freeKey: it.freeKey });
+      lx += itemW;
+    }
+    G.legendHits = hits;
+  }
+
   /* Ruler, zero-crossing level and the ∞ axis. Drawn after the depth stack
      (so the stack cannot erase them) but before the curves. */
   function drawGuides(x0, x1, y0, y1, cx, cy, yOf) {
@@ -376,14 +470,17 @@ import { nibsEl, renderStrip, stripEl } from "./strip.js";
     ctx.lineJoin = "round";
     ctx.lineCap = "round";
 
-    const ek = focusKey();
+    const ff = curFreeFrame();
+    const ek = ff ? "a" : focusKey();
     let handleSp = null;
 
     if (S.view3d) {
       /* The field is self-contained: no ruler, no handles, no ∞ marker.
          Split 3-D subdivides only the canvas plot, keeping G.x0..G.x1 intact. */
       const fieldY0 = Math.min(y1 - 10, y0 + 6);
-      if (S.split3d) {
+      if (ff) {
+        drawFreeField3d(n, ff, { x0, x1, y0: fieldY0, y1 });
+      } else if (S.split3d) {
         const mid = Math.floor(VW / 2);
         const splitPad = narrow ? 10 : Math.min(28, Math.max(16, Math.round(VW * 0.02)));
 
@@ -428,6 +525,24 @@ import { nibsEl, renderStrip, stripEl } from "./strip.js";
 
     if (S.view3d) {
       /* nothing further — the field is complete */
+    } else if (ff) {
+      /* Overlay any other visible free frames in subtle dashed lines for chain comparison. */
+      for (const otherKey of liveFreeFrameKeys()) {
+        if (otherKey === ff.key) continue;
+        const other = S.freeFrames[otherKey];
+        if (!other.visible) continue;
+        paintCurve(spFor(other.reg), {
+          width: 1.35,
+          dash: [5, 4],
+          color: "rgba(52,211,153,0.34)",
+        });
+      }
+      const spF = spFor(ff.reg);
+      G.spA = ff.visible ? spF : null;
+      G.spB = null;
+      if (ff.visible) paintCurve(spF, { width: 2.2, grad: true, glow: true });
+      drawFreeLegend(x1, y0 + 8, ff.key);
+      handleSp = ff.visible ? spF : null;
     } else if (!S.showB) {
       const spA = spFor(S.A);
       G.spA = curLane().frameVis.a ? spA : null;
@@ -501,7 +616,7 @@ import { nibsEl, renderStrip, stripEl } from "./strip.js";
        value × 2^weight. At the LSB this reads "n × 2^0", i.e. just n. */
     if (S.hoverJ >= 0 && S.hoverReg === ek && handleSp) {
       const j = S.hoverJ;
-      const v = regOf(ek).target[j];
+      const v = (ff ? ff.reg : regOf(ek)).target[j];
       const txt = `${v} \u00D7 2^${nibWeightPow(j)}`;
       const hx = Math.min(x1 - 44, Math.max(x0 + 44, xs[j]));
       const hy = Math.max(y0 + 13, handleSp.ys[j] - 15);

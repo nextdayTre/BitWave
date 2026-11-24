@@ -19,6 +19,13 @@ export const APP_LANE_CAP = 8;
 /** Hard ceiling of the single-letter operand grammar (`A`–`Z`, two per lane). */
 export const NAME_CEILING = 13;
 
+/** Most free frames the app offers (F1..F16; grammar F<n> has no 13-lane ceiling, D52). */
+export const APP_FREE_FRAME_CAP = 16;
+/** Maximum length for an optional free-frame display label (e.g. "fft_mag"). */
+export const FREE_FRAME_LABEL_MAX = 48;
+/** Maximum length for an optional free-frame provenance/source note (e.g. "numpy.fft.rfft"). */
+export const FREE_FRAME_NOTE_MAX = 160;
+
 export interface LaneDef {
   /** Stable lane identity: the 1-based name index as a string ("1".."13"). */
   key: string;
@@ -137,4 +144,61 @@ export function frameRefFromName(
     if (upper === def.z) return { lane: def.key, frame: "z", name: def.z };
   }
   return null;
+}
+
+/* ── Free-frame naming primitives (D52: F1..F16) ─────────────────────────── */
+
+/** The stable free-frame key for a 0-based index: `freeFrameKey(0)` is "1". */
+export function freeFrameKey(index: number, cap: number = APP_FREE_FRAME_CAP): string {
+  if (!Number.isInteger(index) || index < 0 || index >= cap) {
+    throw new RangeError(`free-frame index must be an integer in [0, ${cap - 1}]; got ${String(index)}`);
+  }
+  return String(index + 1);
+}
+
+/** The 0-based index for a free-frame key ("1".."16"); -1 when invalid. */
+export function freeFrameIndex(value: unknown, cap: number = APP_FREE_FRAME_CAP): number {
+  if (typeof value !== "string" || !/^[1-9]\d*$/.test(value)) return -1;
+  const n = Number(value);
+  if (!Number.isInteger(n) || n < 1 || n > cap) return -1;
+  return n - 1;
+}
+
+/** Canonical global display name for a free-frame key: `"1"` -> `"F1"`. */
+export function freeFrameName(key: string): string {
+  return `F${key}`;
+}
+
+/** Ascending numeric free-frame key order ("1" < "2" < ... < "16"). */
+export function compareFreeFrameKeys(a: string, b: string): number {
+  return Number(a) - Number(b);
+}
+
+/** All canonical free-frame names F1..F<count> in order. */
+export function freeFrameNames(count: number = APP_FREE_FRAME_CAP): string[] {
+  const out: string[] = [];
+  for (let i = 1; i <= count; i += 1) out.push(`F${i}`);
+  return out;
+}
+
+/**
+ * Parse a canonical free-frame global name (`F1`..`F16`, case-insensitive) into
+ * its stable numeric key (`"1"`..`"16"`), or null if invalid. Never matches
+ * single-letter `"F"` (which is Lane 3 operand B).
+ */
+export function freeFrameKeyFromName(
+  value: unknown,
+  cap: number = APP_FREE_FRAME_CAP,
+): string | null {
+  if (typeof value !== "string") return null;
+  const match = /^[fF]([1-9]\d*)$/.exec(value.trim());
+  if (!match) return null;
+  const key = match[1];
+  return freeFrameIndex(key, cap) >= 0 ? key : null;
+}
+
+/** Sanitize an optional free-frame label or provenance note (trim + length cap). */
+export function sanitizeFreeFrameText(value: unknown, maxLen: number): string {
+  if (typeof value !== "string") return "";
+  return value.replace(/[\r\n\t]+/g, " ").trim().slice(0, maxLen);
 }

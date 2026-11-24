@@ -3,12 +3,20 @@ import {
   OPSYM,
   S,
   SIZES,
+  activeEditable,
+  activeFrameLabel,
+  activeReg,
+  curFreeFrame,
   curLane,
   editKey,
   editReg,
   focusEditable,
   focusKey,
   frameName,
+  freeFrameKeyFromName,
+  freeFrameName,
+  isFreeFocused,
+  liveFreeFrameKeys,
   liveLaneKeys,
   nibAt,
   nibCount,
@@ -18,13 +26,18 @@ import {
   syncTarget,
 } from "./state/instrument.ts";
 import {
+  addFreeFrame,
   addLane,
   applyPreset,
   copyLane,
+  deleteFreeFrame,
   deleteLane,
+  duplicateFreeFrame,
   duplicateLane,
+  selectFreeFrame as selectFreeFrameState,
   setBinop,
   setFocus,
+  setFreeFrameMeta,
   setLiveNibble,
   setNibble,
   toggleBit,
@@ -38,6 +51,10 @@ import {
   bindData,
   bindExpression,
   bindFrame,
+  bindFreeData,
+  bindFreeExpression,
+  bindFreeFrame,
+  bindFreeNone,
   bindNone,
   isFocusDriven,
   isInputDriven,
@@ -59,6 +76,8 @@ import { createHelpPanel } from "./ui/help.js";
 import { createAgentPanel } from "./ui/agent-panel.js";
 import { createAgentBridge } from "./agent/bridge.js";
 import { createProjectMenu } from "./ui/project-menu.js";
+import { createPresetsMenu } from "./ui/presets-menu.js";
+import { PATCH_PRESETS } from "./core/presets.ts";
 import { setObservationStatus } from "./io/observations.js";
 import { createAutosave } from "./io/autosave.js";
 import { createShareUrl } from "./io/share-url.js";
@@ -159,6 +178,10 @@ import { toHexOf, updateReadouts } from "./render/readouts.js";
           b: remap(S.lanes[k].B),
         };
       }
+      const mappedFree = {};
+      for (const fk of liveFreeFrameKeys()) {
+        mappedFree[fk] = remap(S.freeFrames[fk].reg);
+      }
 
       S.N = newN;
 
@@ -173,6 +196,14 @@ import { toHexOf, updateReadouts } from "./render/readouts.js";
         sl.Z.bits = new Uint8Array(newN);
         sl.Z.target = new Array(newNibs).fill(0);
         sl.Z.anim = new Array(newNibs).fill(0);
+      }
+      for (const fk of liveFreeFrameKeys()) {
+        const r = S.freeFrames[fk].reg;
+        const vals = mappedFree[fk];
+        r.bits = new Uint8Array(newN);
+        r.target = vals.slice();
+        r.anim = vals.slice();
+        for (let j = 0; j < newNibs; j++) setNibAt(r.bits, j, vals[j]);
       }
 
       remapParkedBases(oldN, newN);
@@ -200,6 +231,8 @@ import { toHexOf, updateReadouts } from "./render/readouts.js";
        Reduced motion makes every eased transition instant. */
     if (prefersReducedMotion()) instant = true;
     store.patch(() => {
+      const ff = curFreeFrame();
+      if (ff) syncTarget(ff.reg, instant);
       syncTarget(S.A, instant);
       syncTarget(S.B, instant);
       evaluate(instant);
@@ -228,6 +261,7 @@ import { toHexOf, updateReadouts } from "./render/readouts.js";
   /* With two operands live, grabbing picks whichever curve is nearer
      the pointer — the instrument should never make you hunt for a knob. */
   function nearestReg(px, py) {
+    if (isFreeFocused()) return "a";
     if (!S.showB || S.view3d) return editKey();
     const ya = curLane().frameVis.a && G.spA ? evalSpline(G.spA, px) : Infinity;
     const yb = curLane().frameVis.b && G.spB ? evalSpline(G.spB, px) : Infinity;
@@ -237,9 +271,9 @@ import { toHexOf, updateReadouts } from "./render/readouts.js";
 
   /* The drawn legend entries double as hit targets. */
   function legendHitAt(px, py) {
-    if (S.view3d || !S.showB) return null;
+    if (S.view3d || (!S.showB && !isFreeFocused())) return null;
     for (const h of G.legendHits) {
-      if (px >= h.x && px <= h.x + h.w && py >= h.y && py <= h.y + h.h) return h.key;
+      if (px >= h.x && px <= h.x + h.w && py >= h.y && py <= h.y + h.h) return h;
     }
     return null;
   }
@@ -251,29 +285,29 @@ import { toHexOf, updateReadouts } from "./render/readouts.js";
 
   function setFromPointer(e) {
     if (S.view3d) return;            // the field view is read-only
-    if (!focusEditable()) return;    // a focused derived frame is read-only
+    if (!activeEditable()) return;   // a focused derived frame is read-only
     if (isFocusDriven()) return;     // a routed input has no local edit
     const r = canvas.getBoundingClientRect();
     const px = e.clientX - r.left;
     const py = e.clientY - r.top;
 
     store.patch(() => {
+      const ff = curFreeFrame();
       if (S.drag < 0) {
         controls.lfoStop();
         const j = nearestNibble(px);
         if (j < 0) return;
         S.drag = j;
-        S.hoverReg = nearestReg(px, py);
+        S.hoverReg = ff ? "a" : nearestReg(px, py);
         S.hoverJ = j;
-        setFocus(curLane(), S.hoverReg);
+        if (!ff) setFocus(curLane(), S.hoverReg);
         controls.syncEditUi();
         renderStrip();
         canvas.classList.add("grabbing");
         document.getElementById("hint").classList.add("off");
       }
 
-      const k = S.hoverReg || editKey();
-      const reg = regOf(k);
+      const reg = ff ? ff.reg : regOf(S.hoverReg || editKey());
       const v = valueFromY(py);
       setLiveNibble(reg, S.drag, v);
       evaluate();
@@ -291,15 +325,19 @@ import { toHexOf, updateReadouts } from "./render/readouts.js";
         }
         return;
       }
-      if (!focusEditable()) return;  // derived frame focused — read-only
+      if (!activeEditable()) return;  // derived frame focused — read-only
       const r = canvas.getBoundingClientRect();
       const hit = legendHitAt(e.clientX - r.left, e.clientY - r.top);
       if (hit) {
-        frameNav.setFrameVis(S.laneKey, hit, !curLane().frameVis[hit]);
+        if (hit.freeKey) {
+          const ff = S.freeFrames[hit.freeKey];
+          if (ff) frameNav.setFreeFrameVis(hit.freeKey, !ff.visible);
+        } else {
+          frameNav.setFrameVis(S.laneKey, hit.key, !curLane().frameVis[hit.key]);
+        }
         e.preventDefault();
         return;
       }
-      // Throws if the pointer is not active (released early, or synthetic).
       try { canvas.setPointerCapture(e.pointerId); } catch (_) { /* non-fatal */ }
       setFromPointer(e);
     });
@@ -310,7 +348,7 @@ import { toHexOf, updateReadouts } from "./render/readouts.js";
     const px = e.clientX - r.left;
     const py = e.clientY - r.top;
     canvas.classList.toggle("legend-hover", Boolean(legendHitAt(px, py)));
-    if (!focusEditable()) {
+    if (!activeEditable()) {
       if (S.hoverReg !== null) { S.hoverReg = null; S.hoverJ = -1; syncHoverClasses(); }
       return;
     }
@@ -351,14 +389,14 @@ import { toHexOf, updateReadouts } from "./render/readouts.js";
     const nib = e.target.closest(".nib");
     const bit = e.target.closest(".bit");
     if (!bit) {
-      if (nib && focusEditable() && !isFocusDriven()) nib.focus();
+      if (nib && activeEditable() && !isFocusDriven()) nib.focus();
       return;
     }
-    if (!focusEditable()) return;   // Z is derived — never editable
+    if (!activeEditable()) return;   // Z is derived — never editable
     if (isFocusDriven()) return;    // a routed input has no local edit
     controls.lfoStop();
     store.patch(() => {
-      const j = toggleBit(editReg(), Number(bit.dataset.b));
+      const j = toggleBit(activeReg(), Number(bit.dataset.b));
       evaluate();
       patchNibble(j);
       updateReadouts();
@@ -366,12 +404,8 @@ import { toHexOf, updateReadouts } from "./render/readouts.js";
     if (nib) nib.focus();
   });
 
-  /* Keyboard editing (DESIGN §6): the strip is the semantic editor.
-     ↑/↓ ±1 · ←/→ move nibble focus · Home/End first/last · 0–F set the digit.
-     Handled keys stop propagation so the global ←/→ CSV stepper does not also
-     fire; a manual edit also yields the LFO snapshot (DESIGN §10.19). */
   nibsEl.addEventListener("keydown", (e) => {
-    if (!focusEditable() || isFocusDriven()) return;
+    if (!activeEditable() || isFocusDriven()) return;
     const nib = e.target.closest(".nib");
     if (!nib) return;
     const j = Number(nib.dataset.j);
@@ -391,16 +425,16 @@ import { toHexOf, updateReadouts } from "./render/readouts.js";
       return;
     }
 
+    const reg = activeReg();
     let next = null;
-    if (e.key === "ArrowUp") next = nibValue(editReg(), j) + 1;
-    else if (e.key === "ArrowDown") next = nibValue(editReg(), j) - 1;
+    if (e.key === "ArrowUp") next = nibValue(reg, j) + 1;
+    else if (e.key === "ArrowDown") next = nibValue(reg, j) - 1;
     else if (/^[0-9a-f]$/i.test(e.key)) next = parseInt(e.key, 16);
     if (next === null) return;
     e.preventDefault();
     e.stopPropagation();
     if (next < 0 || next > 15) return;          // clamped 0–F, no wrap
 
-    const reg = editReg();
     if (nibValue(reg, j) === next) return;
     controls.lfoStop();
     store.patch(() => {
@@ -411,12 +445,10 @@ import { toHexOf, updateReadouts } from "./render/readouts.js";
     });
   });
 
-  /* Mouse-wheel over a hex glyph nudges that nibble by ±1, clamped 0–F.
-     Same update path as a bit click; no wrap and no page scrolling. */
   nibsEl.addEventListener("wheel", (e) => {
     if (S.drag >= 0 || e.deltaY === 0) return;
     if (e.ctrlKey || e.metaKey) return; // leave browser zoom alone
-    if (!focusEditable()) return;       // Z is derived — never editable
+    if (!activeEditable()) return;      // Z is derived — never editable
     if (isFocusDriven()) return;        // a routed input has no local edit
     const hexEl = e.target.closest(".hex");
     if (!hexEl) return;
@@ -428,7 +460,7 @@ import { toHexOf, updateReadouts } from "./render/readouts.js";
     e.preventDefault();
     controls.lfoStop();
     store.patch(() => {
-      const reg = editReg();
+      const reg = activeReg();
       const current = nibValue(reg, j);
       const next = Math.max(0, Math.min(15, current + (e.deltaY < 0 ? 1 : -1)));
       if (next === current) return;
@@ -440,10 +472,10 @@ import { toHexOf, updateReadouts } from "./render/readouts.js";
   }, { passive: false });
 
   nibsEl.addEventListener("pointerover", (e) => {
-    if (!focusEditable()) return;
+    if (!activeEditable()) return;
     const nib = e.target.closest(".nib");
     const j = nib ? Number(nib.dataset.j) : -1;
-    const hotKey = focusKey();
+    const hotKey = isFreeFocused() ? "a" : focusKey();
     if (j !== S.hoverJ || S.hoverReg !== hotKey) {
       S.hoverJ = j;
       S.hoverReg = j >= 0 ? hotKey : null;
@@ -542,6 +574,7 @@ import { toHexOf, updateReadouts } from "./render/readouts.js";
   const frameNav = createFrameNavigator({
     store,
     selectLane,
+    selectFreeFrame: selectFreeFrameFromUi,
     enableBOnLane,
     syncEditUi: (...args) => controls.syncEditUi(...args),
     syncViewUi,
@@ -552,6 +585,9 @@ import { toHexOf, updateReadouts } from "./render/readouts.js";
     addLaneFromUi,
     duplicateLaneFromUi,
     deleteLaneFromUi,
+    addFreeFrameFromUi,
+    duplicateFreeFrameFromUi,
+    deleteFreeFrameFromUi,
     renderSources: () => sources.render(),
     lfoStop: (...args) => controls.lfoStop(...args),
   });
@@ -574,6 +610,7 @@ import { toHexOf, updateReadouts } from "./render/readouts.js";
     element: document.getElementById("stageBar"),
     framesBtn: document.getElementById("framesBtn"),
     selectLane,
+    selectFreeFrame: selectFreeFrameFromUi,
     selectLaneInPane,
     setSplitMode,
     focusSplitPane,
@@ -629,6 +666,13 @@ import { toHexOf, updateReadouts } from "./render/readouts.js";
   }
 
   const hintEl = document.getElementById("hint");
+
+  /* D54 — analytical & LFO modulation presets menu (focus-in menu, same contract as project…). */
+  const presetsMenu = createPresetsMenu({
+    button: document.getElementById("presetsBtn"),
+    presets: PATCH_PRESETS,
+    onSelect: (preset) => loadPatchPreset(preset),
+  });
 
   /* F5 — project document menu: save, open, reset (explicit, focus-in menu). */
   const projectMenu = createProjectMenu({
@@ -795,10 +839,74 @@ import { toHexOf, updateReadouts } from "./render/readouts.js";
     });
   }
 
+  function addFreeFrameFromUi(opts = {}) {
+    controls.lfoStop();
+    let key = null;
+    store.patch(() => {
+      if (S.copyArmed) copyMenu.close(false);
+      key = addFreeFrame(opts);
+      if (!key) return;
+      evaluate(true);
+      refreshActiveLaneUi();
+    });
+    if (key && sources.isOpen()) sources.render();
+    return key;
+  }
+
+  function duplicateFreeFrameFromUi(srcKey) {
+    controls.lfoStop();
+    let key = null;
+    store.patch(() => {
+      if (S.copyArmed) copyMenu.close(false);
+      key = duplicateFreeFrame(srcKey);
+      if (!key) return;
+      evaluate(true);
+      refreshActiveLaneUi();
+    });
+    if (key && sources.isOpen()) sources.render();
+    return key;
+  }
+
+  function deleteFreeFrameFromUi(key) {
+    controls.lfoStop();
+    let result = { ok: false, reason: "unknown" };
+    store.patch(() => {
+      if (S.copyArmed) copyMenu.close(false);
+      result = deleteFreeFrame(key);
+      if (!result.ok) return;
+      evaluate(true);
+      refreshActiveLaneUi();
+    });
+    if (result.ok && sources.isOpen()) sources.render();
+    return result;
+  }
+
+  function selectFreeFrameFromUi(key) {
+    if (!S.freeFrames[key]) return false;
+    if (S.copyArmed) copyMenu.close(false);
+    store.patch(() => {
+      selectFreeFrameState(key);
+      refreshActiveLaneUi();
+    });
+    return true;
+  }
+
+  function setFreeFrameMetaFromUi(key, meta) {
+    const ff = S.freeFrames[key];
+    if (!ff) return false;
+    store.patch(() => {
+      setFreeFrameMeta(ff, meta);
+      refreshActiveLaneUi();
+    });
+    if (sources.isOpen()) sources.render();
+    return true;
+  }
+
   function selectLane(key) {
     if (!S.lanes[key]) return;
     if (S.copyArmed) copyMenu.close(false);
     store.patch(() => {
+      S.activeFree = null;
       if (S.view3d && S.split3d) {
         if (S.splitPair[0] === key && S.splitPair[1] !== key) {
           S.activePane = 0;
@@ -910,9 +1018,11 @@ import { toHexOf, updateReadouts } from "./render/readouts.js";
   }
 
   /* Bridge LFO setter — mirror the motion controls' values after a patch. */
+  const lfoBtn = document.getElementById("lfoBtn");
   const lfoModeSel = document.getElementById("lfoMode");
   const lfoRateSel = document.getElementById("lfoRate");
   function syncLfoUi() {
+    if (lfoBtn) lfoBtn.setAttribute("aria-pressed", String(S.lfo.on));
     if (lfoModeSel) lfoModeSel.value = S.lfo.mode;
     if (lfoRateSel) lfoRateSel.value = String(S.lfo.rate);
   }
@@ -956,6 +1066,32 @@ import { toHexOf, updateReadouts } from "./render/readouts.js";
 
   /** Source write through the instrument's own commands (bridge setSource/setRoute). */
   function applySourceSource(frame, source) {
+    const parseFromPort = (raw) => {
+      const fk = freeFrameKeyFromName(raw);
+      if (fk !== null) return { free: fk };
+      const [lane, frameKey] = String(raw).split(".");
+      return { lane, frame: frameKey };
+    };
+    const freeKey = freeFrameKeyFromName(frame);
+    if (freeKey !== null) {
+      const ff = S.freeFrames[freeKey];
+      if (!ff) return false;
+      store.patch(() => {
+        if (source.kind === "none") bindFreeNone(ff);
+        else if (source.kind === "data") {
+          bindFreeData(ff, source.column);
+          csv.fitColumns();
+        } else {
+          bindFreeFrame(ff, parseFromPort(source.from));
+        }
+        evaluate();
+        controls.syncEditUi();
+        renderStrip();
+        updateReadouts();
+      });
+      if (source.kind === "data") csv.applyExample(DEMO.i, true, true);
+      return true;
+    }
     const ref = frameRefFromName(frame);
     if (!ref || ref.frame === "z") return false;
     const sl = S.lanes[ref.lane];
@@ -966,8 +1102,7 @@ import { toHexOf, updateReadouts } from "./render/readouts.js";
         bindData(sl, ref.frame, source.column);
         csv.fitColumns();
       } else {
-        const [lane, frameKey] = String(source.from).split(".");
-        bindFrame(sl, ref.frame, { lane, frame: frameKey });
+        bindFrame(sl, ref.frame, parseFromPort(source.from));
       }
       evaluate();
       controls.syncEditUi();
@@ -980,6 +1115,20 @@ import { toHexOf, updateReadouts } from "./render/readouts.js";
 
   /** External-routing expression write through the instrument's own commands. */
   function applyExpressionSource(frame, text) {
+    const freeKey = freeFrameKeyFromName(frame);
+    if (freeKey !== null) {
+      const ff = S.freeFrames[freeKey];
+      if (!ff) return false;
+      store.patch(() => {
+        bindFreeExpression(ff, text);
+        evaluate();
+        controls.syncEditUi();
+        renderStrip();
+        updateReadouts();
+      });
+      if (sources.isOpen()) sources.render();
+      return true;
+    }
     const ref = frameRefFromName(frame);
     if (!ref || ref.frame === "z") return false;
     const sl = S.lanes[ref.lane];
@@ -1060,6 +1209,11 @@ import { toHexOf, updateReadouts } from "./render/readouts.js";
         if (sl.showB) { easeReg(sl.B); easeReg(sl.Z); }
       }
     }
+    for (const fk of liveFreeFrameKeys()) {
+      const ff = S.freeFrames[fk];
+      if (reduce) ff.reg.anim = ff.reg.target.slice();
+      else easeReg(ff.reg);
+    }
     draw();
     requestAnimationFrame(loop);
   }
@@ -1075,6 +1229,7 @@ import { toHexOf, updateReadouts } from "./render/readouts.js";
     S.drag = -1;
     controls.setSize(SIZES.indexOf(S.N));
     controls.syncEditUi();
+    syncLfoUi();
     syncViewUi();
     csv.renderUi();
     if (frameNav.isOpen()) frameNav.render(S.laneKey);
@@ -1112,6 +1267,50 @@ import { toHexOf, updateReadouts } from "./render/readouts.js";
 
   function openProjectFile() {
     projectFileInput.click();
+  }
+
+  function loadPatchPreset(preset) {
+    controls.lfoStop();
+    if (S.framesView) frameNav.close(false);
+    if (!applyLoadedProject(preset.build(), preset.name, { quiet: true })) return;
+
+    if (preset.folds) {
+      store.patch(() => {
+        for (const [laneKey, fold] of Object.entries(preset.folds)) {
+          if (S.lanes[laneKey]) S.lanes[laneKey].fold = fold;
+        }
+      });
+      stageBar.sync();
+    }
+
+    const amountEl = document.getElementById("amount");
+    if (amountEl) amountEl.value = String(preset.amount);
+
+    if (preset.record) {
+      /* Arm Record, capture the seeded registers as row 1, then evaluate once so
+         `log.<frame>` expressions resolve with zero startup errors. */
+      store.patch(() => { recordUi.start(); });
+      store.patch(() => { /* record row 1 from initial seeded state */ });
+      store.patch(() => {
+        evaluate(true);
+        renderStrip();
+        updateReadouts();
+      });
+      if (sources.isOpen()) sources.render();
+    }
+
+    const startLfo = preset.autoLfo && !prefersReducedMotion();
+    if (startLfo) {
+      if (preset.record) recordUi.skipNextSnapshot();
+      controls.lfoStart();
+    }
+
+    share.start();
+    const stateNote = startLfo
+      ? (preset.record ? "record + LFO running" : "LFO running")
+      : (preset.record ? "record armed · press LFO to animate" : "press LFO to animate");
+    setSourceStatus(`preset · ${preset.name} · ${stateNote}`);
+    liveStatus.say(`loaded preset ${preset.name}`);
   }
 
   function resetInstrument() {
@@ -1166,6 +1365,10 @@ import { toHexOf, updateReadouts } from "./render/readouts.js";
           const value = frameName(card.dataset.lane, card.dataset.frame);
           if (card.getAttribute("data-agent-frame") !== value) card.setAttribute("data-agent-frame", value);
         }
+        for (const card of gridEl.querySelectorAll("[data-free]")) {
+          const value = freeFrameName(card.dataset.free);
+          if (card.getAttribute("data-agent-frame") !== value) card.setAttribute("data-agent-frame", value);
+        }
       }
     };
     const observe = (el) => {
@@ -1182,6 +1385,10 @@ import { toHexOf, updateReadouts } from "./render/readouts.js";
       share,
       selectLane,
       selectFrame: (laneKey, frame) => frameNav.selectFrame(laneKey, frame),
+      selectFreeFrame: selectFreeFrameFromUi,
+      addFreeFrame: addFreeFrameFromUi,
+      removeFreeFrame: deleteFreeFrameFromUi,
+      setFreeFrameMeta: setFreeFrameMetaFromUi,
       setView: setViewMode,
       resizeRegister,
       setSize: (index) => controls.setSize(index),

@@ -20,6 +20,9 @@ import { DEFAULT_LANE_COUNT, laneDefs } from "./lanedefs.ts";
 /** Stable lane identity: the name index as a string ("1".."13"). */
 export type LaneKey = string;
 
+/** Stable free-frame identity: the 1-based numeric key as a string ("1".."16", D52). */
+export type FreeFrameKey = string;
+
 /** Display order of the shipped lanes: the default three from `lanedefs.ts`. */
 export const LANE_KEYS: readonly LaneKey[] = laneDefs(DEFAULT_LANE_COUNT).map((def) => def.key);
 
@@ -58,14 +61,45 @@ export interface Lane {
 /** Lane map keyed by the stable lane key (never by array position). */
 export type LaneMap = Record<LaneKey, Lane>;
 
-export interface SourcePort {
+/** One standalone free frame (single register decoupled from A/B/Z lane housing, D52). */
+export interface FreeFrame {
+  key: FreeFrameKey;
+  reg: Register;
+  /** Dataset column index (-1 = local). */
+  col: number;
+  /** Optional short stage label, e.g. "hanning". */
+  label?: string;
+  /** Optional external library/function provenance note, e.g. "numpy.hanning(16)". */
+  sourceNote?: string;
+}
+
+/** Free-frame map keyed by stable numeric key ("1".."16"). */
+export type FreeFrameMap = Record<FreeFrameKey, FreeFrame>;
+
+export interface LaneSourcePort {
   lane: LaneKey;
   frame: FrameKey;
 }
 
-export interface DestinationPort {
+export interface FreeSourcePort {
+  free: FreeFrameKey;
+}
+
+export type SourcePort = LaneSourcePort | FreeSourcePort;
+
+export interface LaneDestinationPort {
   lane: LaneKey;
   frame: OperandKey;
+}
+
+export interface FreeDestinationPort {
+  free: FreeFrameKey;
+}
+
+export type DestinationPort = LaneDestinationPort | FreeDestinationPort;
+
+export function isFreePort(port: SourcePort | DestinationPort): port is FreeSourcePort {
+  return "free" in port && typeof port.free === "string";
 }
 
 export interface Route {

@@ -28,19 +28,21 @@ import {
   type ProjectExtras,
   type ProjectViewState,
 } from "../core/project.ts";
-import type { FrameKey, LaneKey } from "../core/types.ts";
+import type { FrameKey, FreeFrameKey, LaneKey } from "../core/types.ts";
 import { DEMO } from "./dataset.ts";
 import {
   S,
   SIZES,
+  liveFreeFrameKeys,
   liveLaneKeys,
+  makeFreeFrameState,
   makeLaneState,
   syncTarget,
 } from "./instrument.ts";
-import { coreLanes, evaluate, routing } from "./routing.ts";
+import { coreFreeFrames, coreLanes, evaluate, routing } from "./routing.ts";
 
 const KNOWN_TOP_LEVEL = new Set([
-  "schema", "app", "savedAt", "N", "view", "lanes", "routes", "parked", "dataset",
+  "schema", "app", "savedAt", "N", "view", "lanes", "frames", "routes", "parked", "dataset",
 ]);
 
 let unknownFields: Record<string, unknown> = {};
@@ -63,6 +65,9 @@ export function captureProject(now = new Date().toISOString()): ProjectDoc {
     splitPair: [S.splitPair[0], S.splitPair[1]],
     activePane: S.activePane === 1 ? 1 : 0,
   };
+  if (S.activeFree && S.freeFrames[S.activeFree]) {
+    view.activeFree = S.activeFree;
+  }
 
   const focus: NonNullable<ProjectExtras["focus"]> = {};
   const frameVis: NonNullable<ProjectExtras["frameVis"]> = {};
@@ -75,6 +80,14 @@ export function captureProject(now = new Date().toISOString()): ProjectDoc {
     if (sl.expressions.a.trim() !== "") expr.a = sl.expressions.a;
     if (sl.expressions.b.trim() !== "") expr.b = sl.expressions.b;
     if (Object.keys(expr).length > 0) expressions[lane] = expr;
+  }
+
+  const freeVis: NonNullable<ProjectExtras["freeVis"]> = {};
+  const freeExpressions: NonNullable<ProjectExtras["freeExpressions"]> = {};
+  for (const key of liveFreeFrameKeys()) {
+    const ff = S.freeFrames[key];
+    freeVis[key] = ff.visible;
+    if (ff.expression.trim() !== "") freeExpressions[key] = ff.expression;
   }
 
   const dataset = DEMO.rows.length
@@ -91,6 +104,9 @@ export function captureProject(now = new Date().toISOString()): ProjectDoc {
     lfoMode: S.lfo.mode,
     lfoRate: S.lfo.rate,
     expressions,
+    freeFrames: coreFreeFrames(),
+    freeVis,
+    freeExpressions,
   });
   return { ...unknownFields, ...doc } as ProjectDoc;
 }
@@ -137,13 +153,9 @@ export function applyProject(raw: unknown): ApplyResult {
     return { ok: false, code: "malformed", message: String(error), dataset: false };
   }
 
-  const { lanes, routing: loadedRouting, N, view, dataset, extras } = loaded;
+  const { lanes, freeFrames, routing: loadedRouting, N, view, dataset, extras } = loaded;
   S.N = N;
 
-  /* D46: the document defines the whole live lane set (one to eight lanes,
-     gaps allowed). Rebuild the map from the document's lanes, so a wider
-     document widens the instrument and a narrower one narrows it; an omitted
-     key simply stops being live (and its freed key is reusable). */
   const nextLanes: Record<LaneKey, ReturnType<typeof makeLaneState>> = {};
   for (const laneKey of Object.keys(lanes)) {
     const src = lanes[laneKey];
@@ -169,10 +181,22 @@ export function applyProject(raw: unknown): ApplyResult {
     nextLanes[laneKey] = sl;
   }
   S.lanes = nextLanes;
+
+  const nextFreeFrames: Record<FreeFrameKey, ReturnType<typeof makeFreeFrameState>> = {};
+  for (const freeKey of Object.keys(freeFrames)) {
+    const src = freeFrames[freeKey];
+    const ff = makeFreeFrameState(freeKey, N, { label: src.label, sourceNote: src.sourceNote });
+    ff.reg.bits.set(src.reg.bits);
+    ff.col = src.col;
+    ff.visible = extras.freeVis[freeKey] !== false;
+    ff.expression = extras.freeExpressions[freeKey] ?? "";
+    syncTarget(ff.reg, true);
+    nextFreeFrames[freeKey] = ff;
+  }
+  S.freeFrames = nextFreeFrames;
+
   const liveKeys = liveLaneKeys();
 
-  /* Routes and parked bases name lanes the document carries, which is now the
-     live set, so they transfer verbatim. */
   routing.routes = loadedRouting.routes;
   routing.parked = new Map(loadedRouting.parked);
 
@@ -184,9 +208,9 @@ export function applyProject(raw: unknown): ApplyResult {
     liveKeys.includes(view.splitPair[1]) ? view.splitPair[1] : secondLane,
   ] as [LaneKey, LaneKey];
   S.laneKey = focusLane;
+  S.activeFree = view.activeFree && nextFreeFrames[view.activeFree] ? view.activeFree : null;
   S.view3d = view.view3d;
-  /* Split is exactly two panes: a one-lane document stays in a single view. */
-  S.split3d = view.split3d && liveKeys.length >= 2;
+  S.split3d = !S.activeFree && view.split3d && liveKeys.length >= 2;
   S.splitPair = splitPair;
   S.activePane = S.split3d && view.activePane === 1 ? 1 : 0;
 
